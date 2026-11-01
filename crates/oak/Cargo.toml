@@ -1,0 +1,22 @@
+[package]
+name = "oak"
+description = "Oak: a native Rust/GPUI code editor in the shape of JetBrains Fleet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "oak"
+path = "src/main.rs"
+
+[dependencies]
+oak-text.workspace = true
+oak-syntax.workspace = true
+oak-theme.workspace = true
+oak-keymap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true

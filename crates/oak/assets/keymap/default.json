@@ -1,0 +1,623 @@
+{
+  "keymap": [
+    {
+      "key": "down",
+      "action": "arrow-down"
+    },
+    {
+      "mac": "ctrl-n",
+      "action": "arrow-down"
+    },
+    {
+      "key": "left",
+      "action": "arrow-left"
+    },
+    {
+      "mac": "ctrl-b",
+      "action": "arrow-left"
+    },
+    {
+      "key": "right",
+      "action": "arrow-right"
+    },
+    {
+      "mac": "ctrl-f",
+      "action": "arrow-right"
+    },
+    {
+      "key": "up",
+      "action": "arrow-up"
+    },
+    {
+      "mac": "ctrl-p",
+      "action": "arrow-up"
+    },
+    {
+      "key": "escape",
+      "action": "cancel"
+    },
+    {
+      "mac": "cmd-alt-w",
+      "action": "tabs/close-other-tabs"
+    },
+    {
+      "key": "ctrl-f4",
+      "mac": "cmd-w",
+      "action": "close-tab"
+    },
+    {
+      "win": "ctrl-w",
+      "linux": "ctrl-w",
+      "action": "close-tab"
+    },
+    {
+      "win": "ctrl-shift-f4",
+      "linux": "ctrl-shift-f4",
+      "action": "close-window"
+    },
+    {
+      "win": "alt-f4",
+      "linux": "alt-f4",
+      "action": "close-window"
+    },
+    {
+      "key": "ctrl-shift-slash",
+      "mac": "cmd-alt-slash",
+      "action": "comment-block"
+    },
+    {
+      "key": "ctrl-shift-numpaddivide",
+      "mac": "cmd-alt-shift-digit7",
+      "action": "comment-block"
+    },
+    {
+      "mac": "cmd-alt-numpaddivide",
+      "action": "comment-block"
+    },
+    {
+      "key": "ctrl-slash",
+      "mac": "cmd-slash",
+      "action": "comment-line"
+    },
+    {
+      "key": "ctrl-shift-digit7",
+      "mac": "cmd-shift-digit7",
+      "action": "comment-line"
+    },
+    {
+      "key": "ctrl-shift-colon",
+      "mac": "cmd-shift-colon",
+      "action": "comment-line"
+    },
+    {
+      "key": "ctrl-numpaddivide",
+      "mac": "cmd-numpaddivide",
+      "action": "comment-line"
+    },
+    {
+      "key": "return",
+      "action": "confirm"
+    },
+    {
+      "key": "numpadenter",
+      "action": "confirm"
+    },
+    {
+      "key": "ctrl-c",
+      "mac": "cmd-c",
+      "action": "copy"
+    },
+    {
+      "win": "ctrl-insert",
+      "linux": "ctrl-insert",
+      "action": "copy"
+    },
+    {
+      "key": "ctrl-x",
+      "mac": "cmd-x",
+      "action": "cut"
+    },
+    {
+      "win": "shift-delete",
+      "linux": "shift-delete",
+      "action": "cut"
+    },
+    {
+      "key": "backspace",
+      "action": "delete-backward"
+    },
+    {
+      "key": "shift-backspace",
+      "action": "delete-backward"
+    },
+    {
+      "mac": "ctrl-h",
+      "action": "delete-backward"
+    },
+    {
+      "mac": "shift-delete",
+      "action": "delete-backward"
+    },
+    {
+      "key": "delete",
+      "action": "delete-forward"
+    },
+    {
+      "mac": "ctrl-d",
+      "action": "delete-forward"
+    },
+    {
+      "key": "ctrl-shift-backspace",
+      "mac": "cmd-shift-backspace",
+      "action": "editor/delete-line"
+    },
+    {
+      "mac": "cmd-delete",
+      "action": "editor/delete-forward-until-end-of-line"
+    },
+    {
+      "mac": "ctrl-k",
+      "action": "editor/delete-forward-until-end-of-line"
+    },
+    {
+      "mac": "cmd-backspace",
+      "action": "editor/delete-backward-until-start-of-line"
+    },
+    {
+      "key": "ctrl-backspace",
+      "mac": "alt-backspace",
+      "action": "delete-word-backward"
+    },
+    {
+      "key": "ctrl-delete",
+      "mac": "alt-delete",
+      "action": "delete-word-forward"
+    },
+    {
+      "key": "alt-shift-d",
+      "action": "editor/duplicate-line"
+    },
+    {
+      "key": "ctrl-shift-comma",
+      "mac": "cmd-shift-comma",
+      "action": "edit-settings-file"
+    },
+    {
+      "mac": "cmd-right",
+      "action": "end"
+    },
+    {
+      "key": "end",
+      "action": "end"
+    },
+    {
+      "mac": "ctrl-e",
+      "action": "end"
+    },
+    {
+      "key": "alt-shift-up",
+      "action": "expand-selection"
+    },
+    {
+      "key": "ctrl-f",
+      "mac": "cmd-f",
+      "action": "find"
+    },
+    {
+      "key": "ctrl-shift-f",
+      "mac": "cmd-shift-f",
+      "action": "find-in-path"
+    },
+    {
+      "key": "alt-digit2",
+      "mac": "cmd-digit2",
+      "action": "toggle-bottom-panel"
+    },
+    {
+      "key": "alt-eacute",
+      "mac": "cmd-eacute",
+      "action": "toggle-bottom-panel"
+    },
+    {
+      "key": "alt-digit1",
+      "mac": "cmd-digit1",
+      "action": "toggle-left-panel"
+    },
+    {
+      "key": "alt-ampersand",
+      "mac": "cmd-ampersand",
+      "action": "toggle-left-panel"
+    },
+    {
+      "key": "alt-digit3",
+      "mac": "cmd-digit3",
+      "action": "toggle-right-panel"
+    },
+    {
+      "key": "alt-quotationmark",
+      "mac": "cmd-quotationmark",
+      "action": "toggle-right-panel"
+    },
+    {
+      "key": "escape",
+      "action": "focus-editor"
+    },
+    {
+      "key": "ctrl-b",
+      "mac": "cmd-b",
+      "action": "go-to-declaration"
+    },
+    {
+      "key": "ctrl-l",
+      "mac": "cmd-l",
+      "action": "goto/line"
+    },
+    {
+      "key": "ctrl-end",
+      "mac": "cmd-end",
+      "action": "editor/move-caret-to-end-of-document"
+    },
+    {
+      "mac": "cmd-down",
+      "action": "editor/move-caret-to-end-of-document"
+    },
+    {
+      "key": "ctrl-home",
+      "mac": "cmd-home",
+      "action": "editor/move-caret-to-start-of-document"
+    },
+    {
+      "mac": "cmd-up",
+      "action": "editor/move-caret-to-start-of-document"
+    },
+    {
+      "key": "ctrl-left",
+      "mac": "alt-left",
+      "action": "editor/move-caret-to-previous-word"
+    },
+    {
+      "key": "ctrl-right",
+      "mac": "alt-right",
+      "action": "editor/move-caret-to-next-word"
+    },
+    {
+      "mac": "cmd-shift-escape",
+      "action": "hide-all-panels"
+    },
+    {
+      "mac": "cmd-left",
+      "action": "home"
+    },
+    {
+      "key": "home",
+      "action": "home"
+    },
+    {
+      "mac": "ctrl-a",
+      "action": "home"
+    },
+    {
+      "key": "ctrl-shift-return",
+      "mac": "cmd-shift-return",
+      "action": "insert-newline-character"
+    },
+    {
+      "key": "ctrl-shift-numpadenter",
+      "mac": "cmd-shift-numpadenter",
+      "action": "insert-newline-character"
+    },
+    {
+      "key": "ctrl-j",
+      "action": "join-lines"
+    },
+    {
+      "key": "alt-down",
+      "action": "move-line-down"
+    },
+    {
+      "key": "alt-up",
+      "action": "move-line-up"
+    },
+    {
+      "key": "ctrl-n",
+      "mac": "cmd-n",
+      "action": "new-file"
+    },
+    {
+      "key": "ctrl-return",
+      "mac": "cmd-return",
+      "action": "editor/insert-new-line-below"
+    },
+    {
+      "key": "ctrl-numpadenter",
+      "mac": "cmd-numpadenter",
+      "action": "editor/insert-new-line-below"
+    },
+    {
+      "key": "ctrl-alt-return",
+      "mac": "alt-cmd-numpadenter",
+      "action": "editor/insert-new-line-above"
+    },
+    {
+      "win": "ctrl-alt-numpadenter",
+      "linux": "ctrl-alt-numpadenter",
+      "action": "editor/insert-new-line-above"
+    },
+    {
+      "key": "ctrl-tab",
+      "action": "goto/go-to-next-tab"
+    },
+    {
+      "mac": "cmd-shift-rightbracket",
+      "action": "next-tab"
+    },
+    {
+      "key": "ctrl-pagedown",
+      "mac": "cmd-alt-right",
+      "action": "next-tab"
+    },
+    {
+      "mac": "cmd-shift-aumlaut",
+      "action": "next-tab"
+    },
+    {
+      "key": "ctrl-o",
+      "mac": "cmd-o",
+      "action": "open"
+    },
+    {
+      "key": "ctrl-comma",
+      "mac": "cmd-comma",
+      "action": "open-settings"
+    },
+    {
+      "key": "pagedown",
+      "action": "page-down"
+    },
+    {
+      "mac": "ctrl-v",
+      "action": "page-down"
+    },
+    {
+      "key": "pageup",
+      "action": "page-up"
+    },
+    {
+      "key": "ctrl-v",
+      "mac": "cmd-v",
+      "action": "paste"
+    },
+    {
+      "win": "shift-insert",
+      "linux": "shift-insert",
+      "action": "paste"
+    },
+    {
+      "key": "ctrl-shift-tab",
+      "action": "goto/go-to-previous-tab"
+    },
+    {
+      "mac": "cmd-shift-leftbracket",
+      "action": "prev-tab"
+    },
+    {
+      "key": "ctrl-pageup",
+      "mac": "cmd-alt-left",
+      "action": "prev-tab"
+    },
+    {
+      "mac": "cmd-shift-oumlaut",
+      "action": "prev-tab"
+    },
+    {
+      "key": "ctrl-y",
+      "mac": "cmd-shift-z",
+      "action": "redo"
+    },
+    {
+      "win": "ctrl-shift-z",
+      "linux": "ctrl-shift-z",
+      "action": "redo"
+    },
+    {
+      "key": "f2",
+      "mac": "ctrl-r",
+      "action": "rename"
+    },
+    {
+      "key": "ctrl-digit0",
+      "mac": "cmd-digit0",
+      "action": "reset-zoom"
+    },
+    {
+      "key": "ctrl-shift-s",
+      "mac": "alt-cmd-s",
+      "action": "save-all"
+    },
+    {
+      "key": "ctrl-s",
+      "mac": "cmd-s",
+      "action": "save-file"
+    },
+    {
+      "key": "ctrl-a",
+      "mac": "cmd-a",
+      "action": "select-all"
+    },
+    {
+      "key": "ctrl-d",
+      "mac": "cmd-d",
+      "action": "select-next-occurrence"
+    },
+    {
+      "key": "shift-down",
+      "action": "shift-arrow-down"
+    },
+    {
+      "key": "shift-left",
+      "action": "shift-arrow-left"
+    },
+    {
+      "key": "shift-right",
+      "action": "shift-arrow-right"
+    },
+    {
+      "key": "shift-up",
+      "action": "shift-arrow-up"
+    },
+    {
+      "mac": "cmd-shift-right",
+      "action": "shift-end"
+    },
+    {
+      "key": "shift-end",
+      "action": "shift-end"
+    },
+    {
+      "mac": "cmd-shift-down",
+      "action": "editor/move-caret-to-end-of-document-with-selection"
+    },
+    {
+      "key": "ctrl-shift-end",
+      "mac": "cmd-shift-end",
+      "action": "editor/move-caret-to-end-of-document-with-selection"
+    },
+    {
+      "mac": "cmd-shift-up",
+      "action": "editor/move-caret-to-start-of-document-with-selection"
+    },
+    {
+      "key": "ctrl-shift-home",
+      "mac": "cmd-shift-home",
+      "action": "editor/move-caret-to-start-of-document-with-selection"
+    },
+    {
+      "key": "shift-ctrl-left",
+      "mac": "shift-alt-left",
+      "action": "editor/move-caret-to-previous-word-with-selection"
+    },
+    {
+      "key": "shift-ctrl-right",
+      "mac": "shift-alt-right",
+      "action": "editor/move-caret-to-next-word-with-selection"
+    },
+    {
+      "mac": "cmd-shift-left",
+      "action": "shift-home"
+    },
+    {
+      "key": "shift-home",
+      "action": "shift-home"
+    },
+    {
+      "key": "shift-pagedown",
+      "action": "shift-page-down"
+    },
+    {
+      "mac": "shift-ctrl-v",
+      "action": "shift-page-down"
+    },
+    {
+      "key": "shift-pageup",
+      "action": "shift-page-up"
+    },
+    {
+      "win": "menu",
+      "linux": "menu",
+      "action": "show-context-menu"
+    },
+    {
+      "win": "shift-f10",
+      "linux": "shift-f10",
+      "action": "show-context-menu"
+    },
+    {
+      "key": "ctrl-shift-t",
+      "mac": "cmd-shift-t",
+      "action": "tabs/reopen-closed-tab"
+    },
+    {
+      "key": "ctrl-shift-k",
+      "mac": "cmd-shift-k",
+      "action": "goto/action"
+    },
+    {
+      "key": "ctrl-p",
+      "mac": "cmd-p",
+      "action": "goto/file"
+    },
+    {
+      "key": "ctrl-k",
+      "mac": "cmd-k",
+      "action": "goto/everything"
+    },
+    {
+      "key": "ctrl-tab",
+      "action": "switch-to-next-file"
+    },
+    {
+      "key": "ctrl-shift-tab",
+      "action": "switch-to-previous-file"
+    },
+    {
+      "key": "alt-shift-down",
+      "action": "shrink-selection"
+    },
+    {
+      "key": "tab",
+      "action": "tab"
+    },
+    {
+      "mac": "ctrl-cmd-f",
+      "action": "toggle-full-screen"
+    },
+    {
+      "key": "ctrl-graveaccent",
+      "action": "terminal/toggle"
+    },
+    {
+      "key": "ctrl-backslash",
+      "mac": "cmd-backslash",
+      "action": "split-right"
+    },
+    {
+      "key": "ctrl-z",
+      "mac": "cmd-z",
+      "action": "undo"
+    },
+    {
+      "key": "ctrl-equalssign",
+      "mac": "cmd-equalssign",
+      "action": "zoom-in"
+    },
+    {
+      "key": "ctrl-shift-digit0",
+      "mac": "cmd-shift-digit0",
+      "action": "zoom-in"
+    },
+    {
+      "key": "ctrl-plus",
+      "mac": "cmd-plus",
+      "action": "zoom-in"
+    },
+    {
+      "key": "ctrl-numpadadd",
+      "mac": "cmd-numpadadd",
+      "action": "zoom-in"
+    },
+    {
+      "key": "ctrl-minus",
+      "mac": "cmd-minus",
+      "action": "zoom-out"
+    },
+    {
+      "key": "ctrl-numpadsubtract",
+      "mac": "cmd-numpadsubtract",
+      "action": "zoom-out"
+    },
+    {
+      "key": "ctrl-q",
+      "action": "quit"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+Oak's own icon drawings (MIT, like the rest of Oak): panel toggles, the tools
+grid, the terminal, the collaboration mark, the git branch, the logo and the
+file-type monograms. Drawn on the same 16-unit grid with 1 px strokes as the
+expui set beside them, so the two mix in one toolbar.
