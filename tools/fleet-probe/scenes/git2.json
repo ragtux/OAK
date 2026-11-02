@@ -1,0 +1,44 @@
+{
+  "name": "git2",
+  "about": "Batch 10, second run, after the first showed what the driver got wrong: the branch tag is at (793, 18) not (1180, 18); a two-chord shortcut needs a pause between its chords; the Git tool's rows start at y 182 (pitch 26); the line-status mark is a bar at the island's left edge, hovered at (378, 690). Fleet only; Oak has none of these yet.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "manual": [
+    "Fleet: `winprobe.py attach` against the open window with README.md still modified; close any popup first (the scene starts with Escape)."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 1500], ["key", "escape"], ["wait", 500], ["key", "escape"], ["wait", 500],
+      ["move", 34, 55], ["click"], ["wait", 800],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "README.md"], ["wait", 1500], ["key", "enter"], ["wait", 2500],
+      ["move", 378, 690], ["wait", 1200], ["shot", "line-status-hover"],
+      ["click"], ["wait", 1500], ["shot", "line-status-popup"], ["key", "escape"], ["wait", 600],
+      ["move", 900, 300], ["click"], ["wait", 400],
+      ["key", "ctrl+shift+g"], ["wait", 500], ["key", "ctrl+shift+a"], ["wait", 2500], ["shot", "blame"],
+      ["move", 420, 690], ["wait", 1200], ["shot", "blame-hover"],
+      ["key", "ctrl+shift+g"], ["wait", 500], ["key", "ctrl+shift+a"], ["wait", 1000],
+      ["key", "ctrl+shift+g"], ["wait", 500], ["key", "ctrl+shift+h"], ["wait", 2500], ["shot", "file-history"],
+      ["key", "ctrl+f4"], ["wait", 1000],
+      ["move", 138, 55], ["click"], ["wait", 1500], ["shot", "git-tool"],
+      ["move", 100, 208], ["wait", 800], ["shot", "git-tool-hover"],
+      ["click", "double"], ["wait", 3000], ["shot", "diff"],
+      ["move", 900, 400], ["click", "right"], ["wait", 1000], ["shot", "diff-menu"], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+f4"], ["wait", 1000],
+      ["move", 100, 182], ["click", "right"], ["wait", 1000], ["shot", "git-row-menu"], ["key", "escape"], ["wait", 500],
+      ["move", 793, 18], ["wait", 1500], ["shot", "branch-hover"],
+      ["click"], ["wait", 1500], ["shot", "branch-popup"], ["key", "escape"], ["wait", 500],
+      ["move", 34, 55], ["click"], ["wait", 800],
+      ["move", 100, 503], ["click"], ["wait", 400], ["click", "right"], ["wait", 1000], ["shot", "notes-menu"],
+      ["key", "down", "down", "down", "down", "down", "down"], ["wait", 400], ["shot", "notes-menu-delete"],
+      ["key", "enter"], ["wait", 1500], ["shot", "delete-dialog"],
+      ["key", "escape"], ["wait", 500]
+    ],
+    "oak": [
+      ["wait", 1000]
+    ]
+  },
+  "oak_args": ["{workspace}/README.md"],
+  "scans": [],
+  "samples": []
+}

@@ -1,0 +1,33 @@
+{
+  "name": "git4",
+  "about": "Batch 10, fourth run: the Git tool through Goto Tools with Down pressed first (Enter alone takes the highlighted active History tool), then the diff of a changed file from the tool's row, the row's context menu, and the tool's commit field focused. Fleet only.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "manual": [
+    "Fleet: `winprobe.py attach` against the open window with README.md still modified."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 1500], ["key", "escape"], ["wait", 500], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+t"], ["wait", 1200], ["type", "Git"], ["wait", 1200], ["key", "down"], ["wait", 400], ["shot", "goto-tools-git"], ["key", "enter"], ["wait", 2500], ["shot", "git-tool"],
+      ["move", 100, 208], ["wait", 800], ["shot", "git-tool-hover"],
+      ["click"], ["wait", 800], ["shot", "git-tool-selected"],
+      ["click", "double"], ["wait", 3500], ["shot", "diff"],
+      ["move", 700, 400], ["wait", 800], ["shot", "diff-hover"],
+      ["click", "right"], ["wait", 1000], ["shot", "diff-menu"], ["key", "escape"], ["wait", 500],
+      ["move", 100, 208], ["click", "right"], ["wait", 1000], ["shot", "git-row-menu"], ["key", "escape"], ["wait", 500],
+      ["move", 100, 88], ["click"], ["wait", 600], ["type", "Probe commit"], ["wait", 800], ["shot", "commit-typed"],
+      ["key", "ctrl+a"], ["key", "backspace"], ["wait", 400],
+      ["move", 100, 530], ["wait", 800], ["shot", "branch-chip-hover"],
+      ["click"], ["wait", 1200], ["shot", "branch-chip-click"], ["key", "escape"], ["wait", 500],
+      ["move", 34, 55], ["click"], ["wait", 800]
+    ],
+    "oak": [
+      ["wait", 1000]
+    ]
+  },
+  "oak_args": ["{workspace}/README.md"],
+  "scans": [],
+  "samples": []
+}

@@ -625,6 +625,45 @@ estimate), and the status is read again on open, after a save or a file
 operation and every fifth disk poll. Still batch 10's: the gutter's line
 status (`editor.showLineStatus`), the Git tool, diffs and blame.
 
+## Ninth pass: the M3 leftovers and batch 10, Fleet running (2026-11-02, evening)
+
+The `leftovers`, `git`, `git2`, `git3` and `git4` scenes were played into
+the running Fleet with `winprobe.py attach`, and a few states were reached
+with the driver's step commands when a scene's route failed (two-chord
+shortcuts never arrive as a chord through the driver, Ctrl+F4 with the
+focus in a panel tool closes that tool, Goto Tools' Enter takes the
+highlighted *active* tool). Device px ÷ 1.5 as before. The fixture had to
+be restored twice: a keyboard walk of the tree menu reached Delete, which
+Fleet carried out at once.
+
+### The M3 leftovers
+
+| element | measured |
+|---|---|
+| `autoSave` | the General page's dropdown holds Off, On focus change, After delay; choosing each writes `"autoSave": "Off"`, `"OnFocus"`, `"AfterDelay"` to Fleet's `settings.json` (read off the file after each pick). Default `OnFocus`. |
+| modified value | a 2 px bar at the card's left edge (690.67–692.67), 24 tall and centred on the row, `#BD8128` (not `settings.modified.indicator`'s `#CDA261`; no key matches, so Oak uses that key as the nearest, an estimate) |
+| dropdown list | opens under the control: left 2.33 outside the control, 4.67 wider, top 3.33 under the control's bottom; `popup.background`, 4.67 padding, rows 26.67 apart with a 24 px wash inset 4 for the chosen row in `listItem.background.focused` (`#194474` over the popup) |
+| shortcut overlay | with `showShortcuts` on, a pill 146.67 × 56 centred on the window (567.33–714 at 1280), its bottom 64 above the window's edge, radius about 8; `#B8B9B9` with the chord in `#090909` at about 18 px (cap height 13.3). Neither `shortcut.background` (`#FFFFFF21`) nor `shortcut.text` gives these, so the colours are read off the shot (estimate) |
+| History tool | a "Search commits" field 13.33–361.33 × 76–100 (24 tall), a filter row at y 118 of three chips with chevrons ("main", the folder or file, "all users"; 22–66.67, 80.67–272, 285.33–352.67), then commit rows: a 6.67 px grey dot at x 25.33 (`#69696B`, taken as `text.tertiary`, estimate), the summary at x 44 in `#E0E1E4` on the row's first line (centre 150), the author and date on a secondary second line (centre 169); `git/file-history` opens a second History tab filtered to the file (the folder chip reads the file's name, the tab gets a close box) |
+| Delete | "Delete..." on a file removes it at once; no dialog appeared in three runs, so Oak drops its confirmation and sends the file to the system trash (the folder case was not tried, estimate) |
+| folder menu | New File..., New Folder..., sep, Find in Files... Ctrl+Shift+F, Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › (no Open in Split) |
+
+### Batch 10: git
+
+Read off `README.md` (modified against HEAD: lines 23–24 added), the Git
+tool, the branch tag, blame and the Changed Files tab.
+
+| element | measured |
+|---|---|
+| line status | an added hunk is a bar in `editor.gitDiff.background.added` (`#14835E`) on the island's left edge, 375.33–380 (4.67 wide, 1.33 outside the island) spanning the hunk's rows (670–714 for lines 23–24); 6.67 wide (to 382) while its popup is open. Fleet drew it only once the status was known (the first shot, 2 s after opening, had none). |
+| line-status popup | a click on the bar: the hunk's rows wash in `#172E29` (the added colour at 20 %, `#14835E33`, across the text area to the scrollbar) and a toolbar pill sits above the hunk with its top 39.33 above the hunk's top and its left 6 inside the island: 198 × 35.33, `popup.background`, holding ↓, ↑, a separator, Revert, Diff, a separator, ×, 13 px text; Diff shows a "Show Diff" tooltip and opens the Changed Files tab |
+| blame | `git/toggle-blame` adds a column at the island's left: the date and author (`Dec 31, 2025  Probe`, 13 px, secondary) 8.67 in, then a 3.33 px bar at 145.33–148.67 over the chunk's rows, then the gutter and text moved right by the column; the committed chunk's bar is `#9F680C` (`editor.gitDiff.background.conflict`; the age palette is unknown with one commit), the uncommitted lines' bar `#14835E` with no text |
+| branch tag | hover: a tooltip "Current Branch: main"; click: a menu 180 wide under the tag (772.67–952.67 × 36.67–103.33) with 28 px rows: "+ Create New Branch..." and "● main ↑0 ↓0" (a 4.67 px `icon.background.blue` dot, the counts from the upstream) |
+| Git tool | a commit field 13.33–361.33 × 76–100 with an AI icon at its right; a 24 px secondary "Commit" button at 13.33–76.67 × 108.67–132 and a filter icon button after it; a 24 px header row at 144–168 in `#363739` reading "Changed files" with the count in secondary text and an indeterminate checkbox at 340.67–354 (14 wide, `#0870E4` with a white bar); 26 px rows from 170: a status glyph at x 24–30 (`?` green, `●` blue, `+` green, `−` red `#E1465E` for a deleted file), the file icon at 41.33, the name at 60 in the tree's status colour (a renamed file shows its old name struck through in grey after it), a 14 px checkbox at 340–354.67 (staged files checked); below, "Unsynced commits ↑1" at y 446.67, a 24.67 px secondary button "Push 1 commit to a new remote branch" at 20–280 × 470–494.67 with the first words as a link, a branch chip "main ⌄" bordered in `gitBranchTag.local.border` at 40–81 × 518.67–536, and the commit rows as in the History tool |
+| Changed Files tab | the tab "Changed Files"; a header row at y 88–116 with an indeterminate checkbox at 315.33–328.67 and "2/4 files"; one card per changed file 6 inside the island: a 40 px header (128–168) in `listItem.background.focused` (`#123C6B`) for the open one, holding a checkbox at 316.67–327.33, the icon at 338, the name in the status colour at 364, a pencil icon at 1175 and a 24 px "Revert" secondary button at 1200–1260; a 6 px `background.secondary` strip, then the side-by-side diff: the old text at 313.33 with its numbers right-aligned to 764, a 2 px separator at 786–788, the new text's numbers at 816.67 and text at 830; 22 px rows; unchanged runs collapsed to a wavy separator; added rows washed `#172E29` on the new side and an empty washed row with a » expander on the old side; collapsed files are 42 px rows (387, 429) with a checked checkbox at 320, the icon at 340, the name and its folder in secondary text, the pencil and Revert at the same x |
+| diff menu | a right click in the diff gives a one-row menu, "Copy Ctrl+C" |
+| Markdown | Fleet opens `.md` files with a rendered preview in a split to the right (the editor 565–1240 device, the preview after); not an M4 matter, noted for the editor |
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

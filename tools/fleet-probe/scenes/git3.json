@@ -1,0 +1,33 @@
+{
+  "name": "git3",
+  "about": "Batch 10, third run: the Git tool reopened through Goto Tools (Ctrl+F4 in the second run had closed it), a changed file's diff from the tool's row, blame and the file history through Goto Actions (the driver cannot deliver Fleet's two-chord shortcuts). Fleet only.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "manual": [
+    "Fleet: `winprobe.py attach` against the open window with README.md still modified."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 1500], ["key", "escape"], ["wait", 500], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+t"], ["wait", 1200], ["type", "Git"], ["wait", 1200], ["shot", "goto-tools-git"], ["key", "enter"], ["wait", 2000], ["shot", "git-tool"],
+      ["move", 100, 208], ["wait", 800], ["shot", "git-tool-hover"],
+      ["click", "double"], ["wait", 3000], ["shot", "diff"],
+      ["move", 900, 500], ["wait", 800], ["shot", "diff-hover"],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "README.md"], ["wait", 1500], ["key", "enter"], ["wait", 2500],
+      ["key", "ctrl+shift+k"], ["wait", 1200], ["type", "Toggle Blame"], ["wait", 1500], ["shot", "actions-blame"], ["key", "enter"], ["wait", 3000], ["shot", "blame"],
+      ["move", 420, 690], ["wait", 1200], ["shot", "blame-hover"],
+      ["key", "ctrl+shift+k"], ["wait", 1200], ["type", "Toggle Blame"], ["wait", 1200], ["key", "enter"], ["wait", 1500],
+      ["key", "ctrl+shift+k"], ["wait", 1200], ["type", "File History"], ["wait", 1500], ["shot", "actions-history"], ["key", "enter"], ["wait", 3000], ["shot", "file-history"],
+      ["move", 900, 300], ["wait", 800], ["shot", "file-history-hover"],
+      ["key", "ctrl+shift+k"], ["wait", 1200], ["type", "Commit"], ["wait", 1500], ["shot", "actions-commit"], ["key", "escape"], ["wait", 500],
+      ["move", 34, 55], ["click"], ["wait", 800]
+    ],
+    "oak": [
+      ["wait", 1000]
+    ]
+  },
+  "oak_args": ["{workspace}/README.md"],
+  "scans": [],
+  "samples": []
+}

@@ -246,7 +246,7 @@ Each batch produces rows in `fleet-probe.md`, constants in
 | 7 | Popups | M3 | Context menu item height, padding, separators, shortcut column, submenu arrow; main menu; tooltip padding and delay; notifications, toasts, banners; confirm dialog layout and buttons. |
 | 8 | Settings tool | M3 | Page layout, search field, section headers, `tileButton`, `checkbox`, `combobox`, `dropdown`, every `button` variant and state, `pillButton`, `link`; and read every default value off the pages. |
 | 9 | Terminal | M5 | Padding, font metrics, caret, tab title, scroll-to-bottom button, selection colour. |
-| 10 | Git and diff | M4 | Changes list rows, commit field, history table, blame column, diff colours and gutter, side-by-side split, 3-way view. | Scene: `scenes/git.json` (written 2026-11-02, Fleet side not yet run). |
+| 10 | Git and diff | M4 | Changes list rows, commit field, history table, blame column, diff colours and gutter, side-by-side split, 3-way view. | Scenes: `scenes/git*.json`, run on Fleet 2026-11-02 (ninth pass). |
 | 11 | Run and problems | M6 | Run gutter icons, run popup, build output tool, problems widget colours and layout, file status badge states. |
 | 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. |
 
