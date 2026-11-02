@@ -92,6 +92,24 @@ actions!(
         CloseAllTabs,
         CopyRelativePath,
         About,
+        // M5: the Terminal tool
+        TerminalNewTool,
+        TerminalToggle,
+        TerminalJumpToTool,
+        TerminalNewWithProfile,
+        TerminalSelectDefaultProfile,
+        TerminalEditProfiles,
+    ]
+);
+
+// The actions a focused terminal answers (`Terminal` key context).
+actions!(
+    terminal,
+    [
+        TerminalClear,
+        TerminalCopy,
+        TerminalPaste,
+        SelectAllTerminal
     ]
 );
 

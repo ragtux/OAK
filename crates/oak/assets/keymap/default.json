@@ -831,6 +831,29 @@
     {
       "win": "ctrl-shift-g ctrl-y",
       "action": "git/revert"
+    },
+    {
+      "mac": "cmd-l",
+      "action": "terminal/clear"
+    },
+    {
+      "mac": "cmd-c",
+      "key": "ctrl-shift-c",
+      "action": "terminal/copy"
+    },
+    {
+      "key": "ctrl-shift-graveaccent",
+      "action": "terminal/new-tool"
+    },
+    {
+      "mac": "cmd-shift-v",
+      "key": "ctrl-shift-v",
+      "action": "terminal/paste"
+    },
+    {
+      "mac": "cmd-a",
+      "key": "ctrl-shift-a",
+      "action": "select-all-terminal"
     }
   ]
 }

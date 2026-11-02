@@ -12,6 +12,7 @@ use crate::file_tree::{FileTree, FileTreeEvent};
 use crate::find::{FindBar, FindBarEvent};
 use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
+mod terminals;
 mod workbench;
 use crate::dialog::{ConfirmDialog, DialogButton};
 use crate::diff_view::DiffView;
@@ -23,6 +24,7 @@ use crate::scrollbar::{scrollbar, EmptyView};
 use crate::search_tool::SearchTool;
 use crate::settings::{self, AppSettings};
 use crate::settings_view::SettingsView;
+use crate::terminal::TerminalView;
 use crate::theme::{metrics::EMPTY_PANEL_INSET, Metrics, Theme};
 use crate::toolbar;
 use crate::tooltip::Tooltip;
@@ -158,11 +160,25 @@ impl Tool {
     }
 }
 
+/// A tool's tab in a panel. Most tools are one of a kind; terminals are
+/// many, told apart by `instance` (M5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolTab {
+    pub tool: Tool,
+    pub instance: usize,
+}
+
+impl ToolTab {
+    fn single(tool: Tool) -> ToolTab {
+        ToolTab { tool, instance: 0 }
+    }
+}
+
 struct Panel {
     open: bool,
     /// Width (left, right) or height (bottom), logical px at zoom 1.0.
     size: f32,
-    tools: Vec<Tool>,
+    tools: Vec<ToolTab>,
     active: usize,
     focus_handle: FocusHandle,
     /// The empty panel's "Open Tool" button, which takes focus when the panel opens.
@@ -177,7 +193,7 @@ impl Panel {
         Panel {
             open: layout.open,
             size: layout.size,
-            tools,
+            tools: tools.into_iter().map(ToolTab::single).collect(),
             active: 0,
             focus_handle: cx.focus_handle(),
             button_focus: cx.focus_handle(),
@@ -459,6 +475,9 @@ pub struct Workspace {
     file_index: Arc<FileIndex>,
     /// The Notifications popup under the toolbar's bell is open.
     notifications_open: bool,
+    /// The terminals (M5), by the id their panel tab carries.
+    terminals: Vec<(usize, Entity<TerminalView>)>,
+    next_terminal: usize,
     /// This workspace's window, for deferred focus changes.
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
@@ -558,11 +577,17 @@ impl Workspace {
             goto_preview_hidden: layout.goto_preview_hidden,
             file_index: Arc::new(FileIndex::default()),
             notifications_open: false,
+            terminals: Vec::new(),
+            next_terminal: 0,
             window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
         };
         this.init_workbench(window, cx);
+        // `launchTerminalOnOpen`: a shell in the bottom panel, the editor keeping the focus.
+        if Self::settings(cx).launch_terminal_on_open() {
+            this.new_terminal(None, false, window, cx);
+        }
         this.refresh_git(cx);
         this.watch_disk(cx);
         this.watch_shortcuts(cx);
@@ -1012,6 +1037,9 @@ impl Workspace {
     }
 
     fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_focused_terminal(window, cx) {
+            return;
+        }
         let p = self.active_pane;
         if let Some(ix) = self.panes[p].active {
             self.close_tab_at(p, ix, window, cx);
@@ -1739,22 +1767,23 @@ impl Workspace {
     }
 
     fn choose_tool(&mut self, side: Side, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
+        if tool == Tool::Terminal {
+            // The last terminal, or a new shell (M5).
+            self.terminal_jump_to_tool(&TerminalJumpToTool, window, cx);
+            return;
+        }
         let panel = self.panel_mut(side);
-        let ix = match panel.tools.iter().position(|t| *t == tool) {
+        let ix = match panel.tools.iter().position(|t| t.tool == tool) {
             Some(ix) => ix,
             None => {
-                panel.tools.push(tool);
+                panel.tools.push(ToolTab::single(tool));
                 panel.tools.len() - 1
             }
         };
         panel.active = ix;
         panel.open = true;
         self.chooser = None;
-        if tool == Tool::Files {
-            self.file_tree.read(cx).focus_handle(cx).focus(window, cx);
-        } else {
-            self.panel(side).focus_handle.focus(window, cx);
-        }
+        self.focus_tool_tab(side, ix, window, cx);
         self.save_layout();
         cx.notify();
     }
@@ -2196,54 +2225,150 @@ impl Workspace {
     }
 
     /// A panel's tab row: its tools, then the `+` that opens the chooser.
+    /// The selected tab takes the `selectedFocused` colours while its panel
+    /// has the focus, as the editor tabs do (batch 9: the terminal's tab is
+    /// blue while the shell is focused, grey once the editor is). A
+    /// terminal's tab carries the tool icon and a close cross.
     fn render_panel_tabs(
         &self,
         side: Side,
         theme: &Theme,
         m: &Metrics,
+        window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let panel = self.panel(side);
         let entity = cx.entity();
-        let tabs = panel.tools.iter().enumerate().map(|(ix, tool)| {
+        let panel_focused = panel.focus_handle.contains_focused(window, cx);
+        let tabs = panel.tools.iter().enumerate().map(|(ix, tab)| {
             let selected = ix == panel.active;
+            // `contains_focused` reads the last rendered frame; a terminal
+            // focused as its panel opens is asked directly.
+            let own_focus = tab.tool == Tool::Terminal
+                && self
+                    .terminal_view(tab.instance)
+                    .is_some_and(|v| v.read(cx).focus_handle(cx).is_focused(window));
+            let focused = selected && (panel_focused || own_focus);
             let entity = entity.clone();
+            let menu_entity = cx.entity();
+            let close_entity = cx.entity();
+            let label = self.tool_tab_label(*tab, cx);
+            let is_terminal = tab.tool == Tool::Terminal;
+            let tooltip = if is_terminal {
+                self.terminal_view(tab.instance).map(|v| {
+                    let v = v.read(cx);
+                    (
+                        label.clone(),
+                        format!("{} {}", v.profile().name, display_path(&self.root)),
+                    )
+                })
+            } else {
+                None
+            };
+            // The border is always laid out (transparent until focused), so
+            // a text tab's measured padding is taken less its width.
+            let border = m.editor_tab_border;
+            let (pad_left, pad_right) = if is_terminal {
+                (m.panel_tab_icon_pad - border, 0.)
+            } else if selected {
+                (
+                    m.panel_tab_selected_pad_x - border,
+                    m.panel_tab_selected_pad_x - border,
+                )
+            } else {
+                (m.panel_tab_pad_x - border, m.panel_tab_pad_x - border)
+            };
+            let (bg, border_color, text) = if focused {
+                (
+                    theme.tab_bg_selected_focused,
+                    theme.tab_border_selected_focused,
+                    theme.tab_text_selected,
+                )
+            } else if selected {
+                (
+                    theme.tab_bg_selected,
+                    theme.island_background,
+                    theme.tab_text_selected,
+                )
+            } else {
+                (
+                    gpui::transparent_black(),
+                    gpui::transparent_black(),
+                    theme.tab_text,
+                )
+            };
+            let close_hovered = theme.tab_close_icon_hovered;
             div()
                 .id(ElementId::NamedInteger(
                     format!("panel-tab-{}", side.index()).into(),
                     ix as u64,
                 ))
                 .h(px(m.panel_tab_height))
-                .px(px(if selected {
-                    m.panel_tab_selected_pad_x
-                } else {
-                    m.panel_tab_pad_x
-                }))
+                .pl(px(pad_left))
+                .pr(px(pad_right))
+                .when(is_terminal, |d| d.mr(px(m.panel_tab_close_margin)))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
                 .rounded(px(m.panel_tab_radius))
+                .border(px(border))
+                .border_color(border_color)
+                .bg(bg)
+                .text_color(text)
                 .cursor_pointer()
-                .when(selected, |d| {
-                    d.bg(theme.tab_bg_selected)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.tab_text_selected)
-                })
-                .when(!selected, |d| {
-                    d.text_color(theme.tab_text)
-                        .hover(|s| s.bg(theme.tab_bg_hovered))
+                .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
+                .when(!selected, |d| d.hover(|s| s.bg(theme.tab_bg_hovered)))
+                .when_some(tooltip, |d, (title, detail)| {
+                    d.tooltip(Tooltip::with_detail(title, detail))
                 })
                 .on_click(move |_, window, cx| {
                     entity.update(cx, |this, cx| {
-                        let panel = this.panel_mut(side);
-                        panel.active = ix;
-                        if panel.tools.get(ix) == Some(&Tool::Files) {
-                            this.file_tree.read(cx).focus_handle(cx).focus(window, cx);
-                        }
+                        this.panel_mut(side).active = ix;
+                        this.focus_tool_tab(side, ix, window, cx);
                         cx.notify();
                     })
                 })
-                .child(tool.label())
+                .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+                    let position = event.position;
+                    menu_entity.update(cx, |this, cx| this.panel_tab_menu(side, ix, position, cx));
+                })
+                .when(is_terminal, |d| {
+                    d.child(
+                        icon(Tool::Terminal.icon(), m.icon_size, theme.icon_secondary)
+                            .mr(px(m.panel_tab_icon_gap)),
+                    )
+                })
+                .child(div().whitespace_nowrap().child(label))
+                .when(is_terminal, |d| {
+                    d.child(
+                        div()
+                            .id("panel-tab-close")
+                            .size(px(m.icon_size))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(3. * m.zoom))
+                            .group("panel-tab-close")
+                            .hover(|s| s.bg(theme.ghost_hovered))
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                close_entity.update(cx, |this, cx| {
+                                    this.close_tool_tab(side, ix, window, cx)
+                                });
+                            })
+                            .child(
+                                icon(
+                                    "expui/general/closeSmall",
+                                    m.icon_size,
+                                    theme.tab_close_icon,
+                                )
+                                .group_hover("panel-tab-close", move |s| {
+                                    s.text_color(close_hovered)
+                                }),
+                            ),
+                    )
+                })
         });
         let anchor = panel.plus_anchor.clone();
         let anchor_read = panel.plus_anchor.clone();
@@ -2392,6 +2517,7 @@ impl Workspace {
         side: Side,
         theme: &Theme,
         m: &Metrics,
+        window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let panel = self.panel(side);
@@ -2399,17 +2525,21 @@ impl Workspace {
             self.render_empty_panel(side, theme, m, cx)
                 .into_any_element()
         } else {
-            let tool = panel
+            let tab = panel
                 .tools
                 .get(panel.active)
                 .copied()
-                .unwrap_or(Tool::Files);
-            let body: gpui::AnyElement = match tool {
+                .unwrap_or(ToolTab::single(Tool::Files));
+            let body: gpui::AnyElement = match tab.tool {
                 Tool::Files => self.file_tree.clone().into_any_element(),
                 Tool::Search => self.search_tool.clone().into_any_element(),
                 Tool::Git => self.git_tool.clone().into_any_element(),
                 Tool::History => self.history_tool.clone().into_any_element(),
                 Tool::Notifications => self.notifications_view().into_any_element(),
+                Tool::Terminal => match self.terminal_view(tab.instance) {
+                    Some(view) => view.clone().into_any_element(),
+                    None => div().size_full().into_any_element(),
+                },
                 other => div()
                     .size_full()
                     .flex()
@@ -2423,7 +2553,7 @@ impl Workspace {
                 .size_full()
                 .flex()
                 .flex_col()
-                .child(self.render_panel_tabs(side, theme, m, cx))
+                .child(self.render_panel_tabs(side, theme, m, window, cx))
                 .child(div().flex_1().min_h_0().child(body))
                 .into_any_element()
         };
@@ -2745,20 +2875,20 @@ impl Render for Workspace {
             )
             .when(bottom, |d| {
                 d.child(self.render_splitter(Side::Bottom, &m))
-                    .child(self.render_panel(Side::Bottom, &theme, &m, cx))
+                    .child(self.render_panel(Side::Bottom, &theme, &m, window, cx))
             });
         let middle = div()
             .flex_1()
             .min_h_0()
             .flex()
             .when(left, |d| {
-                d.child(self.render_panel(Side::Left, &theme, &m, cx))
+                d.child(self.render_panel(Side::Left, &theme, &m, window, cx))
                     .child(self.render_splitter(Side::Left, &m))
             })
             .child(centre)
             .when(right, |d| {
                 d.child(self.render_splitter(Side::Right, &m))
-                    .child(self.render_panel(Side::Right, &theme, &m, cx))
+                    .child(self.render_panel(Side::Right, &theme, &m, window, cx))
             });
         let chooser = self.render_chooser(&theme, &m, cx);
         let prompt = self.prompt.clone();
@@ -2794,6 +2924,12 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::git_revert))
             .on_action(cx.listener(Self::git_show_diff))
             .on_action(cx.listener(Self::new_diff_tab))
+            .on_action(cx.listener(Self::terminal_new_tool))
+            .on_action(cx.listener(Self::terminal_toggle))
+            .on_action(cx.listener(Self::terminal_jump_to_tool))
+            .on_action(cx.listener(Self::terminal_new_with_profile))
+            .on_action(cx.listener(Self::terminal_select_default_profile))
+            .on_action(cx.listener(Self::terminal_edit_profiles))
             .on_action(cx.listener(Self::diff_two_files))
             .on_action(cx.listener(Self::diff_with_clipboard))
             .on_action(cx.listener(Self::unsplit))

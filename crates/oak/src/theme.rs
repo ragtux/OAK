@@ -73,6 +73,29 @@ pub mod metrics {
     pub const PANEL_HEADER_PAD_TOP: f32 = 6.;
     pub const PANEL_HEADER_PAD_BOTTOM: f32 = 5.;
     pub const PANEL_PAD_X: f32 = 6.;
+    /// The terminal (M5, batch 9, `docs/fleet-probe.md` eleventh pass): the
+    /// grid's inset from the island. The text starts 8 in, as the panel's
+    /// 6 plus the tab row's own inset; the first row's glyphs sit 1.33 under
+    /// the tab row's 5 px bottom padding (the "P" of "PowerShell" tops at
+    /// 518.67 in both editors once this is 1.33).
+    pub const TERMINAL_PAD_X: f32 = 8.;
+    pub const TERMINAL_PAD_TOP: f32 = 4. / 3.;
+    /// Estimate: the bottom inset was not measured (Fleet scrolls by pixels
+    /// and shows a part row at the bottom).
+    pub const TERMINAL_PAD_BOTTOM: f32 = 4.;
+    /// The scroll-to-bottom button (`scrollToBottom.*`): batch 9 saw none
+    /// while scrolled back and idle, so Oak shows one only while output
+    /// arrives behind the scrolled view (estimate, as are its size and inset).
+    pub const SCROLL_TO_BOTTOM_SIZE: f32 = 28.;
+    pub const SCROLL_TO_BOTTOM_MARGIN: f32 = 12.;
+    /// A terminal's panel tab (batch 9): the tool icon 6 in (16 px, its
+    /// ink at 389.33 in a tab whose border starts at 381.33), the label 4
+    /// after it, then a 16 px close box flush with the tab's right border
+    /// (the cross's ink at 468-476, the border at 480-481.33). The next tab's
+    /// border and the `+` both sit 2.67 further than after a text tab.
+    pub const PANEL_TAB_ICON_PAD: f32 = 6.;
+    pub const PANEL_TAB_ICON_GAP: f32 = 4.;
+    pub const PANEL_TAB_CLOSE_MARGIN: f32 = 8. / 3.;
     /// An empty panel: a 24 px icon, 20, the 16 px title on a 20 line, 6, the
     /// 13 px description on a 16 line, 10, a 24 px button; left-aligned in a box
     /// inset 15 % of the island's width, vertically centred (batch 2).
@@ -601,6 +624,14 @@ scaled_metrics!(
     panel_header_pad_top = PANEL_HEADER_PAD_TOP,
     panel_header_pad_bottom = PANEL_HEADER_PAD_BOTTOM,
     panel_pad_x = PANEL_PAD_X,
+    terminal_pad_x = TERMINAL_PAD_X,
+    terminal_pad_top = TERMINAL_PAD_TOP,
+    terminal_pad_bottom = TERMINAL_PAD_BOTTOM,
+    scroll_to_bottom_size = SCROLL_TO_BOTTOM_SIZE,
+    scroll_to_bottom_margin = SCROLL_TO_BOTTOM_MARGIN,
+    panel_tab_icon_pad = PANEL_TAB_ICON_PAD,
+    panel_tab_icon_gap = PANEL_TAB_ICON_GAP,
+    panel_tab_close_margin = PANEL_TAB_CLOSE_MARGIN,
     empty_panel_icon = EMPTY_PANEL_ICON,
     empty_panel_gap_icon = EMPTY_PANEL_GAP_ICON,
     empty_panel_title_size = EMPTY_PANEL_TITLE_SIZE,
@@ -920,6 +951,63 @@ impl Metrics {
         };
         (font_size, line_height)
     }
+
+    /// The terminal's text metrics: `terminal.fontSize` times the zoom, and
+    /// `terminal.lineSpacing` times that (13 and 1.7 by default: 22 px lines).
+    pub fn terminal_text(&self, settings: &oak_settings::Settings) -> (f32, f32) {
+        let font_size = settings.terminal_font_size() * self.zoom;
+        let line_height = (font_size * settings.terminal_line_spacing()).round();
+        (font_size, line_height)
+    }
+}
+
+/// `terminal.ansiColors.foreground.ansi*`: the 16 ANSI colours as text, in
+/// xterm's order. The fallbacks are Fleet's dark theme values
+/// (`tools/fleet-probe/out/themes/dark.json`).
+const ANSI_FOREGROUND: [(&str, u32); 16] = [
+    ("terminal.ansiColors.foreground.ansiBlack", 0xB2B4B8),
+    ("terminal.ansiColors.foreground.ansiRed", 0xEB4056),
+    ("terminal.ansiColors.foreground.ansiGreen", 0x3FCCA8),
+    ("terminal.ansiColors.foreground.ansiYellow", 0xFAD075),
+    ("terminal.ansiColors.foreground.ansiBlue", 0x6C9CF2),
+    ("terminal.ansiColors.foreground.ansiMagenta", 0xEB83E2),
+    ("terminal.ansiColors.foreground.ansiCyan", 0x2CCCE6),
+    ("terminal.ansiColors.foreground.ansiWhite", 0xCFD1D5),
+    ("terminal.ansiColors.foreground.ansiBrightBlack", 0x595959),
+    ("terminal.ansiColors.foreground.ansiBrightRed", 0xC7001B),
+    ("terminal.ansiColors.foreground.ansiBrightGreen", 0x009E6F),
+    ("terminal.ansiColors.foreground.ansiBrightYellow", 0xE09119),
+    ("terminal.ansiColors.foreground.ansiBrightBlue", 0x0067E6),
+    ("terminal.ansiColors.foreground.ansiBrightMagenta", 0xEB4DDE),
+    ("terminal.ansiColors.foreground.ansiBrightCyan", 0x00BAD6),
+    ("terminal.ansiColors.foreground.ansiBrightWhite", 0xFFFFFF),
+];
+
+/// `terminal.ansiColors.background.ansi*`: the same 16 as a cell's background.
+const ANSI_BACKGROUND: [(&str, u32); 16] = [
+    ("terminal.ansiColors.background.ansiBlack", 0x2A2B2E),
+    ("terminal.ansiColors.background.ansiRed", 0x804A52),
+    ("terminal.ansiColors.background.ansiGreen", 0x437A6A),
+    ("terminal.ansiColors.background.ansiYellow", 0x80653E),
+    ("terminal.ansiColors.background.ansiBlue", 0x405C80),
+    ("terminal.ansiColors.background.ansiMagenta", 0x6B5280),
+    ("terminal.ansiColors.background.ansiCyan", 0x477880),
+    ("terminal.ansiColors.background.ansiWhite", 0x898989),
+    ("terminal.ansiColors.background.ansiBrightBlack", 0x424242),
+    ("terminal.ansiColors.background.ansiBrightRed", 0x66333A),
+    ("terminal.ansiColors.background.ansiBrightGreen", 0x2D6654),
+    ("terminal.ansiColors.background.ansiBrightYellow", 0x665234),
+    ("terminal.ansiColors.background.ansiBrightBlue", 0x314966),
+    ("terminal.ansiColors.background.ansiBrightMagenta", 0x4E3166),
+    ("terminal.ansiColors.background.ansiBrightCyan", 0x2F5F66),
+    ("terminal.ansiColors.background.ansiBrightWhite", 0x1A1A1A),
+];
+
+fn ansi_palette(t: &oak_theme::Theme, keys: &[(&str, u32); 16]) -> [Hsla; 16] {
+    std::array::from_fn(|i| {
+        let (key, f) = keys[i];
+        to_hsla(t.color_or(key, Color::rgb((f >> 16) as u8, (f >> 8) as u8, f as u8)))
+    })
 }
 
 pub fn to_hsla(c: Color) -> Hsla {
@@ -1027,6 +1115,15 @@ pub struct Theme {
     // gitBranchTag.local.*: the Git tool's branch chip.
     pub git_branch_tag_border: Hsla,
     pub git_branch_tag_text: Hsla,
+    // terminal.ansiColors.foreground.ansi* / terminal.ansiColors.background.ansi*:
+    // the 16 ANSI colours as text and as a cell's background (M5), in xterm's
+    // order: black, red, green, yellow, blue, magenta, cyan, white, then bright.
+    pub terminal_fg: [Hsla; 16],
+    pub terminal_bg: [Hsla; 16],
+    // scrollToBottom.gradient1|2.default|hovered: the terminal's floating
+    // scroll-to-bottom button, a top-to-bottom gradient.
+    pub scroll_to_bottom: [Hsla; 2],
+    pub scroll_to_bottom_hovered: [Hsla; 2],
     pub icon_green: Hsla,
     pub icon_blue: Hsla,
     pub icon_red: Hsla,
@@ -1384,6 +1481,28 @@ impl Theme {
                 .unwrap_or(to_hsla(Color::rgb(0x08, 0x70, 0xE4).with_alpha(0x33))),
             git_branch_tag_border: c("gitBranchTag.local.border", Color::rgb(0x4B, 0x8D, 0xEC)),
             git_branch_tag_text: c("gitBranchTag.local.text", Color::rgb(0x4B, 0x8D, 0xEC)),
+            terminal_fg: ansi_palette(&t, &ANSI_FOREGROUND),
+            terminal_bg: ansi_palette(&t, &ANSI_BACKGROUND),
+            scroll_to_bottom: [
+                c(
+                    "scrollToBottom.gradient1.default",
+                    text_primary.with_alpha(0x26),
+                ),
+                c(
+                    "scrollToBottom.gradient2.default",
+                    text_primary.with_alpha(0x33),
+                ),
+            ],
+            scroll_to_bottom_hovered: [
+                c(
+                    "scrollToBottom.gradient1.hovered",
+                    text_primary.with_alpha(0x33),
+                ),
+                c(
+                    "scrollToBottom.gradient2.hovered",
+                    text_primary.with_alpha(0x4D),
+                ),
+            ],
             icon_green: c("icon.background.green", Color::rgb(0x16, 0x90, 0x68)),
             icon_blue: c("icon.background.blue", Color::rgb(0x2A, 0x7D, 0xEB)),
             icon_red: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)),

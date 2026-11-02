@@ -167,6 +167,19 @@ impl SettingsView {
         y
     }
 
+    /// Scrolls to the group titled `title` (`terminal/select-default-profile`
+    /// lands on Tools > Terminal).
+    pub fn show_group(&mut self, title: &str, cx: &mut Context<Self>) {
+        for (s, section) in SECTIONS.iter().enumerate() {
+            for (g, group) in section.groups.iter().enumerate() {
+                if group.title == Some(title) {
+                    self.select(TreeRow::Group(s, g), cx);
+                    return;
+                }
+            }
+        }
+    }
+
     fn select(&mut self, row: TreeRow, cx: &mut Context<Self>) {
         self.selected = row;
         let m = *cx.global::<Metrics>();

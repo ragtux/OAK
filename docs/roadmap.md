@@ -23,13 +23,13 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-02, after the M3 build) |
+| Table | Count | Oak covers (2026-11-02, after the M5 build) |
 | --- | --- | --- |
-| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 114 |
+| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 125 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 89 |
-| Theme `colors` keys | 684 | 125 |
-| Theme `textAttributes` keys | 157 | 32 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 97 |
+| Theme `colors` keys | 684 | 176 |
+| Theme `textAttributes` keys | 157 | 35 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
 
@@ -328,16 +328,66 @@ a plain diff), and a Fleet pass over the estimates the tenth pass lists
   if speed demands it.
 - Probes: batch 10.
 
-### M5 Terminal (M)
+### M5 Terminal (built 2026-11-02; batch 9 measured)
 
-- `terminal/new-tool`, `terminal/toggle`, `terminal/clear`, `terminal/copy`,
-  `terminal/paste`, `select-all-terminal`, profiles (`terminal.profiles`,
-  `terminal.profile.default`, `terminal/new-with-profile`), all `terminal.*`
-  font and behaviour settings, `launchTerminalOnOpen`,
-  `terminal.enableFocusEditorOnEsc`.
-- `alacritty_terminal` (Apache-2.0, what Zed uses) for the PTY and grid; the
-  32 `terminal.*` colour keys for painting.
-- Probes: batch 9.
+Built in one evening (`docs/fleet-probe.md`, eleventh pass): the
+`oak-terminal` crate wraps `alacritty_terminal` 0.25 (the PTY, the parser,
+the grid, the scrollback and the selection are Alacritty's; ConPTY on
+Windows) behind a gpui-free API of profiles, key encoding, a grid snapshot
+and the 256-colour table, tested on its own including a real shell. The
+app's `terminal.rs` paints the snapshot at `terminal.fontSize` x
+`terminal.lineSpacing` with the 32 `terminal.ansiColors.*` keys, takes
+typed text through the platform's text input and every other key through
+`oak_terminal::keys`, and the workspace keeps one tab per shell in the
+bottom panel (`workspace/terminals.rs`). Batch 9 ran on Fleet twice the
+same evening (the `terminal` and `terminal2` scenes): the grid's inset, the
+tab's icon, title, close cross and focused colours, the selection's extent,
+the right-click menu and the toggle were measured or read off the shots and
+the `terminal` pair passes `compare.py` on the island, tab-row and
+first-row edges.
+
+- Done: `terminal/new-tool`, `terminal/toggle` (hides the panel when its
+  terminal has the focus, else shows one focused), `terminal/jump-to-tool`,
+  `terminal/new-with-profile` (a menu of the profiles), `terminal/select-
+  default-profile` (the Settings tool at Tools > Terminal),
+  `terminal/edit-profiles`, and on a focused terminal `terminal/copy`,
+  `terminal/paste` (bracketed when the program asked), `select-all-terminal`
+  and `terminal/clear`; Fleet's five terminal keymap rows added to the
+  bundled keymap, which is a subset of Fleet's file; the `+` chooser and
+  Goto's Tools list open a terminal; `close-tab`, the tab's cross, its menu
+  and the shell's exit close one.
+- Done: profiles: `terminal.profiles` rows (Fleet's `{name, program,
+  args}`) plus the shells found on the machine (`pwsh`, `powershell`, `cmd`;
+  `$SHELL`, `bash`, `zsh`, `fish`, `sh`), `terminal.profile.default` by
+  name, `launchTerminalOnOpen`.
+- Done: settings: `terminal.fontFamily|fontSize|lineSpacing|fontWeight|
+  fontFeatures`, `terminal.caretShape` (null is the editor's),
+  `terminal.lineCapacity` (the scrollback), `terminal.copyOnSelection`,
+  `terminal.enableFocusEditorOnEsc` and `enableFocusPanelsInApps`,
+  `terminal.clearTerminalOnCmdK` (the Goto chord clears instead),
+  `terminal.useMacOptionAsMeta`, `terminal.bell` (counted, not sounded).
+- Done: the tab as batch 9 shows it: the tool icon, "Terminal", a close
+  cross, the `selectedFocused` colours while the shell has the focus (every
+  panel tab now takes them while its panel is focused), a tooltip with the
+  profile and the folder; the selection washes only the row's text; the
+  right-click menu with Fleet's rows and chords (Page Up/Down on
+  Shift+PageUp/PageDown, Line Up/Down on Alt+Up/Down); the caret from the
+  editor's colour; `scrollToBottom.*` on a button shown only while output
+  arrives behind a scrolled-back view.
+- Probes: batch 9 as the `terminal` and `terminal2` scenes, both editors;
+  the driver gained a `wheel` step.
+
+Left for later: Fleet's terminal search bar (Find, Ctrl+F), paths and URLs
+painted as links, pixel scrolling (Fleet shows a part row at the bottom
+after a wheel notch; the amount per notch was not pinned down), the caret's
+blink (no shot caught Fleet's caret), mouse reporting to full-screen
+programs, an audible bell, the tooltip on one line with an ellipsis, the
+cross's hover colour, Fleet's profile chooser popup (Oak shows a menu), the
+keys without an effect in Oak (`terminal.fontHinting`, `fontSmoothing`,
+`TypeAheadLatency`, `enableTypeAheadInTerminal`, `shellIntegration`,
+`outputBufferLines`, `terminal.tool`, `ff.alignTerminalByGrid`: Oak always
+aligns by the grid), and Fleet's empty editor state, which batch 9 caught in
+passing (three shortcut cards over "No recent files").
 
 ### M6 Run and problems (M)
 

@@ -27,6 +27,7 @@ mod search_tool;
 mod settings;
 mod settings_schema;
 mod settings_view;
+mod terminal;
 mod theme;
 mod toolbar;
 mod tooltip;

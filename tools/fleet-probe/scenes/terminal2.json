@@ -1,0 +1,38 @@
+{
+  "name": "terminal2",
+  "about": "Batch 9, second pass: the terminal's wheel step (one notch after a long listing), the selected tab while the editor has the focus, the tab hovered (its close cross), the right-click menu, and Ctrl+` pressed again on a focused terminal (toggle). Fleet only; Oak's side is the same list for a later comparison.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+graveaccent"], ["wait", 4000],
+      ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500],
+      ["move", 640, 620], ["wait", 300], ["wheel", 1], ["wait", 1200], ["shot", "notch1"],
+      ["wheel", -1], ["wait", 1200], ["shot", "notch-back"],
+      ["move", 430, 492], ["wait", 1000], ["shot", "tab-hover"],
+      ["move", 1000, 300], ["click"], ["wait", 1000], ["shot", "unfocused"],
+      ["move", 700, 620], ["click"], ["wait", 500], ["click", "right"], ["wait", 1200], ["shot", "menu"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+graveaccent"], ["wait", 1200], ["shot", "toggled"],
+      ["key", "ctrl+graveaccent"], ["wait", 1200], ["shot", "toggled-back"]
+    ],
+    "oak": [
+      ["wait", 2000],
+      ["key", "ctrl+graveaccent"], ["wait", 2500],
+      ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500],
+      ["move", 640, 620], ["wait", 300], ["wheel", 1], ["wait", 800], ["shot", "notch1"],
+      ["wheel", -1], ["wait", 800], ["shot", "notch-back"],
+      ["move", 430, 492], ["wait", 1000], ["shot", "tab-hover"],
+      ["move", 1000, 300], ["click"], ["wait", 800], ["shot", "unfocused"],
+      ["move", 700, 620], ["click"], ["wait", 500], ["click", "right"], ["wait", 800], ["shot", "menu"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+graveaccent"], ["wait", 800], ["shot", "toggled"],
+      ["key", "ctrl+graveaccent"], ["wait", 800], ["shot", "toggled-back"]
+    ]
+  },
+  "scans": [
+    {"name": "bottom island column (x=400)", "axis": "y", "at": 400, "from": 440, "to": 800, "edges": ["editor island bottom", "bottom island top", "tab row", "first text row"]}
+  ]
+}

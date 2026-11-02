@@ -148,7 +148,7 @@ impl Keymap {
             .iter()
             .filter_map(|b| {
                 let chord = b.chord_for(platform)?;
-                let keystroke = chord_to_gpui(chord)?;
+                let keystroke = chord_to_gpui_on(chord, platform)?;
                 Some(Resolved {
                     chord: chord.to_string(),
                     keystroke,
@@ -184,7 +184,7 @@ fn key_name(fleet: &str) -> Option<String> {
         "backslash" => "\\",
         "semicolon" => ";",
         "quote" | "apostrophe" => "'",
-        "backquote" | "grave" | "backtick" => "`",
+        "backquote" | "grave" | "graveaccent" | "backtick" => "`",
         "minus" | "numpadsubtract" => "-",
         "equals" | "equal" => "=",
         "plus" | "numpadadd" => "+",
@@ -212,17 +212,53 @@ fn key_name(fleet: &str) -> Option<String> {
 /// gpui has no spelling for. A two-chord sequence (`ctrl-shift-g
 /// ctrl-shift-a`, Fleet's git keys) becomes gpui's space-separated one.
 pub fn chord_to_gpui(chord: &str) -> Option<String> {
+    chord_to_gpui_on(chord, Platform::Mac)
+}
+
+/// [`chord_to_gpui`] for a platform: on Windows and Linux gpui reports a
+/// shifted symbol key as the shifted character without Shift (Ctrl+Shift+`
+/// arrives as `ctrl-~`), so `ctrl-shift-graveaccent` becomes `ctrl-~` there.
+pub fn chord_to_gpui_on(chord: &str, platform: Platform) -> Option<String> {
+    let fold = platform != Platform::Mac;
     let mut chords = chord.split_whitespace();
     let first = chords.next()?;
-    let mut out = single_chord_to_gpui(first)?;
+    let mut out = single_chord_to_gpui(first, fold)?;
     for next in chords {
         out.push(' ');
-        out.push_str(&single_chord_to_gpui(next)?);
+        out.push_str(&single_chord_to_gpui(next, fold)?);
     }
     Some(out)
 }
 
-fn single_chord_to_gpui(chord: &str) -> Option<String> {
+/// The character Shift puts on a US keyboard's symbol or digit key.
+fn shifted_symbol(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "`" => "~",
+        "1" => "!",
+        "2" => "@",
+        "3" => "#",
+        "4" => "$",
+        "5" => "%",
+        "6" => "^",
+        "7" => "&",
+        "8" => "*",
+        "9" => "(",
+        "0" => ")",
+        "-" => "_",
+        "=" => "+",
+        "[" => "{",
+        "]" => "}",
+        "\\" => "|",
+        ";" => ":",
+        "'" => "\"",
+        "," => "<",
+        "." => ">",
+        "/" => "?",
+        _ => return None,
+    })
+}
+
+fn single_chord_to_gpui(chord: &str, fold_shift: bool) -> Option<String> {
     let mut parts: Vec<&str> = chord.split('-').collect();
     // A chord ending in the "-" key itself splits into an empty last part.
     if parts.last() == Some(&"") && parts.len() >= 2 {
@@ -234,8 +270,17 @@ fn single_chord_to_gpui(chord: &str) -> Option<String> {
         }
     }
     let (key, mods) = parts.split_last()?;
+    let key = key_name(key)?;
     let mut out = String::new();
     let mut seen = Vec::new();
+    let mut mods: Vec<&str> = mods.to_vec();
+    let shifted = fold_shift
+        .then(|| shifted_symbol(&key))
+        .flatten()
+        .filter(|_| mods.iter().any(|m| m.eq_ignore_ascii_case("shift")));
+    if shifted.is_some() {
+        mods.retain(|m| !m.eq_ignore_ascii_case("shift"));
+    }
     for m in mods {
         let m = match m.to_ascii_lowercase().as_str() {
             "ctrl" | "control" => "ctrl",
@@ -250,7 +295,10 @@ fn single_chord_to_gpui(chord: &str) -> Option<String> {
             out.push('-');
         }
     }
-    out.push_str(&key_name(key)?);
+    match shifted {
+        Some(s) => out.push_str(s),
+        None => out.push_str(&key),
+    }
     Some(out)
 }
 
@@ -260,6 +308,18 @@ mod tests {
 
     #[test]
     fn chords() {
+        assert_eq!(
+            chord_to_gpui_on("ctrl-shift-graveaccent", Platform::Windows).as_deref(),
+            Some("ctrl-~")
+        );
+        assert_eq!(
+            chord_to_gpui_on("ctrl-shift-graveaccent", Platform::Mac).as_deref(),
+            Some("ctrl-shift-`")
+        );
+        assert_eq!(
+            chord_to_gpui_on("ctrl-shift-a", Platform::Windows).as_deref(),
+            Some("ctrl-shift-a")
+        );
         assert_eq!(
             chord_to_gpui("ctrl-shift-leftbracket").as_deref(),
             Some("ctrl-shift-[")

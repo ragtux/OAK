@@ -17,6 +17,8 @@ const WORKSPACE: Option<&str> = Some("Workspace");
 /// Alt+2 is also `toggle-bottom-panel`; the Goto preview toggle applies only while
 /// a popup has the focus, as Fleet resolves it by context.
 const POPUP: Option<&str> = Some("Popup");
+/// A focused terminal's own copy, paste, select-all and clear (M5).
+const TERMINAL: Option<&str> = Some("Terminal");
 
 /// One table, three readers: the key bindings, the boxed action for an id
 /// (menus and the Goto panel dispatch it), and the list of canonical ids
@@ -64,7 +66,7 @@ action_table! {
     "goto/go-to-next-tab" | "next-tab" | "tabs/next-tab" | "switch-to-next-file" => NextTab, WORKSPACE;
     "goto/go-to-previous-tab" | "prev-tab" | "tabs/previous-tab" | "switch-to-previous-file" => PrevTab, WORKSPACE;
     "toggle-left-panel" => ToggleLeftPanel, WORKSPACE;
-    "toggle-bottom-panel" | "terminal/toggle" => ToggleBottomPanel, WORKSPACE;
+    "toggle-bottom-panel" => ToggleBottomPanel, WORKSPACE;
     "toggle-right-panel" => ToggleRightPanel, WORKSPACE;
     "hide-all-panels" => HideAllPanels, WORKSPACE;
     "hide-active-panel" => HideActivePanel, WORKSPACE;
@@ -133,6 +135,16 @@ action_table! {
     "show-recent-workspaces" => ShowRecentWorkspaces, WORKSPACE;
     "notifications/toggle" => ToggleNotifications, WORKSPACE;
     "notifications/clear-all" => ClearNotifications, WORKSPACE;
+    "terminal/new-tool" => TerminalNewTool, WORKSPACE;
+    "terminal/toggle" => TerminalToggle, WORKSPACE;
+    "terminal/jump-to-tool" => TerminalJumpToTool, WORKSPACE;
+    "terminal/new-with-profile" => TerminalNewWithProfile, WORKSPACE;
+    "terminal/select-default-profile" => TerminalSelectDefaultProfile, WORKSPACE;
+    "terminal/edit-profiles" => TerminalEditProfiles, WORKSPACE;
+    "terminal/clear" => TerminalClear, TERMINAL;
+    "terminal/copy" => TerminalCopy, TERMINAL;
+    "terminal/paste" => TerminalPaste, TERMINAL;
+    "select-all-terminal" => SelectAllTerminal, TERMINAL;
     "local-history/make-snapshot" => MakeSnapshot, WORKSPACE;
     "tabs/close-all-tabs" => CloseAllTabs, WORKSPACE;
     "copy-relative-path" => CopyRelativePath, WORKSPACE;
@@ -278,6 +290,18 @@ pub fn action_title(id: &str) -> String {
         "diff/two-files" => Some("Compare Two Files"),
         "diff/with-clipboard" => Some("Compare with Clipboard"),
         "local-history/make-snapshot" => Some("Make Local History Snapshot"),
+        // M5: the first six as Fleet's terminal menu spells them (batch 9),
+        // the rest estimates.
+        "terminal/new-tool" => Some("New Terminal"),
+        "terminal/new-with-profile" => Some("New Terminal With Profile..."),
+        "terminal/copy" => Some("Copy"),
+        "terminal/paste" => Some("Paste"),
+        "select-all-terminal" => Some("Select All"),
+        "terminal/clear" => Some("Clear"),
+        "terminal/toggle" => Some("Toggle Terminal"),
+        "terminal/jump-to-tool" => Some("Terminal"),
+        "terminal/select-default-profile" => Some("Select Default Terminal Profile"),
+        "terminal/edit-profiles" => Some("Edit Terminal Profiles"),
         "confirm" => Some("Enter"),
         "arrow-up" => Some("Up"),
         "arrow-down" => Some("Down"),

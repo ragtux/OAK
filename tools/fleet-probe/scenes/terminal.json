@@ -1,0 +1,43 @@
+{
+  "name": "terminal",
+  "about": "Batch 9: the Terminal tool. Ctrl+` opens it in the bottom panel (the island, its tab row and the grid's inset, the prompt, the caret); `echo` output; a long listing scrolled up by three wheel notches for the scroll-to-bottom button; a drag across the text for the selection colour; Ctrl+Shift+` for a second terminal's tab title; then the panel hidden again. The scans read the bottom island's column and the first text row.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "manual": [
+    "Fleet: a fresh run; dismiss nothing by hand. The shell is the Terminal page's default (pwsh on this machine)."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+graveaccent"], ["wait", 4000], ["shot", "terminal"],
+      ["type", "echo oak-probe"], ["key", "enter"], ["wait", 1500], ["shot", "echo"],
+      ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500], ["shot", "long"],
+      ["move", 640, 620], ["wait", 300], ["wheel", 3], ["wait", 1200], ["shot", "scrolled"],
+      ["move", 1240, 740], ["wait", 800], ["shot", "scrolled-hover"],
+      ["drag", 420, 600, 700, 600], ["wait", 800], ["shot", "selection"],
+      ["move", 640, 700], ["click"], ["wait", 400],
+      ["key", "ctrl+shift+graveaccent"], ["wait", 4000], ["shot", "two-tabs"],
+      ["key", "alt+2"], ["wait", 800], ["shot", "hidden"]
+    ],
+    "oak": [
+      ["wait", 2000],
+      ["key", "ctrl+graveaccent"], ["wait", 2500], ["shot", "terminal"],
+      ["type", "echo oak-probe"], ["key", "enter"], ["wait", 1500], ["shot", "echo"],
+      ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500], ["shot", "long"],
+      ["move", 640, 620], ["wait", 300], ["wheel", 3], ["wait", 800], ["shot", "scrolled"],
+      ["move", 1240, 740], ["wait", 800], ["shot", "scrolled-hover"],
+      ["drag", 420, 600, 700, 600], ["wait", 800], ["shot", "selection"],
+      ["move", 640, 700], ["click"], ["wait", 400],
+      ["key", "ctrl+shift+graveaccent"], ["wait", 2500], ["shot", "two-tabs"],
+      ["key", "alt+2"], ["wait", 800], ["shot", "hidden"]
+    ]
+  },
+  "scans": [
+    {"name": "bottom island column (x=400)", "axis": "y", "at": 400, "from": 440, "to": 800, "edges": ["editor island bottom", "bottom island top", "tab row", "first text row"]},
+    {"name": "prompt row (y=560)", "axis": "x", "at": 560, "from": 360, "to": 700, "edges": ["island left", "text left"]}
+  ],
+  "samples": [
+    {"name": "bottom island", "at": [700, 520], "key": "island.background"}
+  ]
+}

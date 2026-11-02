@@ -723,6 +723,38 @@ Goto Actions, while `Ctrl+Shift+G, Ctrl+Shift+A` is bound in the keymap).
 | Git tool menus | the filter button: "All changes / Staged only / Unstaged only" (estimate; Fleet's menu was not opened); the branch chip: the branch tag's menu; the History tool's chips: the local branches, the repository or the active file, "all users" and each author (estimates) | |
 | menus | the Git submenu of the main menu and the tree menu: Commit..., Push, Pull, Show Diff, Revert..., Toggle Blame, Show History, Changed Files (rows estimate) | |
 
+## Eleventh pass: M5, batch 9, the terminal (2026-11-02, night)
+
+The `terminal` scene (Ctrl+` on the fixture, `echo`, a 120-line listing,
+three wheel notches, a drag, Ctrl+Shift+` for a second tab, Alt+2) and the
+`terminal2` scene (one notch each way, the tab hovered, a click in the
+empty editor area, the right-click menu, Ctrl+` twice) ran on Fleet and on
+Oak; `terminal-fleet-*.png` and `terminal2-fleet-*.png` in the probe's out
+folder. Logical px at 1.5 device px per px; the shell is pwsh 7.6.9.
+
+| element | measured | Oak after the pass |
+|---|---|---|
+| bottom island | top 472 (the editor island ends at 464), the tab row box 478-506 (28), the text 376 in (8 past the island's edge at 368), the first row's "P" ink top at 518.67 and rows 22 apart (JetBrains Mono 13 x 1.7); the grid top is 512.33, 1.33 under the tab row's 5 px bottom padding | the same within 0.7 (`TERMINAL_PAD_TOP` 1.33, was 4) |
+| the tab, focused | "Terminal" (every terminal alike) semibold in `tab.text.selected`; the tool icon's ink 389.33-402 (a 16 px icon 6 in from the inner edge), the label from 408, the close cross's ink 468-476 in a 16 px box flush with the right border; a 1.33 px `tab.border.selectedFocused` (`#0E4F98`) at 381.33 and 480 around `tab.background.selectedFocused` (`#142F4D`); 100 wide | the same within 0.7 |
+| the tab, selected while the editor has the focus | `tab.background.selected` (`#28292B`) inset 1.33 on every side (575-719 and 719-756 device), no border | the same (the border is laid out in the island's colour) |
+| the tab, unselected | the label in `tab.text`, the icon grey (`#969799` over the island), the cross dimmer (`#4E4E50`); the next tab's border 4.67 after the first's, the `+` glyph 14.67 after a tab, both 2.67 more than after a text tab | `PANEL_TAB_CLOSE_MARGIN` 2.67 after a terminal tab; the second tab's border 1.33 short |
+| tab tooltip | "Terminal" bold then "pwsh C:\Users\...\probe-fixture-wit..." in secondary text on one line, truncated | two lines, untruncated (estimate) |
+| selection | `#225090` (`editor.selection.background` focused), only over the row's text: a drag from the space before "52" to 280 px past it selected "52" | the same; cells past the row's text stay unwashed |
+| scroll-to-bottom | no button while scrolled back and idle, nor with the pointer at the island's corner | shown only while output arrives behind a scrolled-back view (estimate) |
+| wheel | Fleet scrolls by pixels (a part row at the bottom); three notches moved 61 rows, one notch 88 rows up and the next 1 row down; not pinned down | 3 rows a notch |
+| caret | not caught in any shot (the editor's caret blinks; the terminal's presumably too) | the editor's caret colour as a 2 px bar, Block or Underline per `terminal.caretShape`, no blink |
+| right-click menu | Ask AI (Ctrl+.), Fix Command (Ctrl+Shift+., greyed), New Terminal (Ctrl+Shift+`), New Terminal With Profile..., Find (Ctrl+F), Copy (Ctrl+Shift+C, greyed without a selection), Paste (Ctrl+Shift+V), Select All (Ctrl+Shift+A), Clear (greyed in the shot), Page Up (Shift+Page Up), Page Down (Shift+Page Down), Line Up (Alt+Up), Line Down (Alt+Down) | the same without the AI rows and Find |
+| toggle | Ctrl+` on a focused terminal hides the bottom panel; Ctrl+` again shows it with the terminal focused (its tab blue) | the same |
+| output | paths in the output are painted blue (`#2A60D5`-ish) as links | plain text |
+| empty editor | Fleet's empty state is three cards (Ctrl+K Go To..., Ctrl+Shift+K Actions..., Ctrl+N New File...) over "No recent files" and "Search files with 'Goto' or create a new file", recentred when the bottom panel hides; a click there leaves the focus in the terminal | Oak's two lines (M3 leftover) |
+
+Two things about the keys came out of the pass. gpui on Windows and Linux
+reports a shifted symbol key as the shifted character without Shift, so
+Fleet's `ctrl-shift-graveaccent` must bind as `ctrl-~` (`oak-keymap`
+folds it; `graveaccent` itself was unknown to the crate and to the driver
+before). And the bundled `assets/keymap/default.json` is a 182-row subset of
+Fleet's 280-row file; the five terminal rows were added verbatim.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

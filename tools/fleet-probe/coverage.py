@@ -31,7 +31,7 @@ def quoted_strings(paths):
         for root, _dirs, files in os.walk(path) if os.path.isdir(path) else [(os.path.dirname(path), [], [os.path.basename(path)])]:
             for f in files:
                 if f.endswith(".rs"):
-                    with open(os.path.join(root, f)) as fh:
+                    with open(os.path.join(root, f), encoding="utf-8") as fh:
                         found.update(re.findall(r'"([A-Za-z0-9_./-]+)"', fh.read()))
     return found
 

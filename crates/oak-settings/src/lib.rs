@@ -554,13 +554,18 @@ impl Settings {
     /// commas or spaces), or an object `{ "ss01": true }` whose true keys are
     /// the features. Default none.
     pub fn editor_font_features(&self) -> Vec<String> {
+        self.font_features_of("editor.fontFeatures")
+    }
+
+    /// A `*.fontFeatures` value as feature tags.
+    fn font_features_of(&self, key: &str) -> Vec<String> {
         let tags = |s: &str| -> Vec<String> {
             s.split(|c: char| c == ',' || c.is_whitespace())
                 .filter(|t| !t.is_empty())
                 .map(str::to_string)
                 .collect()
         };
-        match self.get("editor.fontFeatures") {
+        match self.get(key) {
             Some(Value::Array(items)) => items
                 .iter()
                 .filter_map(Value::as_str)
@@ -598,6 +603,114 @@ impl Settings {
     /// editor". Default true (estimate).
     pub fn editor_show_file_details(&self) -> bool {
         self.bool("editor.showFileDetails").unwrap_or(true)
+    }
+
+    // ---- M5: the terminal (`terminal.*`). The defaults were read off the
+    // Settings tool's Terminal page (seventh pass); the keys the page does
+    // not show are estimates and say so.
+
+    /// `terminal.fontFamily`: "Font family". None means the editor's font
+    /// (the page shows JetBrains Mono).
+    pub fn terminal_font_family(&self) -> Option<&str> {
+        self.str("terminal.fontFamily").filter(|s| !s.is_empty())
+    }
+
+    /// `terminal.fontSize`: "Font size in pixels". 13.
+    pub fn terminal_font_size(&self) -> f32 {
+        self.f64("terminal.fontSize")
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as f32)
+            .unwrap_or(13.0)
+    }
+
+    /// `terminal.lineSpacing`: "The distance between the baselines is
+    /// calculated as font size multiplied by the given number." 1.7.
+    pub fn terminal_line_spacing(&self) -> f32 {
+        self.f64("terminal.lineSpacing")
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as f32)
+            .unwrap_or(1.7)
+    }
+
+    /// `terminal.fontWeight`: as `editor.fontWeight`, 400 (estimate).
+    pub fn terminal_font_weight(&self) -> f32 {
+        self.f64("terminal.fontWeight")
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as f32)
+            .unwrap_or(400.0)
+    }
+
+    /// `terminal.fontFeatures`: OpenType features, as `editor.fontFeatures`.
+    pub fn terminal_font_features(&self) -> Vec<String> {
+        self.font_features_of("terminal.fontFeatures")
+    }
+
+    /// `terminal.caretShape`: "Caret shape"; null is "Same as in the editor".
+    pub fn terminal_caret_shape(&self) -> Option<CaretShape> {
+        self.str("terminal.caretShape").and_then(CaretShape::parse)
+    }
+
+    /// `terminal.bell`: "Enable terminal bell". True.
+    pub fn terminal_bell(&self) -> bool {
+        self.bool("terminal.bell").unwrap_or(true)
+    }
+
+    /// `terminal.clearTerminalOnCmdK`: "Clear terminal on Cmd+K". False.
+    pub fn terminal_clear_on_cmd_k(&self) -> bool {
+        self.bool("terminal.clearTerminalOnCmdK").unwrap_or(false)
+    }
+
+    /// `terminal.copyOnSelection`: "Copy text from terminal on selection". False.
+    pub fn terminal_copy_on_selection(&self) -> bool {
+        self.bool("terminal.copyOnSelection").unwrap_or(false)
+    }
+
+    /// `terminal.enableFocusEditorOnEsc`: "Focus main panel on Esc". False.
+    pub fn terminal_focus_editor_on_esc(&self) -> bool {
+        self.bool("terminal.enableFocusEditorOnEsc")
+            .unwrap_or(false)
+    }
+
+    /// `terminal.enableFocusPanelsInApps`: "Focus main panel on Esc in
+    /// interactive programs like vim". False (estimate: not on the page).
+    pub fn terminal_focus_panels_in_apps(&self) -> bool {
+        self.bool("terminal.enableFocusPanelsInApps")
+            .unwrap_or(false)
+    }
+
+    /// `terminal.useMacOptionAsMeta`: "Use Option as Meta key on macOS".
+    /// False (estimate: not on the page).
+    pub fn terminal_use_mac_option_as_meta(&self) -> bool {
+        self.bool("terminal.useMacOptionAsMeta").unwrap_or(false)
+    }
+
+    /// `terminal.lineCapacity`: "Maximum number of lines in terminals before
+    /// oldest lines are deleted". 10000 (estimate: not on the page).
+    pub fn terminal_line_capacity(&self) -> usize {
+        self.usize("terminal.lineCapacity")
+            .filter(|v| *v > 0)
+            .unwrap_or(10_000)
+            .min(1_000_000)
+    }
+
+    /// `terminal.profiles`: "List of available shell profiles", rows of
+    /// `{name, program, args}` (Fleet's `Profile`); the terminal crate parses them.
+    pub fn terminal_profiles(&self) -> Option<&Value> {
+        self.get("terminal.profiles")
+    }
+
+    /// `terminal.profile.default`: "Select default profile used in Terminal
+    /// tool", a profile's name (the page shows `pwsh` on Windows). None means
+    /// the first shell the machine has.
+    pub fn terminal_profile_default(&self) -> Option<&str> {
+        self.str("terminal.profile.default")
+            .filter(|s| !s.is_empty())
+    }
+
+    /// `launchTerminalOnOpen`: "Start a terminal session when opening a
+    /// workspace". False.
+    pub fn launch_terminal_on_open(&self) -> bool {
+        self.bool("launchTerminalOnOpen").unwrap_or(false)
     }
 }
 
@@ -737,6 +850,30 @@ fn stamp(path: &Path) -> Option<SystemTime> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn terminal_defaults_and_values() {
+        let s = super::Settings::parse("{}").unwrap();
+        assert_eq!(s.terminal_font_size(), 13.0);
+        assert_eq!(s.terminal_line_spacing(), 1.7);
+        assert_eq!(s.terminal_caret_shape(), None);
+        assert!(s.terminal_bell());
+        assert!(!s.terminal_copy_on_selection());
+        assert_eq!(s.terminal_line_capacity(), 10_000);
+        assert_eq!(s.terminal_profile_default(), None);
+        assert!(!s.launch_terminal_on_open());
+        let s = super::Settings::parse(
+            r#"{"terminal.caretShape": "Block", "terminal.profile.default": "cmd",
+                "terminal.lineCapacity": 500, "terminal.fontFeatures": ["ss01", "zero"],
+                "terminal.profiles": [{"name": "x", "program": "x.exe"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(s.terminal_caret_shape(), Some(super::CaretShape::Block));
+        assert_eq!(s.terminal_profile_default(), Some("cmd"));
+        assert_eq!(s.terminal_line_capacity(), 500);
+        assert_eq!(s.terminal_font_features(), vec!["ss01", "zero"]);
+        assert!(s.terminal_profiles().is_some_and(|v| v.is_array()));
+    }
+
     use super::*;
 
     #[test]

@@ -307,7 +307,7 @@ VK = {
     "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
     "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
     "minus": 0xBD, "equals": 0xBB, "plus": 0xBB, "comma": 0xBC, "period": 0xBE, "slash": 0xBF,
-    "backquote": 0xC0, "grave": 0xC0, "semicolon": 0xBA, "quote": 0xDE,
+    "backquote": 0xC0, "grave": 0xC0, "graveaccent": 0xC0, "semicolon": 0xBA, "quote": 0xDE,
     "openbracket": 0xDB, "closebracket": 0xDD, "backslash": 0xDC,
 }
 for _i in range(1, 25):
@@ -506,7 +506,7 @@ def restore_fleet_settings():
 def run_scene(scene_path, editor, workspace, out_dir):
     """A scene file (scenes/<name>.json) lists `steps` per editor in the driver's vocabulary:
     ["key", "ctrl+shift+f"], ["type", "text"], ["move", x, y], ["click"], ["drag", x1, y1, x2, y2],
-    ["mousedown"], ["mouseup"], ["hover", x, y, ms], ["wait", ms], ["maximize"], ["restore"],
+    ["mousedown"], ["mouseup"], ["wheel", notches], ["hover", x, y, ms], ["wait", ms], ["maximize"], ["restore"],
     ["shot", "name"]. Shots go to <out dir>/<scene>-<editor>-<name>.png. `fleet_settings` is a JSON
     object written to Fleet's settings.json for the run (theme, zoomLevel); `oak_args` are extra
     arguments for Oak, with `{workspace}` expanded to the fixture's path.
@@ -578,7 +578,7 @@ def attach_scene(scene_path, editor, pid, out_dir):
             restore_fleet_settings()
 
 
-INPUT_STEPS = ("key", "type", "move", "click", "drag", "hover", "mousedown", "mouseup")
+INPUT_STEPS = ("key", "type", "move", "click", "drag", "hover", "mousedown", "mouseup", "wheel")
 
 
 def do(s, step, out_dir=".", prefix="shot"):
@@ -619,6 +619,14 @@ def do(s, step, out_dir=".", prefix="shot"):
         i = INPUT(type=INPUT_MOUSE)
         i.u.mi = MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, None)
         send_inputs([i])
+    elif op == "wheel":
+        # ["wheel", notches]: positive scrolls up, one WHEEL_DELTA (120) per notch, at the pointer.
+        notches = int(a[0])
+        for _ in range(abs(notches)):
+            i = INPUT(type=INPUT_MOUSE)
+            i.u.mi = MOUSEINPUT(0, 0, 120 if notches > 0 else -120, MOUSEEVENTF_WHEEL, 0, None)
+            send_inputs([i])
+            time.sleep(0.05)
     elif op == "oak-settings":
         # Writes Oak's settings.json in the run's OAK_CONFIG_DIR, which Oak polls once a
         # second, so the next shot shows the live reload.

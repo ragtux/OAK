@@ -1321,10 +1321,20 @@ impl Workspace {
                     cx,
                 ),
             ),
-            MenuEntry::submenu(
-                "Run",
-                vec![MenuEntry::disabled("Run configurations arrive with M6")],
-            ),
+            MenuEntry::submenu("Run", {
+                // The terminal rows' place in Fleet's menus is an estimate (M5).
+                let mut run = vec![MenuEntry::disabled("Run configurations arrive with M6")];
+                run.push(MenuEntry::Separator);
+                run.extend(Self::entries(
+                    &[
+                        "terminal/new-tool",
+                        "terminal/new-with-profile",
+                        "terminal/toggle",
+                    ],
+                    cx,
+                ));
+                run
+            }),
             MenuEntry::submenu("Git", Self::git_menu(cx)),
             MenuEntry::submenu(
                 "Window",
@@ -1423,7 +1433,7 @@ impl Workspace {
         let active_tools: Vec<Tool> = self
             .panels
             .iter()
-            .flat_map(|p| p.tools.iter().copied())
+            .flat_map(|p| p.tools.iter().map(|t| t.tool))
             .collect();
         GotoSources {
             root: self.root.clone(),
