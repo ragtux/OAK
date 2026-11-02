@@ -1,7 +1,8 @@
 //! Git for Oak, M4's first piece: the branch the toolbar shows and the
 //! per-file status the Files tree colours (`editor.gitDiff.text.*`,
 //! `icon.background.*`, `docs/fleet-probe.md`, eighth pass), and a file's
-//! changed lines for the gutter (painted once batch 10 shows them). Everything
+//! changed lines for the gutter, its history and its blame (painted once
+//! batch 10 shows them). Everything
 //! shells out to the `git` on the path, as Fleet does
 //! (`git.discoverGitManually`); when there is no git, there is no repository
 //! and nothing is coloured.
@@ -185,6 +186,127 @@ pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
     hunks
 }
 
+/// One commit of a history (`git/history/*`, `git/file-history`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Commit {
+    pub id: String,
+    pub short_id: String,
+    pub author: String,
+    /// ISO 8601, as `%aI` prints it.
+    pub date: String,
+    pub summary: String,
+}
+
+/// Who last changed one line (`git/toggle-blame`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlameLine {
+    pub short_id: String,
+    pub author: String,
+    pub date: String,
+    pub summary: String,
+    /// An uncommitted line (the all-zero commit).
+    pub uncommitted: bool,
+}
+
+const LOG_FORMAT: &str = "--format=%H%x00%h%x00%an%x00%aI%x00%s%x00";
+
+impl Repo {
+    /// The newest `limit` commits of the repository, or of one file.
+    pub fn history(&self, path: Option<&Path>, limit: usize) -> Result<Vec<Commit>> {
+        let limit = format!("-n{limit}");
+        let mut args = vec!["log", LOG_FORMAT, &limit];
+        let rel;
+        if let Some(path) = path {
+            rel = self.relative(path);
+            args.push("--follow");
+            args.push("--");
+            args.push(&rel);
+        }
+        let out = git(&self.root, &args)?;
+        Ok(parse_log(&String::from_utf8_lossy(&out)))
+    }
+
+    /// One entry per line of the file as it is on disk.
+    pub fn blame(&self, path: &Path) -> Result<Vec<BlameLine>> {
+        let rel = self.relative(path);
+        let out = git(&self.root, &["blame", "--line-porcelain", "--", &rel])?;
+        Ok(parse_blame(&String::from_utf8_lossy(&out)))
+    }
+
+    fn relative(&self, path: &Path) -> String {
+        path.strip_prefix(&self.root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+}
+
+/// Parses `git log` printed with [`LOG_FORMAT`]: five NUL-ended fields per commit.
+pub fn parse_log(out: &str) -> Vec<Commit> {
+    let mut fields = out.split('\0').map(|s| s.trim_start_matches('\n'));
+    let mut commits = Vec::new();
+    while let (Some(id), Some(short_id), Some(author), Some(date), Some(summary)) = (
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+    ) {
+        if id.is_empty() {
+            break;
+        }
+        commits.push(Commit {
+            id: id.to_string(),
+            short_id: short_id.to_string(),
+            author: author.to_string(),
+            date: date.to_string(),
+            summary: summary.to_string(),
+        });
+    }
+    commits
+}
+
+/// Parses `git blame --line-porcelain`: a header line `<sha> <orig> <final>
+/// [<count>]`, then `key value` lines, then the line itself after a tab.
+pub fn parse_blame(out: &str) -> Vec<BlameLine> {
+    let mut lines = Vec::new();
+    let mut current: Option<BlameLine> = None;
+    for line in out.lines() {
+        if let Some(text) = line.strip_prefix('\t') {
+            let _ = text;
+            if let Some(entry) = current.take() {
+                lines.push(entry);
+            }
+            continue;
+        }
+        match &mut current {
+            None => {
+                let sha = line.split(' ').next().unwrap_or("");
+                if sha.len() < 7 {
+                    continue;
+                }
+                current = Some(BlameLine {
+                    short_id: sha[..7].to_string(),
+                    author: String::new(),
+                    date: String::new(),
+                    summary: String::new(),
+                    uncommitted: sha.bytes().all(|b| b == b'0'),
+                });
+            }
+            Some(entry) => {
+                if let Some(v) = line.strip_prefix("author ") {
+                    entry.author = v.to_string();
+                } else if let Some(v) = line.strip_prefix("author-time ") {
+                    entry.date = v.to_string();
+                } else if let Some(v) = line.strip_prefix("summary ") {
+                    entry.summary = v.to_string();
+                }
+            }
+        }
+    }
+    lines
+}
+
 /// Parses `git status --porcelain=v1 -z`: `XY path\0`, and for a rename or
 /// copy `XY new\0old\0`.
 pub fn parse_status(out: &[u8], root: &Path) -> HashMap<PathBuf, Status> {
@@ -268,6 +390,27 @@ mod tests {
         assert!(parse_hunks("").is_empty());
     }
 
+    #[test]
+    fn parses_log_and_blame() {
+        let log = "abc123def\x00abc123d\x00Ada\x002026-11-02T10:00:00+01:00\x00First\x00\n0f0f0f0f0\x000f0f0f0\x00Bo\x002026-11-01T09:00:00+01:00\x00Second line\x00\n";
+        let commits = parse_log(log);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].short_id, "abc123d");
+        assert_eq!(commits[0].author, "Ada");
+        assert_eq!(commits[1].summary, "Second line");
+        assert!(parse_log("").is_empty());
+
+        let blame = "abc123def4567890 1 1 1\nauthor Ada\nauthor-mail <a>\nauthor-time 1762074000\nsummary First\nfilename f\n\tline one\n0000000000000000000000000000000000000000 2 2 1\nauthor Not Committed Yet\nauthor-time 1762074001\nsummary Version of f from f\nfilename f\n\tline two\n";
+        let lines = parse_blame(blame);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].short_id, "abc123d");
+        assert_eq!(lines[0].author, "Ada");
+        assert_eq!(lines[0].date, "1762074000");
+        assert_eq!(lines[0].summary, "First");
+        assert!(!lines[0].uncommitted);
+        assert!(lines[1].uncommitted);
+    }
+
     /// Against the real git, when there is one.
     #[test]
     fn reads_a_repository() {
@@ -317,5 +460,17 @@ mod tests {
             .line_status(&repo.root.join("new.txt"))
             .unwrap()
             .is_empty());
+        let history = repo.history(None, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].summary, "one");
+        assert_eq!(history[0].author, "Oak");
+        let for_file = repo.history(Some(&repo.root.join("kept.txt")), 10).unwrap();
+        assert_eq!(for_file, history);
+        let blame = repo.blame(&repo.root.join("kept.txt")).unwrap();
+        assert_eq!(blame.len(), 1);
+        assert!(
+            blame[0].uncommitted,
+            "the work tree's line is not committed"
+        );
     }
 }
