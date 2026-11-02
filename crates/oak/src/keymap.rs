@@ -19,18 +19,45 @@ fn binding(keystroke: &str, action: &str) -> Option<KeyBinding> {
     match action {
         "save-file" => b!(Save, WORKSPACE),
         "save-all" => b!(SaveAll, WORKSPACE),
-        "close-tab" => b!(CloseTab, WORKSPACE),
+        "close-tab" | "tabs/close-tab" => b!(CloseTab, WORKSPACE),
+        "tabs/close-other-tabs" => b!(CloseOtherTabs, WORKSPACE),
+        "tabs/close-tabs-to-the-right" => b!(CloseTabsToTheRight, WORKSPACE),
+        "tabs/close-saved-tabs" => b!(CloseSavedTabs, WORKSPACE),
+        "tabs/reopen-closed-tab" => b!(ReopenClosedTab, WORKSPACE),
         "close-window" => b!(CloseWindow, WORKSPACE),
-        "goto/go-to-next-tab" | "next-tab" | "switch-to-next-file" => b!(NextTab, WORKSPACE),
-        "goto/go-to-previous-tab" | "prev-tab" | "switch-to-previous-file" => {
-            b!(PrevTab, WORKSPACE)
+        "goto/go-to-next-tab" | "next-tab" | "tabs/next-tab" | "switch-to-next-file" => {
+            b!(NextTab, WORKSPACE)
         }
+        "goto/go-to-previous-tab"
+        | "prev-tab"
+        | "tabs/previous-tab"
+        | "switch-to-previous-file" => b!(PrevTab, WORKSPACE),
         "toggle-left-panel" => b!(ToggleLeftPanel, WORKSPACE),
         "toggle-bottom-panel" | "terminal/toggle" => b!(ToggleBottomPanel, WORKSPACE),
         "toggle-right-panel" => b!(ToggleRightPanel, WORKSPACE),
         "hide-all-panels" => b!(HideAllPanels, WORKSPACE),
+        "hide-active-panel" => b!(HideActivePanel, WORKSPACE),
         "focus-editor" => b!(FocusEditor, WORKSPACE),
         "new-file" => b!(NewFile, WORKSPACE),
+        "split-right" => b!(SplitRight, WORKSPACE),
+        "unsplit" => b!(Unsplit, WORKSPACE),
+        "focus-next-split" | "focus-right-split" => b!(FocusNextSplit, WORKSPACE),
+        "focus-previous-split" | "focus-left-split" => b!(FocusPreviousSplit, WORKSPACE),
+        "focus-first-split" => b!(FocusFirstSplit, WORKSPACE),
+        "focus-last-split" => b!(FocusLastSplit, WORKSPACE),
+        "move-tab-to-next-split" | "move-tab-to-right-split" => b!(MoveTabToNextSplit, WORKSPACE),
+        "move-tab-to-previous-split" | "move-tab-to-left-split" => {
+            b!(MoveTabToPreviousSplit, WORKSPACE)
+        }
+        "move-tab-to-first-split" => b!(MoveTabToFirstSplit, WORKSPACE),
+        "move-tab-to-last-split" => b!(MoveTabToLastSplit, WORKSPACE),
+        "zoom-in" => b!(ZoomIn, WORKSPACE),
+        "zoom-out" => b!(ZoomOut, WORKSPACE),
+        "reset-zoom" => b!(ResetZoom, WORKSPACE),
+        "toggle-full-screen" => b!(ToggleFullScreen, WORKSPACE),
+        "minimize-window" => b!(MinimizeWindow, WORKSPACE),
+        "edit-settings-file" => b!(EditSettingsFile, WORKSPACE),
+        "edit-keymap-file" => b!(EditKeymapFile, WORKSPACE),
         "quit" => b!(Quit, WORKSPACE),
 
         "arrow-up" => b!(MoveUp, EDITOR),
@@ -82,16 +109,8 @@ fn binding(keystroke: &str, action: &str) -> Option<KeyBinding> {
     }
 }
 
-fn user_keymap_path() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-        })?;
-    Some(base.join("oak/keymap.json"))
-}
-
-pub fn bind(cx: &mut App) {
+/// The keymap in effect: the bundled Fleet defaults under the user's file.
+pub fn load() -> Keymap {
     let mut keymap = match Keymap::parse(crate::assets::DEFAULT_KEYMAP) {
         Ok(k) => k,
         Err(e) => {
@@ -99,7 +118,7 @@ pub fn bind(cx: &mut App) {
             Keymap::default()
         }
     };
-    if let Some(path) = user_keymap_path() {
+    if let Some(path) = crate::settings::keymap_file() {
         if let Ok(text) = std::fs::read_to_string(&path) {
             match Keymap::parse(&text) {
                 Ok(user) => keymap.merge(user),
@@ -107,6 +126,33 @@ pub fn bind(cx: &mut App) {
             }
         }
     }
+    keymap
+}
+
+/// The chord bound to a Fleet action id on this platform, spelled for a
+/// tooltip ("Alt+1"), or none.
+pub fn hint(keymap: &Keymap, action: &str) -> Option<String> {
+    keymap
+        .resolved(Platform::current())
+        .into_iter()
+        .find(|r| r.action == action)
+        .map(|r| {
+            r.chord
+                .split('-')
+                .map(|part| {
+                    let mut c = part.chars();
+                    match c.next() {
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("+")
+                .replace("Digit", "")
+        })
+}
+
+pub fn bind(keymap: &Keymap, cx: &mut App) {
     let mut bindings = Vec::new();
     for r in keymap.resolved(Platform::current()) {
         // gpui's parser refuses a few spellings; a bad chord must not take the app down.

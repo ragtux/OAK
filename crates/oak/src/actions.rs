@@ -10,6 +10,10 @@ actions!(
         Save,
         SaveAll,
         CloseTab,
+        CloseOtherTabs,
+        CloseTabsToTheRight,
+        CloseSavedTabs,
+        ReopenClosedTab,
         CloseWindow,
         NextTab,
         PrevTab,
@@ -17,8 +21,26 @@ actions!(
         ToggleBottomPanel,
         ToggleRightPanel,
         HideAllPanels,
+        HideActivePanel,
         FocusEditor,
         NewFile,
+        SplitRight,
+        Unsplit,
+        FocusNextSplit,
+        FocusPreviousSplit,
+        FocusFirstSplit,
+        FocusLastSplit,
+        MoveTabToNextSplit,
+        MoveTabToPreviousSplit,
+        MoveTabToFirstSplit,
+        MoveTabToLastSplit,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
+        ToggleFullScreen,
+        MinimizeWindow,
+        EditSettingsFile,
+        EditKeymapFile,
     ]
 );
 
@@ -75,3 +97,14 @@ actions!(
 );
 
 actions!(files, [TreeUp, TreeDown, TreeLeft, TreeRight, TreeOpen]);
+
+actions!(
+    popup,
+    [
+        PopupUp,
+        PopupDown,
+        PopupConfirm,
+        PopupCancel,
+        PopupBackspace
+    ]
+);

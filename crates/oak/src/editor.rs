@@ -8,7 +8,8 @@
 //! in view are shaped each frame, so the cost is the viewport, not the file.
 
 use crate::actions::*;
-use crate::theme::{metrics::*, Theme};
+use crate::settings::AppSettings;
+use crate::theme::{metrics::EDITOR_OVERSCROLL_LINES, Metrics, Theme};
 use gpui::{
     div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, ContentMask,
     Context, Corners, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler, Entity,
@@ -29,6 +30,35 @@ pub enum EditorEvent {
     Saved,
 }
 
+/// The editor's sizes at the current zoom and settings: `editor.fontSize`,
+/// `editor.lineSpacing` and the measured gutter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextMetrics {
+    pub font_size: f32,
+    pub line_height: f32,
+    pub gutter_width: f32,
+    pub gutter_number_right: f32,
+    pub caret_width: f32,
+    pub scrollbar_thumb: f32,
+    pub scrollbar_thumb_min: f32,
+}
+
+impl TextMetrics {
+    pub fn current(cx: &App) -> TextMetrics {
+        let m = cx.global::<Metrics>();
+        let (font_size, line_height) = m.editor_text(&cx.global::<AppSettings>().settings);
+        TextMetrics {
+            font_size,
+            line_height,
+            gutter_width: m.gutter_width,
+            gutter_number_right: m.gutter_number_right,
+            caret_width: m.caret_width,
+            scrollbar_thumb: m.scrollbar_thumb,
+            scrollbar_thumb_min: m.scrollbar_thumb_min,
+        }
+    }
+}
+
 pub struct EditorView {
     pub path: Option<PathBuf>,
     pub text: TextEditor,
@@ -41,6 +71,8 @@ pub struct EditorView {
     scroll_x: Pixels,
     /// The bounds the text area last painted into, for page sizes and hit tests.
     last_bounds: Bounds<Pixels>,
+    /// The sizes the last frame painted with (zoom and settings).
+    tm: TextMetrics,
     focus_handle: FocusHandle,
     dragging: bool,
     marked: Option<Range<usize>>,
@@ -99,6 +131,7 @@ impl EditorView {
             scroll_y: px(0.),
             scroll_x: px(0.),
             last_bounds: Bounds::default(),
+            tm: TextMetrics::current(cx),
             focus_handle: cx.focus_handle(),
             dragging: false,
             marked: None,
@@ -147,7 +180,7 @@ impl EditorView {
     }
 
     fn line_height(&self) -> Pixels {
-        px(EDITOR_LINE_HEIGHT)
+        px(self.tm.line_height)
     }
 
     fn rows_per_page(&self) -> usize {
@@ -174,9 +207,13 @@ impl EditorView {
         }
     }
 
+    /// The scrollable extent: the lines plus Fleet's overscroll past the end.
+    fn content_height(&self) -> Pixels {
+        self.line_height() * (self.text.buffer.line_count() as f32 + EDITOR_OVERSCROLL_LINES)
+    }
+
     fn max_scroll_y(&self) -> Pixels {
-        let total = self.line_height() * self.text.buffer.line_count() as f32;
-        (total - self.last_bounds.size.height + self.line_height()).max(px(0.))
+        (self.content_height() - self.last_bounds.size.height).max(px(0.))
     }
 
     fn after_edit(&mut self, cx: &mut Context<Self>) {
@@ -446,10 +483,10 @@ impl EditorView {
         let lh = self.line_height();
         let y = position.y - bounds.origin.y + self.scroll_y;
         let row = ((y / lh).floor().max(0.) as usize).min(self.text.buffer.line_count() - 1);
-        let x = position.x - bounds.origin.x - px(GUTTER_WIDTH) + self.scroll_x;
+        let x = position.x - bounds.origin.x - px(self.tm.gutter_width) + self.scroll_x;
         let theme = cx.global::<Theme>();
         let line = DisplayLine::new(&self.text.buffer.line(row));
-        let shaped = shape_display_line(&line, &[], theme, window);
+        let shaped = shape_display_line(&line, &[], theme, self.tm.font_size, window);
         let disp_byte = shaped.closest_index_for_x(x.max(px(0.)));
         let column = line.char_for_display_byte(disp_byte);
         self.text
@@ -627,15 +664,15 @@ impl EntityInputHandler for EditorView {
         let at = self.text.buffer.offset_to_point(offset);
         let theme = cx.global::<Theme>();
         let line = DisplayLine::new(&self.text.buffer.line(at.row));
-        let shaped = shape_display_line(&line, &[], theme, window);
+        let shaped = shape_display_line(&line, &[], theme, self.tm.font_size, window);
         let x = shaped.x_for_index(line.display_byte_for_char(at.column));
         let lh = self.line_height();
         Some(Bounds::new(
             point(
-                element_bounds.origin.x + px(GUTTER_WIDTH) + x - self.scroll_x,
+                element_bounds.origin.x + px(self.tm.gutter_width) + x - self.scroll_x,
                 element_bounds.origin.y + lh * at.row as f32 - self.scroll_y,
             ),
-            size(px(CARET_WIDTH), lh),
+            size(px(self.tm.caret_width), lh),
         ))
     }
 
@@ -786,6 +823,7 @@ fn shape_display_line(
     line: &DisplayLine,
     spans: &[(Range<usize>, &'static str)],
     theme: &Theme,
+    font_size: f32,
     window: &mut Window,
 ) -> ShapedLine {
     let plain = editor_font(FontWeight::NORMAL, false, theme);
@@ -858,7 +896,7 @@ fn shape_display_line(
     }
     window.text_system().shape_line(
         SharedString::from(line.text.clone()),
-        px(EDITOR_FONT_SIZE),
+        px(font_size),
         &runs,
         None,
     )
@@ -887,6 +925,7 @@ pub struct Prepaint {
     selection: Range<usize>,
     focused: bool,
     line_count: usize,
+    tm: TextMetrics,
 }
 
 impl IntoElement for EditorElement {
@@ -932,9 +971,16 @@ impl Element for EditorElement {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let theme = cx.global::<Theme>().clone();
-        let lh = px(EDITOR_LINE_HEIGHT);
+        let tm = TextMetrics::current(cx);
+        let lh = px(tm.line_height);
         let focused = self.editor.read(cx).focus_handle.is_focused(window);
         self.editor.update(cx, |editor, _cx| {
+            // A zoom or font change keeps the same first line in view.
+            if editor.tm != tm {
+                let row = editor.scroll_y / px(editor.tm.line_height);
+                editor.tm = tm;
+                editor.scroll_y = px(tm.line_height) * row;
+            }
             editor.last_bounds = bounds;
             editor.ensure_highlights();
             let max = editor.max_scroll_y();
@@ -978,7 +1024,7 @@ impl Element for EditorElement {
                 i += 1;
             }
             let line = DisplayLine::new(&source);
-            let shaped = shape_display_line(&line, &line_spans, &theme, window);
+            let shaped = shape_display_line(&line, &line_spans, &theme, tm.font_size, window);
             let color = if row == cursor.row {
                 theme.line_number_current
             } else {
@@ -987,7 +1033,7 @@ impl Element for EditorElement {
             let number_text = SharedString::from((row + 1).to_string());
             let number = window.text_system().shape_line(
                 number_text.clone(),
-                px(EDITOR_FONT_SIZE),
+                px(tm.font_size),
                 &[TextRun {
                     len: number_text.len(),
                     font: number_font.clone(),
@@ -1015,6 +1061,7 @@ impl Element for EditorElement {
             selection: editor.text.selection.range(),
             focused,
             line_count,
+            tm,
         }
     }
 
@@ -1029,7 +1076,8 @@ impl Element for EditorElement {
         cx: &mut App,
     ) {
         let theme = cx.global::<Theme>().clone();
-        let lh = px(EDITOR_LINE_HEIGHT);
+        let tm = prepaint.tm;
+        let lh = px(tm.line_height);
         let focus_handle = self.editor.read(cx).focus_handle.clone();
         window.handle_input(
             &focus_handle,
@@ -1038,8 +1086,8 @@ impl Element for EditorElement {
         );
         window.set_cursor_style(CursorStyle::IBeam, &prepaint.hitbox);
 
-        let text_x = bounds.origin.x + px(GUTTER_WIDTH) - prepaint.scroll_x;
-        let number_right = bounds.origin.x + px(GUTTER_NUMBER_RIGHT);
+        let text_x = bounds.origin.x + px(tm.gutter_width) - prepaint.scroll_x;
+        let number_right = bounds.origin.x + px(tm.gutter_number_right);
         let right = bounds.origin.x + bounds.size.width;
         let buffer_rows: Vec<(usize, usize)> = {
             let editor = self.editor.read(cx);
@@ -1077,7 +1125,7 @@ impl Element for EditorElement {
                     let mut x1 = laid.shaped.x_for_index(laid.line.display_byte_for_char(b));
                     if sel.end > line_end {
                         // The selection runs past the line break: show it as a stub.
-                        x1 += px(EDITOR_FONT_SIZE * 0.6);
+                        x1 += px(tm.font_size * 0.6);
                     }
                     let color = if prepaint.focused {
                         theme.selection_focused
@@ -1107,27 +1155,29 @@ impl Element for EditorElement {
                         .shaped
                         .x_for_index(laid.line.display_byte_for_char(prepaint.cursor.column));
                     window.paint_quad(fill(
-                        Bounds::new(point(text_x + x, y), size(px(CARET_WIDTH), lh)),
+                        Bounds::new(point(text_x + x, y), size(px(tm.caret_width), lh)),
                         theme.editor_caret,
                     ));
                 }
             }
             // The scrollbar: a thumb proportional to the view, no track. Fleet's thumb
-            // starts at the text area's top and sits flush with the island's right edge.
-            let total = lh * prepaint.line_count as f32 + bounds.size.height - lh;
+            // starts at the text area's top and sits flush with the island's right edge;
+            // the content it measures includes the overscroll past the last line.
+            let total = lh * (prepaint.line_count as f32 + EDITOR_OVERSCROLL_LINES);
             if total > bounds.size.height {
                 let track_h = bounds.size.height;
-                let thumb_h = (track_h * (bounds.size.height / total)).max(px(24.));
+                let thumb_h =
+                    (track_h * (bounds.size.height / total)).max(px(tm.scrollbar_thumb_min));
                 let max_scroll = total - bounds.size.height;
                 let thumb_y =
                     bounds.origin.y + (track_h - thumb_h) * (prepaint.scroll_y / max_scroll);
-                let x = right - px(SCROLLBAR_THUMB);
+                let x = right - px(tm.scrollbar_thumb);
                 window.paint_quad(
                     fill(
-                        Bounds::new(point(x, thumb_y), size(px(SCROLLBAR_THUMB), thumb_h)),
+                        Bounds::new(point(x, thumb_y), size(px(tm.scrollbar_thumb), thumb_h)),
                         theme.scrollbar_thumb,
                     )
-                    .corner_radii(Corners::all(px(SCROLLBAR_THUMB / 2.))),
+                    .corner_radii(Corners::all(px(tm.scrollbar_thumb / 2.))),
                 );
             }
         });

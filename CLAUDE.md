@@ -20,11 +20,12 @@ Native Rust/GPUI code editor in the shape of JetBrains Fleet.
 ## Layout
 
 ```
-crates/oak          GPUI app (bin): main, workspace (islands, tabs, status bar), toolbar, file_tree, editor, theme, keymap, assets
+crates/oak          GPUI app (bin): main, workspace (panels, splits, tabs, status bar), toolbar (with the Windows caption), file_tree, editor, theme (Metrics = sizes x zoom), settings (globals, live reload, zoom), layout, tooltip, scrollbar, keymap, assets
 crates/oak-text     Buffer (ropey) and TextEditor: selection, undo grouping, every edit command
 crates/oak-syntax   tree-sitter grammars (rust, json, toml, markdown) -> Fleet textAttributes keys
 crates/oak-theme    Fleet theme JSON: palette resolution, typed Color, cascading attribute lookup
 crates/oak-keymap   Fleet keymap JSON: per-platform chord resolution, gpui keystroke spelling
+crates/oak-settings Fleet settings.json: Oak's file over Fleet's, typed accessors with Fleet's defaults, a change watcher
 docs/               fleet-probe.md (measurements and provenance), roadmap.md (milestones), probe-plan.md (method and harnesses)
 tools/fleet-probe   scripts: inventory Fleet's actions/settings/theme keys, coverage vs Oak, extract themes, measure screenshots
 ```
@@ -41,9 +42,14 @@ at a time and run on a real GPU before committing.
 cargo test --workspace --exclude oak      # library tests (fast)
 cargo check -p oak                        # the app (pulls gpui, slow the first time)
 cargo run --release -p oak -- <path>      # open a folder or a file
-cargo run --release -p oak -- --theme dark_purple <path>
+cargo run --release -p oak -- --theme dark_purple --zoom 1.5 <path>
 cargo fmt --all && cargo clippy --workspace --all-targets
 ```
+
+Settings come from `~/.config/oak/settings.json` (`%APPDATA%\oak` on Windows) over Fleet's own
+file; `OAK_CONFIG_DIR` relocates Oak's folder (the probes use a scratch one). The probe driver
+`tools/fleet-probe/winprobe.py` sends real input to the foreground window: run it in the
+foreground only, never as a background task.
 
 ## Conventions
 

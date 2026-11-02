@@ -41,8 +41,8 @@
       "action": "tabs/close-other-tabs"
     },
     {
-      "key": "ctrl-f4",
       "mac": "cmd-w",
+      "key": "ctrl-f4",
       "action": "close-tab"
     },
     {
@@ -61,13 +61,13 @@
       "action": "close-window"
     },
     {
-      "key": "ctrl-shift-slash",
       "mac": "cmd-alt-slash",
+      "key": "ctrl-shift-slash",
       "action": "comment-block"
     },
     {
-      "key": "ctrl-shift-numpaddivide",
       "mac": "cmd-alt-shift-digit7",
+      "key": "ctrl-shift-numpaddivide",
       "action": "comment-block"
     },
     {
@@ -75,23 +75,23 @@
       "action": "comment-block"
     },
     {
-      "key": "ctrl-slash",
       "mac": "cmd-slash",
+      "key": "ctrl-slash",
       "action": "comment-line"
     },
     {
-      "key": "ctrl-shift-digit7",
       "mac": "cmd-shift-digit7",
+      "key": "ctrl-shift-digit7",
       "action": "comment-line"
     },
     {
-      "key": "ctrl-shift-colon",
       "mac": "cmd-shift-colon",
+      "key": "ctrl-shift-colon",
       "action": "comment-line"
     },
     {
-      "key": "ctrl-numpaddivide",
       "mac": "cmd-numpaddivide",
+      "key": "ctrl-numpaddivide",
       "action": "comment-line"
     },
     {
@@ -103,8 +103,8 @@
       "action": "confirm"
     },
     {
-      "key": "ctrl-c",
       "mac": "cmd-c",
+      "key": "ctrl-c",
       "action": "copy"
     },
     {
@@ -113,8 +113,8 @@
       "action": "copy"
     },
     {
-      "key": "ctrl-x",
       "mac": "cmd-x",
+      "key": "ctrl-x",
       "action": "cut"
     },
     {
@@ -147,8 +147,8 @@
       "action": "delete-forward"
     },
     {
-      "key": "ctrl-shift-backspace",
       "mac": "cmd-shift-backspace",
+      "key": "ctrl-shift-backspace",
       "action": "editor/delete-line"
     },
     {
@@ -164,13 +164,13 @@
       "action": "editor/delete-backward-until-start-of-line"
     },
     {
-      "key": "ctrl-backspace",
       "mac": "alt-backspace",
+      "key": "ctrl-backspace",
       "action": "delete-word-backward"
     },
     {
-      "key": "ctrl-delete",
       "mac": "alt-delete",
+      "key": "ctrl-delete",
       "action": "delete-word-forward"
     },
     {
@@ -178,8 +178,8 @@
       "action": "editor/duplicate-line"
     },
     {
-      "key": "ctrl-shift-comma",
       "mac": "cmd-shift-comma",
+      "key": "ctrl-shift-comma",
       "action": "edit-settings-file"
     },
     {
@@ -199,62 +199,82 @@
       "action": "expand-selection"
     },
     {
-      "key": "ctrl-f",
       "mac": "cmd-f",
+      "key": "ctrl-f",
       "action": "find"
     },
     {
-      "key": "ctrl-shift-f",
       "mac": "cmd-shift-f",
+      "key": "ctrl-shift-f",
       "action": "find-in-path"
     },
     {
-      "key": "alt-digit2",
       "mac": "cmd-digit2",
+      "key": "alt-digit2",
       "action": "toggle-bottom-panel"
     },
     {
-      "key": "alt-eacute",
       "mac": "cmd-eacute",
+      "key": "alt-eacute",
       "action": "toggle-bottom-panel"
     },
     {
-      "key": "alt-digit1",
       "mac": "cmd-digit1",
+      "key": "alt-digit1",
       "action": "toggle-left-panel"
     },
     {
-      "key": "alt-ampersand",
       "mac": "cmd-ampersand",
+      "key": "alt-ampersand",
       "action": "toggle-left-panel"
     },
     {
-      "key": "alt-digit3",
       "mac": "cmd-digit3",
+      "key": "alt-digit3",
       "action": "toggle-right-panel"
     },
     {
-      "key": "alt-quotationmark",
       "mac": "cmd-quotationmark",
+      "key": "alt-quotationmark",
       "action": "toggle-right-panel"
+    },
+    {
+      "mac": "ctrl-shift-digit1",
+      "key": "alt-shift-digit1",
+      "action": "focus-first-split"
+    },
+    {
+      "mac": "ctrl-shift-digit2",
+      "key": "alt-shift-digit2",
+      "action": "focus-last-split"
+    },
+    {
+      "mac": "ctrl-shift-rightbracket",
+      "key": "alt-shift-rightbracket",
+      "action": "focus-next-split"
+    },
+    {
+      "mac": "ctrl-shift-leftbracket",
+      "key": "alt-shift-leftbracket",
+      "action": "focus-previous-split"
     },
     {
       "key": "escape",
       "action": "focus-editor"
     },
     {
-      "key": "ctrl-b",
       "mac": "cmd-b",
+      "key": "ctrl-b",
       "action": "go-to-declaration"
     },
     {
-      "key": "ctrl-l",
       "mac": "cmd-l",
+      "key": "ctrl-l",
       "action": "goto/line"
     },
     {
-      "key": "ctrl-end",
       "mac": "cmd-end",
+      "key": "ctrl-end",
       "action": "editor/move-caret-to-end-of-document"
     },
     {
@@ -262,8 +282,8 @@
       "action": "editor/move-caret-to-end-of-document"
     },
     {
-      "key": "ctrl-home",
       "mac": "cmd-home",
+      "key": "ctrl-home",
       "action": "editor/move-caret-to-start-of-document"
     },
     {
@@ -271,14 +291,18 @@
       "action": "editor/move-caret-to-start-of-document"
     },
     {
-      "key": "ctrl-left",
       "mac": "alt-left",
+      "key": "ctrl-left",
       "action": "editor/move-caret-to-previous-word"
     },
     {
-      "key": "ctrl-right",
       "mac": "alt-right",
+      "key": "ctrl-right",
       "action": "editor/move-caret-to-next-word"
+    },
+    {
+      "key": "shift-escape",
+      "action": "hide-active-panel"
     },
     {
       "mac": "cmd-shift-escape",
@@ -297,18 +321,22 @@
       "action": "home"
     },
     {
-      "key": "ctrl-shift-return",
       "mac": "cmd-shift-return",
+      "key": "ctrl-shift-return",
       "action": "insert-newline-character"
     },
     {
-      "key": "ctrl-shift-numpadenter",
       "mac": "cmd-shift-numpadenter",
+      "key": "ctrl-shift-numpadenter",
       "action": "insert-newline-character"
     },
     {
       "key": "ctrl-j",
       "action": "join-lines"
+    },
+    {
+      "mac": "cmd-m",
+      "action": "minimize-window"
     },
     {
       "key": "alt-down",
@@ -319,23 +347,23 @@
       "action": "move-line-up"
     },
     {
-      "key": "ctrl-n",
       "mac": "cmd-n",
+      "key": "ctrl-n",
       "action": "new-file"
     },
     {
-      "key": "ctrl-return",
       "mac": "cmd-return",
+      "key": "ctrl-return",
       "action": "editor/insert-new-line-below"
     },
     {
-      "key": "ctrl-numpadenter",
       "mac": "cmd-numpadenter",
+      "key": "ctrl-numpadenter",
       "action": "editor/insert-new-line-below"
     },
     {
-      "key": "ctrl-alt-return",
       "mac": "alt-cmd-numpadenter",
+      "key": "ctrl-alt-return",
       "action": "editor/insert-new-line-above"
     },
     {
@@ -352,8 +380,8 @@
       "action": "next-tab"
     },
     {
-      "key": "ctrl-pagedown",
       "mac": "cmd-alt-right",
+      "key": "ctrl-pagedown",
       "action": "next-tab"
     },
     {
@@ -361,13 +389,13 @@
       "action": "next-tab"
     },
     {
-      "key": "ctrl-o",
       "mac": "cmd-o",
+      "key": "ctrl-o",
       "action": "open"
     },
     {
-      "key": "ctrl-comma",
       "mac": "cmd-comma",
+      "key": "ctrl-comma",
       "action": "open-settings"
     },
     {
@@ -383,8 +411,8 @@
       "action": "page-up"
     },
     {
-      "key": "ctrl-v",
       "mac": "cmd-v",
+      "key": "ctrl-v",
       "action": "paste"
     },
     {
@@ -401,8 +429,8 @@
       "action": "prev-tab"
     },
     {
-      "key": "ctrl-pageup",
       "mac": "cmd-alt-left",
+      "key": "ctrl-pageup",
       "action": "prev-tab"
     },
     {
@@ -410,8 +438,8 @@
       "action": "prev-tab"
     },
     {
-      "key": "ctrl-y",
       "mac": "cmd-shift-z",
+      "key": "ctrl-y",
       "action": "redo"
     },
     {
@@ -420,33 +448,33 @@
       "action": "redo"
     },
     {
-      "key": "f2",
       "mac": "ctrl-r",
+      "key": "f2",
       "action": "rename"
     },
     {
-      "key": "ctrl-digit0",
       "mac": "cmd-digit0",
+      "key": "ctrl-digit0",
       "action": "reset-zoom"
     },
     {
-      "key": "ctrl-shift-s",
       "mac": "alt-cmd-s",
+      "key": "ctrl-shift-s",
       "action": "save-all"
     },
     {
-      "key": "ctrl-s",
       "mac": "cmd-s",
+      "key": "ctrl-s",
       "action": "save-file"
     },
     {
-      "key": "ctrl-a",
       "mac": "cmd-a",
+      "key": "ctrl-a",
       "action": "select-all"
     },
     {
-      "key": "ctrl-d",
       "mac": "cmd-d",
+      "key": "ctrl-d",
       "action": "select-next-occurrence"
     },
     {
@@ -478,8 +506,8 @@
       "action": "editor/move-caret-to-end-of-document-with-selection"
     },
     {
-      "key": "ctrl-shift-end",
       "mac": "cmd-shift-end",
+      "key": "ctrl-shift-end",
       "action": "editor/move-caret-to-end-of-document-with-selection"
     },
     {
@@ -487,18 +515,18 @@
       "action": "editor/move-caret-to-start-of-document-with-selection"
     },
     {
-      "key": "ctrl-shift-home",
       "mac": "cmd-shift-home",
+      "key": "ctrl-shift-home",
       "action": "editor/move-caret-to-start-of-document-with-selection"
     },
     {
-      "key": "shift-ctrl-left",
       "mac": "shift-alt-left",
+      "key": "shift-ctrl-left",
       "action": "editor/move-caret-to-previous-word-with-selection"
     },
     {
-      "key": "shift-ctrl-right",
       "mac": "shift-alt-right",
+      "key": "shift-ctrl-right",
       "action": "editor/move-caret-to-next-word-with-selection"
     },
     {
@@ -532,23 +560,23 @@
       "action": "show-context-menu"
     },
     {
-      "key": "ctrl-shift-t",
       "mac": "cmd-shift-t",
+      "key": "ctrl-shift-t",
       "action": "tabs/reopen-closed-tab"
     },
     {
-      "key": "ctrl-shift-k",
       "mac": "cmd-shift-k",
+      "key": "ctrl-shift-k",
       "action": "goto/action"
     },
     {
-      "key": "ctrl-p",
       "mac": "cmd-p",
+      "key": "ctrl-p",
       "action": "goto/file"
     },
     {
-      "key": "ctrl-k",
       "mac": "cmd-k",
+      "key": "ctrl-k",
       "action": "goto/everything"
     },
     {
@@ -576,43 +604,43 @@
       "action": "terminal/toggle"
     },
     {
-      "key": "ctrl-backslash",
       "mac": "cmd-backslash",
+      "key": "ctrl-backslash",
       "action": "split-right"
     },
     {
-      "key": "ctrl-z",
       "mac": "cmd-z",
+      "key": "ctrl-z",
       "action": "undo"
     },
     {
-      "key": "ctrl-equalssign",
       "mac": "cmd-equalssign",
+      "key": "ctrl-equalssign",
       "action": "zoom-in"
     },
     {
-      "key": "ctrl-shift-digit0",
       "mac": "cmd-shift-digit0",
+      "key": "ctrl-shift-digit0",
       "action": "zoom-in"
     },
     {
-      "key": "ctrl-plus",
       "mac": "cmd-plus",
+      "key": "ctrl-plus",
       "action": "zoom-in"
     },
     {
-      "key": "ctrl-numpadadd",
       "mac": "cmd-numpadadd",
+      "key": "ctrl-numpadadd",
       "action": "zoom-in"
     },
     {
-      "key": "ctrl-minus",
       "mac": "cmd-minus",
+      "key": "ctrl-minus",
       "action": "zoom-out"
     },
     {
-      "key": "ctrl-numpadsubtract",
       "mac": "cmd-numpadsubtract",
+      "key": "ctrl-numpadsubtract",
       "action": "zoom-out"
     },
     {

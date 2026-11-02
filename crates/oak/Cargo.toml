@@ -16,6 +16,7 @@ oak-text.workspace = true
 oak-syntax.workspace = true
 oak-theme.workspace = true
 oak-keymap.workspace = true
+oak-settings.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 gpui.workspace = true

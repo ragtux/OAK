@@ -15,6 +15,9 @@ wrapper and H). One script, one state file, so each step is a command:
     winprobe.py move <x> <y>                       pointer to window-relative logical coordinates
     winprobe.py click [left|right|double]
     winprobe.py drag <x1> <y1> <x2> <y2>
+    winprobe.py mousedown | mouseup           half a drag, so a shot can be taken mid-way
+    winprobe.py maximize | restore            ShowWindow on the launched window
+    (scene step only) ["oak-settings", {...}]  write Oak's settings.json for the run (live reload)
     winprobe.py hover <x> <y> <ms>                 move, then wait (tooltips)
     winprobe.py wait <ms>
     winprobe.py shot <out.png> [--frame]           client area (or whole frame) of the launched window
@@ -81,7 +84,7 @@ dwmapi.DwmGetWindowAttribute.argtypes = [wt.HWND, wt.DWORD, ctypes.c_void_p, wt.
 GWL_STYLE, GWL_EXSTYLE = -16, -20
 WS_CAPTION, WS_EX_TOOLWINDOW = 0x00C00000, 0x00000080
 SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
-SW_RESTORE = 9
+SW_RESTORE, SW_MAXIMIZE = 9, 3
 WM_CLOSE = 0x0010
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
@@ -226,6 +229,23 @@ def place(hwnd, size=None, pos=None):
     return client_rect(hwnd)
 
 
+def owns_foreground(s):
+    """True when the foreground window belongs to the launched process tree (a dialog of the
+    editor's counts, the launched window itself of course)."""
+    fg = user32.GetForegroundWindow()
+    if not fg:
+        return False
+    if fg == s["hwnd"]:
+        return True
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+    if pid.value == s["pid"] or pid.value in s.get("pids", ()):
+        return True
+    # The process tree is read through PowerShell, so it is cached and only refreshed on a miss.
+    s["pids"] = sorted(descendants(s["launcher_pid"]))
+    return pid.value in s["pids"]
+
+
 def focus(hwnd):
     fg = user32.GetForegroundWindow()
     if fg == hwnd:
@@ -240,6 +260,14 @@ def focus(hwnd):
     if tid:
         user32.AttachThreadInput(me, tid, False)
     time.sleep(0.15)
+
+
+def guard(s):
+    """Refuse to send input unless the launched editor holds the foreground: synthetic keys go to
+    whatever window is in front, and a focus failure must abort the scene, not type into it."""
+    focus(s["hwnd"])
+    if not owns_foreground(s):
+        raise SystemExit("the launched window is not in the foreground; not sending input")
 
 
 # --- input ---------------------------------------------------------------------------------
@@ -402,6 +430,13 @@ def launch(editor, args, size, pos, extra):
     elif editor == "oak":
         cmd = [find_oak(), *args, *extra]
         timeout = 30
+        # A fresh configuration folder per launch, so a probe never inherits the
+        # layout or settings an earlier run left behind (OAK_CONFIG_DIR).
+        config = os.path.join(os.path.dirname(STATE), "oak-config")
+        import shutil
+        shutil.rmtree(config, ignore_errors=True)
+        os.makedirs(config, exist_ok=True)
+        os.environ["OAK_CONFIG_DIR"] = config
     elif editor == "exe":
         cmd = [*args, *extra]
         timeout = 60
@@ -415,6 +450,9 @@ def launch(editor, args, size, pos, extra):
     time.sleep(1.0)
     s["client"] = place(w["hwnd"], size, pos)
     save_state(s)
+    # Park the pointer over the editor text, where neither editor shows a hover
+    # state, so a tooltip left over from the last run cannot leak into a shot.
+    mouse_move_abs(*to_device(s, size[0] / 2, size[1] / 2))
     print(json.dumps(s))
     return s
 
@@ -434,32 +472,74 @@ def close(s, timeout=15):
 
 # --- scenes --------------------------------------------------------------------------------
 
+def fleet_settings_path():
+    return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "JetBrains", "Fleet", "settings.json")
+
+
+def with_fleet_settings(values):
+    """Write `values` into Fleet's settings.json for the run (harness B): the previous file is kept
+    beside it as settings.json.oak-probe and put back by `restore_fleet_settings`."""
+    path = fleet_settings_path()
+    backup = path + ".oak-probe"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path) and not os.path.exists(backup):
+        os.replace(path, backup)
+    elif not os.path.exists(path):
+        open(backup + ".absent", "w").close()
+    with open(path, "w") as fh:
+        json.dump(values, fh, indent=2)
+
+
+def restore_fleet_settings():
+    path = fleet_settings_path()
+    backup = path + ".oak-probe"
+    if os.path.exists(backup + ".absent"):
+        os.remove(backup + ".absent")
+        if os.path.exists(path):
+            os.remove(path)
+    elif os.path.exists(backup):
+        os.replace(backup, path)
+
+
 def run_scene(scene_path, editor, workspace, out_dir):
     """A scene file (scenes/<name>.json) lists `steps` per editor in the driver's vocabulary:
     ["key", "ctrl+shift+f"], ["type", "text"], ["move", x, y], ["click"], ["drag", x1, y1, x2, y2],
-    ["hover", x, y, ms], ["wait", ms], ["shot", "name"]. Shots go to <out dir>/<scene>-<editor>-<name>.png.
+    ["mousedown"], ["mouseup"], ["hover", x, y, ms], ["wait", ms], ["maximize"], ["restore"],
+    ["shot", "name"]. Shots go to <out dir>/<scene>-<editor>-<name>.png. `fleet_settings` is a JSON
+    object written to Fleet's settings.json for the run (theme, zoomLevel); `oak_args` are extra
+    arguments for Oak, with `{workspace}` expanded to the fixture's path.
     """
     with open(scene_path) as fh:
         scene = json.load(fh)
     name = os.path.splitext(os.path.basename(scene_path))[0]
     size = tuple(scene.get("size", [1280, 800]))
     pos = tuple(scene.get("pos", [100, 100]))
-    # `{workspace}` in an argument stands for the fixture's path, so a scene can name a file to open.
     extra = [a.replace("{workspace}", workspace) for a in scene.get(f"{editor}_args", [])]
-    s = launch(editor, [workspace], size, pos, extra)
-    time.sleep(scene.get("settle_ms", 4000) / 1000)
-    focus(s["hwnd"])
-    steps = scene.get("steps", {}).get(editor, scene.get("steps", {}).get("both", []))
+    if editor == "fleet" and "fleet_settings" in scene:
+        with_fleet_settings(scene["fleet_settings"])
     try:
-        for step in steps:
-            do(s, step, out_dir, f"{name}-{editor}")
+        s = launch(editor, [workspace], size, pos, extra)
+        time.sleep(scene.get("settle_ms", 4000) / 1000)
+        focus(s["hwnd"])
+        steps = scene.get("steps", {}).get(editor, scene.get("steps", {}).get("both", []))
+        try:
+            for step in steps:
+                do(s, step, out_dir, f"{name}-{editor}")
+        finally:
+            if scene.get("close", True):
+                close(s)
     finally:
-        if scene.get("close", True):
-            close(s)
+        if editor == "fleet" and "fleet_settings" in scene:
+            restore_fleet_settings()
+
+
+INPUT_STEPS = ("key", "type", "move", "click", "drag", "hover", "mousedown", "mouseup")
 
 
 def do(s, step, out_dir=".", prefix="shot"):
     op, *a = step
+    if op in INPUT_STEPS:
+        guard(s)
     if op == "key":
         for chord in a:
             send_key(chord)
@@ -486,6 +566,28 @@ def do(s, step, out_dir=".", prefix="shot"):
             mouse_move_abs(*to_device(s, x1 + (x2 - x1) * k / 10, y1 + (y2 - y1) * k / 10))
         i.u.mi = MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, None)
         send_inputs([i])
+    elif op == "mousedown":
+        i = INPUT(type=INPUT_MOUSE)
+        i.u.mi = MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTDOWN, 0, None)
+        send_inputs([i])
+    elif op == "mouseup":
+        i = INPUT(type=INPUT_MOUSE)
+        i.u.mi = MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, None)
+        send_inputs([i])
+    elif op == "oak-settings":
+        # Writes Oak's settings.json in the run's OAK_CONFIG_DIR, which Oak polls once a
+        # second, so the next shot shows the live reload.
+        config = os.environ.get("OAK_CONFIG_DIR")
+        if not config:
+            raise SystemExit("oak-settings needs an Oak launch (OAK_CONFIG_DIR)")
+        with open(os.path.join(config, "settings.json"), "w") as fh:
+            json.dump(a[0], fh)
+    elif op == "maximize":
+        user32.ShowWindow(s["hwnd"], SW_MAXIMIZE)
+        time.sleep(0.5)
+    elif op == "restore":
+        user32.ShowWindow(s["hwnd"], SW_RESTORE)
+        time.sleep(0.5)
     elif op == "hover":
         mouse_move_abs(*to_device(s, float(a[0]), float(a[1])))
         time.sleep(float(a[2]) / 1000)
@@ -567,9 +669,7 @@ def main(argv):
     elif cmd == "shot":
         out = args[0] if args else "shot.png"
         print(out, shot(s, out, frame="--frame" in args))
-    elif cmd in ("key", "type", "move", "click", "drag", "hover", "wait", "pixel"):
-        if cmd in ("key", "type", "move", "click", "drag", "hover"):
-            focus(s["hwnd"])
+    elif cmd in (*INPUT_STEPS, "wait", "pixel", "maximize", "restore"):
         do(s, [cmd, *args])
     else:
         sys.exit(f"unknown command {cmd!r}\n{__doc__}")

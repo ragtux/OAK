@@ -6,6 +6,7 @@ members = [
     "crates/oak-syntax",
     "crates/oak-theme",
     "crates/oak-keymap",
+    "crates/oak-settings",
 ]
 
 [workspace.package]
@@ -20,6 +21,7 @@ oak-text = { path = "crates/oak-text" }
 oak-syntax = { path = "crates/oak-syntax" }
 oak-theme = { path = "crates/oak-theme" }
 oak-keymap = { path = "crates/oak-keymap" }
+oak-settings = { path = "crates/oak-settings" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

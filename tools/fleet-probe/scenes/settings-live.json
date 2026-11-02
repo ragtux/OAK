@@ -1,0 +1,28 @@
+{
+  "name": "settings-live",
+  "about": "Oak only: the settings file changes while the editor runs (theme, zoomLevel, editor.fontSize) and the window follows within a second, as Fleet's does. Fleet's own reload is not probed here.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 3000,
+  "steps": {
+    "oak": [
+      ["wait", 500],
+      ["shot", "before"],
+      ["oak-settings", {"theme": "light"}],
+      ["wait", 2500],
+      ["shot", "light"],
+      ["oak-settings", {"theme": "light", "zoomLevel": 1.5}],
+      ["wait", 2500],
+      ["shot", "zoom"],
+      ["oak-settings", {"editor.fontSize": 16}],
+      ["wait", 2500],
+      ["shot", "font"],
+      ["key", "ctrl+minus"],
+      ["wait", 800],
+      ["shot", "zoom-out"]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [],
+  "samples": []
+}

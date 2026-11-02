@@ -30,39 +30,11 @@
   },
   "oak_args": ["{workspace}/src/main.rs"],
   "scans": [
-    {
-      "name": "left island column (left of the chevrons)",
-      "axis": "y",
-      "at": 18.67,
-      "edges": ["island top", "Files tab top", "Files tab bottom", "root row top", "root row bottom"]
-    },
-    {
-      "name": "editor island column (clear of text)",
-      "axis": "y",
-      "at": 1000,
-      "edges": ["island top", "current line top", "current line bottom", "island bottom"]
-    },
-    {
-      "name": "tab row",
-      "axis": "x",
-      "at": 56,
-      "to": 700,
-      "edges": ["island left", "Files tab left", "Files tab right"]
-    },
-    {
-      "name": "root row",
-      "axis": "x",
-      "at": 87.33,
-      "to": 400,
-      "edges": ["island left", "root row left"]
-    },
-    {
-      "name": "line 2 (blank)",
-      "axis": "x",
-      "at": 109,
-      "from": 300,
-      "edges": ["left island right", "editor island left"]
-    }
+    {"name": "left island column (left of the chevrons, below the toolbar)", "axis": "y", "at": 18.67, "edges": ["island top", "Files tab top", "Files tab bottom", "root row top", "root row bottom"], "from": 30},
+    {"name": "editor island column (clear of text)", "axis": "y", "at": 1000, "edges": ["island top", "current line top", "current line bottom", "island bottom"]},
+    {"name": "tab row", "axis": "x", "at": 56, "to": 700, "edges": ["island left", "Files tab left", "Files tab right"]},
+    {"name": "root row", "axis": "x", "at": 87.33, "to": 400, "edges": ["island left", "root row left"]},
+    {"name": "line 2 (blank)", "axis": "x", "at": 109, "from": 300, "edges": ["left island right", "editor island left"]}
   ],
   "samples": [
     {"name": "window background", "at": [4, 400], "key": "background.primary"},

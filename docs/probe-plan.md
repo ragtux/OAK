@@ -102,9 +102,20 @@ Other constraints:
 
 Each is a script under `tools/fleet-probe/` unless noted. Build them in this
 order; A–D unblock M1, E and F are an afternoon each and pay off at once.
-Status (2026-11-01): A, B, D and H exist for Windows (`make-fixture.py`,
-`winprobe.py`, `compare.py`, with `scenes/editor.json` as the first scene);
-C's in-app probe mode, E, F's lint and the KDE launchers are still to do.
+Status (2026-11-02): A, B, D and H exist for Windows (`make-fixture.py`,
+`winprobe.py`, `compare.py`, with scenes `editor`, `light`, `panels`,
+`splitters`, `tabs` and `settings-live`); C's in-app probe mode, E, F's lint
+and the KDE launchers are still to do. B's settings override is the scene's
+`fleet_settings` object (written to Fleet's `settings.json` for the run and
+restored after); an Oak launch gets a fresh `OAK_CONFIG_DIR` so no layout or
+setting carries over between runs, and the `oak-settings` step rewrites that
+file mid-scene for live-reload probes.
+
+**The driver only ever runs in the foreground.** It sends keys and clicks
+with `SendInput`, which go to whatever window is in front; it refuses to send
+when the launched editor does not hold the foreground, but a run started in
+the background still types into the terminal that started it before the
+guard can tell. Start a run, let it take the screen, and read the shots after.
 
 ### A. Fixture workspace: `make-fixture.py <dir>`
 
@@ -201,7 +212,8 @@ activate it, close it. `drive.sh` wraps `ydotool` with a tiny step
 vocabulary shared with scene files: `key ctrl+shift+f`, `type "query"`,
 `move x y` (window-relative logical coordinates, converted with the scale
 read from KWin), `click`, `drag x1 y1 x2 y2`, `hover x y ms`, `wait ms`,
-`shot name`. With this every batch below runs unattended; a scene becomes
+`shot name`, plus `mousedown` / `mouseup` for a shot mid-drag and `maximize`
+/ `restore`. With this every batch below runs unattended; a scene becomes
 one JSON file executed against Fleet (through the driver) and against Oak
 (through `--probe`, or the same driver for mouse-only states).
 

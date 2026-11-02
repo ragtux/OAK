@@ -12,7 +12,7 @@
 //! This crate only resolves and looks up; the app turns [`Color`] into
 //! gpui's `Hsla` and decides which keys it paints from.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use indexmap::IndexMap;
 use serde::Deserialize;
 
@@ -37,11 +37,14 @@ impl Color {
         Color { r, g, b, a: 255 }
     }
 
-    /// `#RRGGBB` or `#RRGGBBAA` (Fleet's order: alpha last).
+    /// `#RRGGBB` or `#RRGGBBAA` (Fleet's order: alpha last). Fleet's own
+    /// `light.json` writes a few values without the `#` (`"island.background":
+    /// "FFFFFF"`) and loads them, so a bare 6 or 8 digit hex is accepted too.
     pub fn parse_hex(s: &str) -> Result<Color> {
-        let hex = s
-            .strip_prefix('#')
-            .ok_or_else(|| anyhow!("not a hex colour: {s:?}"))?;
+        let hex = s.strip_prefix('#').unwrap_or(s);
+        if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("not a hex colour: {s:?}");
+        }
         let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).context(s.to_string());
         match hex.len() {
             6 => Ok(Color {
@@ -195,6 +198,13 @@ fn resolve(palette: &IndexMap<String, String>, value: &str) -> Result<Color> {
     }
     if value.eq_ignore_ascii_case("transparent") {
         return Ok(Color::TRANSPARENT);
+    }
+    // A bare hex value (Fleet's light.json: "FFFFFF"), but only when it is not a palette name.
+    if (value.len() == 6 || value.len() == 8)
+        && value.bytes().all(|b| b.is_ascii_hexdigit())
+        && !palette.contains_key(value)
+    {
+        return Color::parse_hex(value);
     }
     // Fleet's files spell palette names both ways: "Neutral_140" and "Neutral 140".
     let spaced = value.replace('_', " ");
@@ -424,6 +434,8 @@ mod tests {
     fn hex_round_trip() {
         assert_eq!(Color::parse_hex("#0A0B0C").unwrap().hex(), "#0A0B0C");
         assert_eq!(Color::parse_hex("#0a0b0c80").unwrap().hex(), "#0A0B0C80");
-        assert!(Color::parse_hex("0A0B0C").is_err());
+        assert_eq!(Color::parse_hex("0A0B0C").unwrap().hex(), "#0A0B0C");
+        assert!(Color::parse_hex("0A0B0").is_err());
+        assert!(Color::parse_hex("#GG0000").is_err());
     }
 }

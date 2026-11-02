@@ -154,6 +154,139 @@ listed so the next pass can check them off):
 - The Trust dialog: Escape leaves Smart Mode off, which is the state every
   probe wants.
 
+## Third pass: M1 batches 1–3 (2026-11-02, Windows, 1.5 device px per logical px)
+
+Scenes `light`, `panels`, `splitters` and `tabs` (`tools/fleet-probe/scenes/`)
+ran unattended against Fleet 1.48.261 with `winprobe.py run`; the numbers
+below are device px ÷ 1.5 read off the shots with the run-length and
+ink-projection snippets, the colours are the shots' pixels checked against
+the resolved theme files. "Estimate" marks a value the shots do not pin down.
+
+### Batch 1: light theme, caption, maximised
+
+- **Light theme** (`fleet_settings` `{"theme": "light"}`): window `#EEEFF0`
+  (`background.primary`), islands `#FFFFFF` (`island.background`), current
+  line `#E6F0FC`, scrollbar thumb `#D1D1D1`. The island edges carry **no
+  border and no shadow** in either theme: the fill meets the window colour
+  directly (one anti-aliased device px). `shadow.*` is for popups only.
+- **Window caption (Windows).** Rows 0–1.33 are the system's accent line
+  (`#4C4A48`), drawn over the toolbar in both themes and absent when
+  maximised. Three caption buttons, each 46.67 wide, fill the toolbar's
+  height (0–36): minimise 1139.3–1186, maximise 1186–1232.7, close
+  1232.7–1280. Glyphs are 10 × 10 centred in the button (minimise is a 10 ×
+  1.33 line), drawn in `icon.primary`. Hover: close `#C42B1C` with a white
+  glyph (Windows' own colour, not a theme key); minimise and maximise
+  `#E5E6E7` on the light toolbar, which is `ghostButton.off.background.hovered`
+  (`DarkTint_6`). The right toolbar group therefore ends at 1130 and the
+  toolbar's own buttons keep their 28 px size.
+- **Window title in the toolbar.** Workspace name (`text.primary`, 13 px)
+  truncated with an ellipsis at 270 px, 16 px gap, a 16 px branch icon, 8
+  px gap, the branch name; the whole group centred on the window's centre
+  (471.3–808 around 640), not between the icon groups.
+- **Maximised** (2560 × 1392 logical): nothing rescales; the left island
+  stays 360, the right margin 6, the toolbar 36, the status bar 26 of which
+  the bottom 2 are under the screen edge.
+
+### Batch 2: panels
+
+| Element | Fleet | Constant |
+| --- | --- | --- |
+| Bottom island (window 800 tall) | 472–772, **300** tall | `BOTTOM_PANEL_HEIGHT` 300 (was 220) |
+| Right island | 914–1274, **360** wide | `RIGHT_PANEL_WIDTH` 360 |
+| Gap between islands | 8 (368–376, 464–472, 906–914) | `ISLAND_MARGIN` 8 |
+| Splitter hit zone | the 8 px gap itself (a drag from x=364 or y=540 did nothing, from 372 and 468 it resized); no hover highlight within 800 ms | `SPLITTER_WIDTH` = gap |
+| Left panel minimum | 200 (reopened at 200 after a drag to 0) | `PANEL_MIN_WIDTH` 200 |
+| Dragging past the minimum | collapses the panel (left to 0, bottom to the window bottom, right to the window edge all hid it) | |
+| Bottom panel after a drag to y=250 | island 254–772 (518 tall) | the gap follows the pointer |
+| Narrow left panel (200) tab row | `Files Search Git ⁞ +`: tabs clip, an overflow glyph, `+` stays visible | estimate: overflow glyph is `expui/general/moreVertical` |
+
+Empty panel (bottom and right open with no tool): a 24 px panel icon, 20
+px gap, the title ("Bottom Panel", 16 px semibold, `text.primary`, line
+20), 6 px gap, the description ("Open new tool or drag-n-drop tool from
+other panels", 13 px `text.secondary`, line 16, wrapping), 10 px gap, a
+secondary button "Open Tool ˅" 24 tall × 92 wide (`button.secondary.*`,
+`#2C2D2F` fill, text 13 px, estimate: padding 10, chevron 16 with a 4 px
+gap, radius 4). The group is vertically centred in the island and
+left-aligned inside a box inset **15 % of the island's width** on each
+side (54 in 360, 80 in 530, 134 in 898, 158.7 in 1058). When the panel has
+just opened its button carries the keyboard focus: a 2 px `focusOutline`
+ring (`#224271`) outside a 1 px `border.focused` (`#2A7DEB`) border.
+
+The `+` tool chooser (`panels-fleet-plus-popup`): a popup 166 × 316.7 at
+233.3–399.3 × 73.3–390, i.e. its top 2 px below the tab row and its left
+edge 6 px left of the `+` button's box; 1 px `popup.border`, `popup.background`
+`#252629`, a shadow about 8 px wide and slightly heavier below (estimate:
+`shadow.background.medium`, blur 8, offset 0/2). Inside, 6 px padding: a
+search field 24 tall (16 px magnifier at x 248, placeholder "Search" at
+267.3 in `text.tertiary`), 6 px, a 1 px `popup.separator` inset 6.7 from the
+popup edges, 6 px, then 28 px list rows: 16 px icon at x 248 (8 px row
+padding), 4 px gap, 13 px label. The list is alphabetical: AI Assistant,
+Breakpoints, Debug, Debugger Console, Docker, Empty Diff, Files, Git,
+History, Preview, … and scrolls (thumb 4.67 wide, 1.33 inside the border)
+because the popup's height is capped at 316.7 (estimate: a fixed cap).
+
+`hide-active-panel` (Shift+Escape) with focus in the Files tree hid the
+left island; the editor island then starts at 7.33.
+
+### Batch 3: editor tabs
+
+| Element | Fleet | Constant |
+| --- | --- | --- |
+| Tab gap | 4 (notes.txt 382–482.7, README.md from 486.7) | `EDITOR_TAB_GAP` 4 |
+| Hovered tab | fill `#28292B` = `tab.background.hovered`, no border, 42–70 | |
+| Selected, unfocused | fill `#28292B` = `tab.background.selected` (the preview shot, focus in the tree) | |
+| Preview tab (`editor.previewTab`, single click in Files) | title in italic, otherwise a normal tab; replaced by the next single-click file | italic |
+| Modified tab | title, 2 px, an 8 px box holding a 4 px `tab.text.selectedFocused` dot, then the usual 16 px close box and 2 px pad: the tab grows by 9.3 | `EDITOR_TAB_DOT` 4 in 8 |
+| Tooltip on a tab (the file's full path) | appears within 700 ms at the pointer's x (431.3 for a pointer at 430), 2 px below the tab row; `tooltip.background` `#323438`, no border, radius ~4, padding 8, 13 px text on an 18 px line, wraps at 616 wide | estimate: 500 ms, max width 600 |
+| Overflow | the row scrolls to keep the active tab visible; a dim 8 px `‹` at x 378–384 (box 376–392) marks hidden tabs to the left, the first tab then starts at 396 | estimate: `›` likewise at the right end |
+| Drag | the dragged tab follows the pointer as a 32 px tall ghost: the tab with a 2 px `tab.focusOutline.dragAndDrop` (`#2A7DEB`) ring, radius 6, on `tab.background.hovered`; its old place stays empty at the tab's width until the drop | |
+| `split-right` | a second editor island of equal width (376–821.3 and 829.3–1274, gap 8) with its own tab row, holding a copy of the current tab, which it selects and focuses | |
+
+Status bar after the probes: `src / main.rs / Record` (path from the root,
+then the symbol under the caret) on the left; `LF · 7:12 · UTF-8 · Rust` on
+the right. The symbol needs Smart Mode and tree-sitter later; the order is
+M1's.
+
+### Oak after this pass
+
+The same scenes ran against Oak (`winprobe.py run <scene> oak`, each launch
+in a fresh `OAK_CONFIG_DIR`). `compare.py` on the `editor` and `light`
+scenes: every island, tab-row and status-bar edge within 1 px, every colour
+sample equal; the remaining differences on the scan lines are glyphs (Oak's
+file monograms and logo are narrower than Fleet's icons, so edges inside
+text runs differ). Read off the Oak shots with the same ink projection:
+
+| Element | Fleet | Oak | Constant |
+| --- | --- | --- | --- |
+| Panel tab labels (Files, Search, Git, History, +) | 20–48.7, 66–109.3, 130.7–147.3, 168–212.7, 234–245.3 | 20.7–49.3, 67.3–109.3, 130–147.3, 168–211.3, 228.7–242 | `PANEL_TAB_PAD_X` 9, `PANEL_TAB_SELECTED_PAD_X` 6, `PANEL_TAB_PLUS_GAP` 4 (was one 6 px pad) |
+| Selected editor tab box, title, close glyph | 381.3–474.7, 408.7–456, 461.3–468 | 382–475.3, 408.7–454.7, 460.7–467.3 | `EDITOR_TAB_CLOSE_GAP` 1 (was 2); the selected title is semibold; the 1.33 border lies outside the 4 / 2 padding |
+| Tree row pitch | 26 | 26 | the row is 26 with the 24 px wash inside it (a margin on a `uniform_list` item was dropped) |
+| Tooltip box for a pointer at (430, 56) | 431.3–1043 × 72–122.7 | 430.7–1030 × 72.7–107.3 (one line: Oak's path was shorter) | `TOOLTIP_OFFSET_Y` 16, `TOOLTIP_MAX_WIDTH` 616 |
+| `+` chooser | 233.3 × 73.3, 166 wide | 230 × 70, 166 wide | `POPUP_OFFSET_X` 8 (the popup's left edge on the glyph's), `POPUP_OFFSET_Y` 2 |
+| Caption buttons, hover | 46.67 each, close `#C42B1C` with a white glyph | same | `CAPTION_BUTTON_WIDTH`, `CAPTION_GLYPH` |
+| Bottom island (window 800) | 472–772 under the editor only | same | `BOTTOM_PANEL_HEIGHT` 300; the bottom panel sits between the side panels |
+| Right island | 914–1274 | 914–1274 | `RIGHT_PANEL_WIDTH` 360 |
+| Empty panel group | icon 24, title 16/20, text 13/16, button 24 × 92.7, inset 15 % | same | `EMPTY_PANEL_*`, `BUTTON_PAD_X` 6, `BUTTON_ICON_GAP` 4, `BUTTON_CHEVRON_BOX` 12 |
+| Scrollbar thumb right edge | 1274 | 1272 | not yet: Fleet's right window margin is 6, Oak keeps 8 on both sides |
+
+Oak's side of the `tabs` scene differs in its steps (no Goto until M3):
+three files come from the command line and the preview tab is clicked last,
+so it ends the row rather than starting it, and a double-click's first click
+replaces the preview tab, so the overflow shot has no preview tab. The
+`settings-live` scene (Oak only) changed `theme`, `zoomLevel` and
+`editor.fontSize` on disk while Oak ran: the window followed within a second
+(toolbar 36 → 54 at zoom 1.5, line 22 → 27 at 16 px), and `zoom-out` wrote
+`zoomLevel` back to the file. Fleet's zoom step is still unmeasured: Oak
+uses 0.1.
+
+Still different after this pass, for the next one: Fleet's file-type icons
+are filled drawings where Oak paints monograms; Fleet's logo glyph is 16 px
+in its 24 px box where Oak's is 20; the green "no problems" badge (M6); the
+overflow glyph a narrow panel's tab row shows before its `+`; the right
+window margin of 6; the panel tab padding model (which tab is selected
+changes the row by about 1 px); and the tab tooltip's delay, which gpui
+fixes at 500 ms.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

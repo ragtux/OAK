@@ -1,0 +1,71 @@
+{
+  "name": "light",
+  "about": "Batch 1: the editor scene in Fleet's light theme, the Windows caption buttons hovered, and the window maximised.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "fleet_settings": {"theme": "light"},
+  "manual": [
+    "Fleet: the Trust dialog is dismissed with Escape; main.rs is opened through Goto."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 2000],
+      ["key", "escape"],
+      ["wait", 500],
+      ["key", "ctrl+k"],
+      ["wait", 800],
+      ["type", "main.rs"],
+      ["wait", 1500],
+      ["key", "enter"],
+      ["wait", 2000],
+      ["key", "ctrl+home"],
+      ["wait", 800],
+      ["shot", "light"],
+      ["hover", 1257, 18, 700],
+      ["shot", "close-hover"],
+      ["hover", 1210, 18, 700],
+      ["shot", "max-hover"],
+      ["hover", 1163, 18, 700],
+      ["shot", "min-hover"],
+      ["move", 900, 400],
+      ["wait", 300],
+      ["maximize"],
+      ["wait", 1500],
+      ["shot", "maximized"],
+      ["restore"],
+      ["wait", 800]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["shot", "light"],
+      ["hover", 1257, 18, 700],
+      ["shot", "close-hover"],
+      ["hover", 1210, 18, 700],
+      ["shot", "max-hover"],
+      ["hover", 1163, 18, 700],
+      ["shot", "min-hover"],
+      ["move", 900, 400],
+      ["wait", 300],
+      ["maximize"],
+      ["wait", 1500],
+      ["shot", "maximized"],
+      ["restore"],
+      ["wait", 800]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs", "--theme", "light"],
+  "scans": [
+    {"name": "left island column (left of the chevrons, below the toolbar)", "axis": "y", "at": 18.67, "edges": ["island top", "Files tab top", "Files tab bottom", "root row top", "root row bottom"], "from": 30},
+    {"name": "editor island column (clear of text)", "axis": "y", "at": 1000, "edges": ["island top", "current line top", "current line bottom", "island bottom"]},
+    {"name": "tab row", "axis": "x", "at": 56, "to": 700, "edges": ["island left", "Files tab left", "Files tab right"]},
+    {"name": "line 2 (blank)", "axis": "x", "at": 109, "from": 300, "edges": ["left island right", "editor island left"]}
+  ],
+  "samples": [
+    {"name": "window background", "at": [4, 400], "key": "background.primary"},
+    {"name": "left island", "at": [200, 700], "key": "island.background"},
+    {"name": "editor island", "at": [1000, 109], "key": "editor.background"},
+    {"name": "status bar", "at": [640, 790], "key": "statusBar.background"},
+    {"name": "toolbar", "at": [600, 6], "key": "background.primary"}
+  ]
+}

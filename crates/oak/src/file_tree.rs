@@ -1,20 +1,29 @@
 //! The Files panel: the workspace folder as a tree, laid out the way Fleet
 //! draws it. A root row carrying the folder's name, then one 26 px row per
 //! entry with a chevron for a folder and a file-type icon for a file;
-//! folders holding nothing but one folder collapse into a `a / b` chain.
+//! folders holding nothing but one folder collapse into a `a / b` chain
+//! (`files.compactDirectories`). A click opens a file (`files.openFileMode`:
+//! single or double; a single click opens a preview tab when
+//! `editor.previewTab` is on), the file opened in the editor is selected here
+//! (`files.selectOpenedFile`), and `files.exclude` names what stays hidden.
 
 use crate::actions::{TreeDown, TreeLeft, TreeOpen, TreeRight, TreeUp};
 use crate::assets::{file_icon, icon};
-use crate::theme::{metrics::*, Theme};
+use crate::scrollbar::scrollbar;
+use crate::settings::AppSettings;
+use crate::theme::{Metrics, Theme};
 use gpui::{
     div, prelude::*, px, uniform_list, App, Context, ElementId, EventEmitter, FocusHandle,
     Focusable, MouseButton, SharedString, UniformListScrollHandle, Window,
 };
+use oak_settings::ClickMode;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
 pub enum FileTreeEvent {
-    Open(PathBuf),
+    /// Show this file: in a preview tab when `preview` (a single click with
+    /// `editor.previewTab`), else in a tab of its own.
+    Open { path: PathBuf, preview: bool },
 }
 
 #[derive(Debug)]
@@ -28,28 +37,67 @@ struct Node {
     children: Option<Vec<Node>>,
 }
 
+/// What the tree reads from the settings when it (re)loads.
+#[derive(Clone, Debug, PartialEq)]
+struct Options {
+    compact: bool,
+    exclude: Vec<String>,
+    open_mode: ClickMode,
+    toggle_mode: ClickMode,
+    preview: bool,
+    select_opened: bool,
+}
+
+impl Options {
+    fn from(settings: &oak_settings::Settings) -> Options {
+        Options {
+            compact: settings.files_compact_directories(),
+            exclude: settings.files_exclude(),
+            open_mode: settings.files_open_file_mode(),
+            toggle_mode: settings.files_toggle_folder_mode(),
+            preview: settings.editor_preview_tab(),
+            select_opened: settings.files_select_opened_file(),
+        }
+    }
+
+    /// `files.exclude` patterns against a name: a literal name, `*.ext`, or a
+    /// `**/name` prefix, which is what Fleet's defaults use.
+    fn excluded(&self, name: &str) -> bool {
+        self.exclude.iter().any(|pat| {
+            let pat = pat.strip_prefix("**/").unwrap_or(pat);
+            if let Some(suffix) = pat.strip_prefix('*') {
+                name.ends_with(suffix)
+            } else {
+                name == pat
+            }
+        })
+    }
+}
+
 impl Node {
     fn name(&self) -> String {
         self.names.join(" / ")
     }
 
-    fn load(&mut self) {
+    fn load(&mut self, options: &Options) {
         if self.children.is_some() || !self.is_dir {
             return;
         }
-        let mut entries = read_dir_sorted(&self.path);
+        let mut entries = read_dir_sorted(&self.path, options);
         // Fleet's compact folders: a folder whose only entry is a folder is
         // shown as one row, `outer / inner`, until a branch appears.
-        for child in &mut entries {
-            if child.is_dir {
-                loop {
-                    let inner = read_dir_sorted(&child.path);
-                    match inner.as_slice() {
-                        [only] if only.is_dir => {
-                            child.names.push(only.names[0].clone());
-                            child.path = only.path.clone();
+        if options.compact {
+            for child in &mut entries {
+                if child.is_dir {
+                    loop {
+                        let inner = read_dir_sorted(&child.path, options);
+                        match inner.as_slice() {
+                            [only] if only.is_dir => {
+                                child.names.push(only.names[0].clone());
+                                child.path = only.path.clone();
+                            }
+                            _ => break,
                         }
-                        _ => break,
                     }
                 }
             }
@@ -58,7 +106,7 @@ impl Node {
     }
 }
 
-fn read_dir_sorted(dir: &Path) -> Vec<Node> {
+fn read_dir_sorted(dir: &Path, options: &Options) -> Vec<Node> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -66,7 +114,7 @@ fn read_dir_sorted(dir: &Path) -> Vec<Node> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            if name == ".git" {
+            if options.excluded(&name) {
                 return None;
             }
             let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false) || (e.path().is_dir());
@@ -103,6 +151,7 @@ pub struct FileTree {
     root: Node,
     rows: Vec<Row>,
     selected: Option<usize>,
+    options: Options,
     focus_handle: FocusHandle,
     scroll: UniformListScrollHandle,
 }
@@ -129,6 +178,7 @@ pub fn bind_keys(cx: &mut App) {
 
 impl FileTree {
     pub fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
+        let options = Options::from(&cx.global::<AppSettings>().settings);
         let name = root
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -140,11 +190,12 @@ impl FileTree {
             expanded: true,
             children: None,
         };
-        root_node.load();
+        root_node.load(&options);
         let mut tree = FileTree {
             root: root_node,
             rows: Vec::new(),
             selected: Some(0),
+            options,
             focus_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
         };
@@ -154,6 +205,29 @@ impl FileTree {
 
     pub fn root_name(&self) -> String {
         self.root.name()
+    }
+
+    /// Re-reads the settings; a change in what is shown reloads the folder.
+    fn refresh_options(&mut self, cx: &App) {
+        let options = Options::from(&cx.global::<AppSettings>().settings);
+        if options == self.options {
+            return;
+        }
+        let reload =
+            options.compact != self.options.compact || options.exclude != self.options.exclude;
+        self.options = options;
+        if reload {
+            let selected = self
+                .selected
+                .and_then(|ix| self.rows.get(ix))
+                .map(|r| r.path.clone());
+            self.root.children = None;
+            self.root.load(&self.options);
+            self.rebuild_rows();
+            if let Some(path) = selected {
+                self.select_path(&path);
+            }
+        }
     }
 
     fn rebuild_rows(&mut self) {
@@ -210,10 +284,11 @@ impl FileTree {
         if row.index.is_empty() {
             return;
         }
+        let options = self.options.clone();
         let node = self.node_mut(&row.index);
         if node.is_dir {
             if !node.expanded {
-                node.load();
+                node.load(&options);
             }
             node.expanded = !node.expanded;
             self.rebuild_rows();
@@ -228,10 +303,11 @@ impl FileTree {
         if row.index.is_empty() || !row.is_dir {
             return;
         }
+        let options = self.options.clone();
         let node = self.node_mut(&row.index);
         if node.expanded != expanded {
             if expanded {
-                node.load();
+                node.load(&options);
             }
             node.expanded = expanded;
             self.rebuild_rows();
@@ -239,6 +315,7 @@ impl FileTree {
         }
     }
 
+    /// Enter or Space: a folder toggles, a file opens in its own tab.
     fn activate(&mut self, row_ix: usize, cx: &mut Context<Self>) {
         self.selected = Some(row_ix);
         let Some(row) = self.rows.get(row_ix).cloned() else {
@@ -247,7 +324,43 @@ impl FileTree {
         if row.is_dir {
             self.toggle(row_ix, cx);
         } else {
-            cx.emit(FileTreeEvent::Open(row.path));
+            cx.emit(FileTreeEvent::Open {
+                path: row.path,
+                preview: false,
+            });
+        }
+        cx.notify();
+    }
+
+    /// A mouse click, counted: what opens or toggles depends on
+    /// `files.openFileMode` and `files.toggleFolderMode`.
+    fn click(&mut self, row_ix: usize, count: usize, cx: &mut Context<Self>) {
+        self.selected = Some(row_ix);
+        let Some(row) = self.rows.get(row_ix).cloned() else {
+            return;
+        };
+        if row.is_dir {
+            let wanted = match self.options.toggle_mode {
+                ClickMode::Single => 1,
+                ClickMode::Double => 2,
+            };
+            if count == wanted {
+                self.toggle(row_ix, cx);
+            }
+        } else {
+            match (self.options.open_mode, count) {
+                // A single click: a preview tab when the setting is on; the
+                // second click of a double promotes it to a real tab.
+                (ClickMode::Single, 1) => cx.emit(FileTreeEvent::Open {
+                    path: row.path,
+                    preview: self.options.preview,
+                }),
+                (ClickMode::Single, 2) | (ClickMode::Double, 2) => cx.emit(FileTreeEvent::Open {
+                    path: row.path,
+                    preview: false,
+                }),
+                _ => {}
+            }
         }
         cx.notify();
     }
@@ -261,6 +374,59 @@ impl FileTree {
         self.scroll
             .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
         cx.notify();
+    }
+
+    /// `files.selectOpenedFile`: the editor's file becomes the selected row,
+    /// its folders expanded, scrolled into view. Returns whether it is under the root.
+    pub fn select_path(&mut self, path: &Path) -> bool {
+        if !self.options.select_opened {
+            return false;
+        }
+        let Ok(rel) = path.strip_prefix(&self.root.path) else {
+            return false;
+        };
+        let options = self.options.clone();
+        // Expand along the way; a compact chain's row stands for its innermost folder.
+        let mut node = &mut self.root;
+        let mut remaining: Vec<_> = rel.components().collect();
+        while !remaining.is_empty() {
+            node.load(&options);
+            let Some(children) = node.children.as_mut() else {
+                return false;
+            };
+            let mut found = None;
+            for (i, child) in children.iter().enumerate() {
+                let n = child.names.len();
+                if n <= remaining.len()
+                    && child
+                        .names
+                        .iter()
+                        .zip(remaining.iter())
+                        .all(|(name, comp)| comp.as_os_str() == name.as_str())
+                {
+                    found = Some((i, n));
+                    break;
+                }
+            }
+            let Some((i, n)) = found else {
+                return false;
+            };
+            remaining.drain(..n);
+            node = &mut children[i];
+            if node.is_dir && !remaining.is_empty() {
+                node.load(&options);
+                node.expanded = true;
+            }
+        }
+        self.rebuild_rows();
+        if let Some(ix) = self.rows.iter().position(|r| r.path == path) {
+            self.selected = Some(ix);
+            self.scroll
+                .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
+            true
+        } else {
+            false
+        }
     }
 
     fn up(&mut self, _: &TreeUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -307,134 +473,123 @@ impl FileTree {
         ix: usize,
         focused: bool,
         theme: &Theme,
+        m: &Metrics,
         entity: &gpui::Entity<FileTree>,
     ) -> gpui::Stateful<gpui::Div> {
         let row = &self.rows[ix];
         let selected = self.selected == Some(ix);
         let is_root = row.index.is_empty();
         let indent = if is_root {
-            TREE_ROOT_PAD_LEFT
+            m.tree_root_pad_left
         } else {
-            TREE_PAD_LEFT + (row.depth - 1) as f32 * TREE_INDENT
+            m.tree_pad_left + (row.depth - 1) as f32 * m.tree_indent
         };
         let mut names = row.names.iter();
         let first: SharedString = names.next().cloned().unwrap_or_default().into();
         let rest: Vec<SharedString> = names.cloned().map(Into::into).collect();
-        let text_color = theme.list_text;
+        let text_color = if selected && focused {
+            theme.list_text_focused
+        } else {
+            theme.list_text
+        };
         let id: ElementId = ElementId::NamedInteger("tree-row".into(), ix as u64);
+        // The row keeps the 26 px pitch; the background inside it is 24 tall
+        // (Windows probe), so the hover and selection washes sit 1 px in.
         div()
             .id(id)
-            // The background is 24 tall in a 26 px pitch: the margins keep the pitch.
-            .h(px(TREE_ROW_HEIGHT - 2. * TREE_ROW_INSET))
-            .my(px(TREE_ROW_INSET))
+            .h(px(m.tree_row_height))
+            .py(px(m.tree_row_inset))
             .w_full()
-            .flex()
-            .items_center()
-            .pl(px(indent))
-            .pr(px(6.))
-            .rounded(px(TREE_ROW_RADIUS))
             .cursor_pointer()
-            .when(selected && focused, |d| d.bg(theme.list_bg_focused))
-            .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
-            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
             .on_mouse_down(MouseButton::Left, {
                 let entity = entity.clone();
-                move |_, window, cx| {
+                move |event, window, cx| {
+                    let count = event.click_count;
                     entity.update(cx, |this, cx| {
                         this.focus_handle.focus(window, cx);
-                        this.activate(ix, cx);
+                        this.click(ix, count, cx);
                     });
                 }
             })
-            .when(!is_root, |d| {
-                d.child(
-                    div()
-                        .size(px(ICON_SIZE))
-                        .flex_shrink_0()
-                        .mr(px(TREE_ICON_GAP))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .map(|d| {
-                            if row.is_dir {
-                                let chevron = if row.expanded {
-                                    "expui/general/chevronDown"
-                                } else {
-                                    "expui/general/chevronRight"
-                                };
-                                d.child(icon(chevron, ICON_SIZE, theme.icon_secondary))
-                            } else {
-                                d.child(icon(file_icon(&first), ICON_SIZE, theme.icon_secondary))
-                            }
-                        }),
-                )
-            })
             .child(
                 div()
+                    .h_full()
+                    .w_full()
                     .flex()
                     .items_center()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(text_color)
-                    .child(first)
-                    .children(rest.into_iter().flat_map(|name| {
-                        [
-                            div().px(px(5.)).text_color(theme.text_tertiary).child("/"),
-                            div().child(name),
-                        ]
-                    })),
+                    .pl(px(indent))
+                    .pr(px(m.panel_pad_x))
+                    .rounded(px(m.tree_row_radius))
+                    .when(selected && focused, |d| d.bg(theme.list_bg_focused))
+                    .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
+                    .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                    .when(!is_root, |d| {
+                        d.child(
+                            div()
+                                .size(px(m.icon_size))
+                                .flex_shrink_0()
+                                .mr(px(m.tree_icon_gap))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .map(|d| {
+                                    if row.is_dir {
+                                        let chevron = if row.expanded {
+                                            "expui/general/chevronDown"
+                                        } else {
+                                            "expui/general/chevronRight"
+                                        };
+                                        d.child(icon(chevron, m.icon_size, theme.icon_secondary))
+                                    } else {
+                                        d.child(icon(
+                                            file_icon(&first),
+                                            m.icon_size,
+                                            theme.icon_secondary,
+                                        ))
+                                    }
+                                }),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .min_w_0()
+                            // The root row's label runs to the island's edge and is clipped
+                            // there, without an ellipsis (Windows probe).
+                            .map(|d| {
+                                if is_root {
+                                    d.whitespace_nowrap()
+                                } else {
+                                    d.truncate()
+                                }
+                            })
+                            .text_color(text_color)
+                            .child(first)
+                            .children(rest.into_iter().flat_map(|name| {
+                                [
+                                    div()
+                                        .px(px(5. * m.zoom))
+                                        .text_color(theme.text_tertiary)
+                                        .child("/"),
+                                    div().child(name),
+                                ]
+                            })),
+                    ),
             )
     }
 }
 
-/// The panel's own tab row: Files, Search, Git, History and a "+".
-fn panel_tabs(theme: &Theme) -> impl IntoElement {
-    let tab = |label: &'static str, selected: bool| {
-        div()
-            .h(px(PANEL_TAB_HEIGHT))
-            .px(px(PANEL_TAB_PAD_X))
-            .flex()
-            .items_center()
-            .rounded(px(PANEL_TAB_RADIUS))
-            .when(selected, |d| {
-                d.bg(theme.tab_bg_selected)
-                    .border_1()
-                    .border_color(theme.tab_border_selected)
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.tab_text_selected)
-            })
-            .when(!selected, |d| d.text_color(theme.tab_text))
-            .child(label)
-    };
-    div()
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(px(PANEL_TAB_GAP))
-        .pt(px(PANEL_HEADER_PAD_TOP))
-        .pb(px(PANEL_HEADER_PAD_BOTTOM))
-        .px(px(PANEL_PAD_X))
-        .child(tab("Files", true))
-        .child(tab("Search", false))
-        .child(tab("Git", false))
-        .child(tab("History", false))
-        .child(
-            div()
-                .size(px(PANEL_TAB_HEIGHT))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon("expui/general/add", ICON_SIZE, theme.icon_secondary)),
-        )
-}
-
 impl Render for FileTree {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_options(cx);
         let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
         let focused = self.focus_handle.is_focused(window);
         let count = self.rows.len();
         let entity = cx.entity();
         let theme_for_rows = theme.clone();
+        let base = self.scroll.0.borrow().base_handle.clone();
         div()
             .key_context("FileTree")
             .track_focus(&self.focus_handle)
@@ -444,20 +599,25 @@ impl Render for FileTree {
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::open))
             .size_full()
-            .flex()
-            .flex_col()
-            .child(panel_tabs(&theme))
+            .relative()
             .child(
-                div().flex_1().min_h_0().px(px(PANEL_PAD_X)).child(
+                div().size_full().px(px(m.panel_pad_x)).child(
                     uniform_list("file-tree", count, move |range, _window, cx| {
                         let this = entity.read(cx);
                         range
-                            .map(|ix| this.render_row(ix, focused, &theme_for_rows, &entity))
+                            .map(|ix| this.render_row(ix, focused, &theme_for_rows, &m, &entity))
                             .collect()
                     })
                     .track_scroll(&self.scroll)
                     .size_full(),
                 ),
             )
+            .child(scrollbar(
+                "file-tree-scrollbar",
+                &base,
+                m.scrollbar_thumb,
+                &theme,
+                &m,
+            ))
     }
 }

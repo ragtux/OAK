@@ -14,10 +14,11 @@ use oak_theme::Color;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Fleet's sizes, in logical pixels. Measured on Fleet 1.48.261 rendering at
-/// 2.76 device pixels per logical pixel (display 1.38 × zoom 2.0) on KDE, then
-/// at 1.5 (display 1.5 × zoom 1.0) on Windows; see `docs/fleet-probe.md` for
-/// the raw numbers and what is still estimated.
+/// Fleet's sizes, in logical pixels at zoom 1.0. Measured on Fleet 1.48.261
+/// rendering at 2.76 device pixels per logical pixel (display 1.38 × zoom 2.0)
+/// on KDE, then at 1.5 (display 1.5 × zoom 1.0) on Windows; see
+/// `docs/fleet-probe.md` for the raw numbers and what is still estimated.
+/// The app paints from [`Metrics`], these values times the zoom level.
 pub mod metrics {
     /// The row above the islands: the logo, the panel toggles, the workspace
     /// name, the run and search controls.
@@ -30,20 +31,65 @@ pub mod metrics {
     pub const TOOLBAR_SEPARATOR_MARGIN: f32 = 4.;
     pub const LOGO_SIZE: f32 = 24.;
     pub const ICON_SIZE: f32 = 16.;
-    /// The margin between the window edge and an island, and between two islands.
+    /// Windows caption buttons drawn into the toolbar: each 46.67 wide, the
+    /// toolbar's full height, a 10 px glyph (batch 1).
+    pub const CAPTION_BUTTON_WIDTH: f32 = 46.67;
+    pub const CAPTION_GLYPH: f32 = 10.;
+    /// The window title in the toolbar: the workspace name truncated at 270,
+    /// 16 to the branch icon, 8 to the branch name, centred on the window (batch 1).
+    pub const TITLE_NAME_MAX_WIDTH: f32 = 270.;
+    pub const TITLE_BRANCH_GAP: f32 = 16.;
+    pub const TITLE_BRANCH_ICON_GAP: f32 = 8.;
+    /// The margin between the window edge and an island, and between two islands;
+    /// the gap is also the splitter's hit zone (batch 2).
     pub const ISLAND_MARGIN: f32 = 8.;
     pub const ISLAND_RADIUS: f32 = 8.;
     /// Fleet's Files island in a fresh 1280 × 800 window (Windows probe, batch 1).
     pub const LEFT_PANEL_WIDTH: f32 = 360.;
-    pub const BOTTOM_PANEL_HEIGHT: f32 = 220.;
+    /// The right island in a fresh window is the left's width; the bottom island
+    /// is 300 tall in an 800 window (batch 2).
+    pub const RIGHT_PANEL_WIDTH: f32 = 360.;
+    pub const BOTTOM_PANEL_HEIGHT: f32 = 300.;
+    /// A panel dragged narrower than this collapses; it reopens at this width (batch 2).
+    pub const PANEL_MIN_WIDTH: f32 = 200.;
+    /// Estimate: the bottom panel's minimum was not measured (batch 2 hid it below 254 px tall).
+    pub const PANEL_MIN_HEIGHT: f32 = 100.;
     /// A tool panel's own tab row ("Files", "Search", "Git", "History", "+").
     pub const PANEL_TAB_HEIGHT: f32 = 28.;
     pub const PANEL_TAB_RADIUS: f32 = 6.;
-    pub const PANEL_TAB_PAD_X: f32 = 6.;
+    /// An unselected panel tab's padding; the selected one is tighter around its
+    /// semibold label (Files 13.3-55.3 around text 20-48.7; Search's text starts
+    /// 10.7 after it, Git's 20.7 after Search's). Estimate until a probe selects
+    /// another tab (`docs/fleet-probe.md`, batch 3 follow-up).
+    pub const PANEL_TAB_PAD_X: f32 = 9.;
+    pub const PANEL_TAB_SELECTED_PAD_X: f32 = 6.;
     pub const PANEL_TAB_GAP: f32 = 2.;
+    /// The `+` box sits 4 after the last tab (its glyph is 21.3 past History's text).
+    pub const PANEL_TAB_PLUS_GAP: f32 = 4.;
     pub const PANEL_HEADER_PAD_TOP: f32 = 6.;
     pub const PANEL_HEADER_PAD_BOTTOM: f32 = 5.;
     pub const PANEL_PAD_X: f32 = 6.;
+    /// An empty panel: a 24 px icon, 20, the 16 px title on a 20 line, 6, the
+    /// 13 px description on a 16 line, 10, a 24 px button; left-aligned in a box
+    /// inset 15 % of the island's width, vertically centred (batch 2).
+    pub const EMPTY_PANEL_ICON: f32 = 24.;
+    pub const EMPTY_PANEL_GAP_ICON: f32 = 20.;
+    pub const EMPTY_PANEL_TITLE_SIZE: f32 = 16.;
+    pub const EMPTY_PANEL_TITLE_LINE: f32 = 20.;
+    pub const EMPTY_PANEL_GAP_TITLE: f32 = 6.;
+    pub const EMPTY_PANEL_TEXT_LINE: f32 = 16.;
+    pub const EMPTY_PANEL_GAP_TEXT: f32 = 10.;
+    pub const EMPTY_PANEL_INSET: f32 = 0.15;
+    /// Fleet's secondary button ("Open Tool", batch 2): 24 tall, 92.7 wide for
+    /// its 63.3 px label: 6 px padding, a 4 px gap, the chevron in a 12 px box.
+    /// The radius is an estimate.
+    pub const BUTTON_HEIGHT: f32 = 24.;
+    pub const BUTTON_PAD_X: f32 = 6.;
+    pub const BUTTON_ICON_GAP: f32 = 4.;
+    pub const BUTTON_CHEVRON_BOX: f32 = 12.;
+    pub const BUTTON_RADIUS: f32 = 4.;
+    /// The keyboard focus ring: 2 px of `focusOutline` outside a 1 px `border.focused` (batch 2).
+    pub const FOCUS_OUTLINE: f32 = 2.;
     pub const TREE_ROW_HEIGHT: f32 = 26.;
     /// The selected or hovered row's background is 24 tall inside the 26 px pitch.
     pub const TREE_ROW_INSET: f32 = 1.;
@@ -56,21 +102,38 @@ pub mod metrics {
     pub const EDITOR_TAB_BAR_HEIGHT: f32 = 40.;
     pub const EDITOR_TAB_HEIGHT: f32 = 28.;
     pub const EDITOR_TAB_RADIUS: f32 = 6.;
-    /// Inside the tab: 4, icon 16, 5, title, 2, close 16, 2 (Windows probe, glyph extents).
+    /// The selected tab's border is 2 device px at 1.5, i.e. 1.33 logical (Windows probe).
+    pub const EDITOR_TAB_BORDER: f32 = 4. / 3.;
+    /// Inside the tab, after its 1.33 border: 4, icon 16, 5, title, 1, close 16, 2
+    /// (Windows probe, glyph extents: the selected tab is 93.3 wide around a 47.3
+    /// px title, its close glyph 0.7 after the title's ink).
     pub const EDITOR_TAB_PAD_LEFT: f32 = 4.;
     pub const EDITOR_TAB_PAD_RIGHT: f32 = 2.;
     pub const EDITOR_TAB_GAP: f32 = 4.;
     pub const EDITOR_TAB_ICON_GAP: f32 = 5.;
-    pub const EDITOR_TAB_CLOSE_GAP: f32 = 2.;
+    pub const EDITOR_TAB_CLOSE_GAP: f32 = 1.;
+    /// A modified tab: a 4 px dot in an 8 px box between the title and the close box (batch 3).
+    pub const EDITOR_TAB_DOT: f32 = 4.;
+    pub const EDITOR_TAB_DOT_BOX: f32 = 8.;
+    /// An overflowing tab row shows a 16 px chevron box at either end (batch 3).
+    pub const EDITOR_TAB_SCROLL_BOX: f32 = 16.;
+    /// A dragged tab's ghost: the tab inside a 2 px ring (batch 3).
+    pub const EDITOR_TAB_DRAG_RING: f32 = 2.;
     /// The gutter: line numbers right-aligned at `GUTTER_NUMBER_RIGHT`, text from `GUTTER_WIDTH`.
     pub const GUTTER_NUMBER_RIGHT: f32 = 36.;
     pub const GUTTER_WIDTH: f32 = 60.;
     pub const EDITOR_FONT_SIZE: f32 = 13.;
     /// 33 device px at 1.5 (Windows probe); 60 at 2.76 (KDE probe) agrees with 22.
     pub const EDITOR_LINE_HEIGHT: f32 = 22.;
+    /// Lines of empty space the editor scrolls past its end: Fleet's thumb for a
+    /// 38-line file in a 696 px view was 523 px, which fits 4 lines (Windows probe).
+    pub const EDITOR_OVERSCROLL_LINES: f32 = 4.;
     pub const CARET_WIDTH: f32 = 2.;
     /// The thumb sits flush with the island's right edge (Windows probe).
     pub const SCROLLBAR_THUMB: f32 = 6.;
+    pub const SCROLLBAR_THUMB_MIN: f32 = 24.;
+    /// The popup's own scrollbar is narrower (batch 2).
+    pub const POPUP_SCROLLBAR_THUMB: f32 = 4.67;
     pub const UI_FONT_SIZE: f32 = 13.;
     /// 42 device px at 1.5 (Windows probe).
     pub const STATUS_BAR_HEIGHT: f32 = 28.;
@@ -78,6 +141,165 @@ pub mod metrics {
     /// The right group ends 12 px from the window edge: margin 8 + this.
     pub const STATUS_PAD_RIGHT: f32 = 4.;
     pub const STATUS_GAP: f32 = 12.;
+    /// A popup (the `+` tool chooser, batch 2): 1 px border, 6 px padding, a 24 px
+    /// search field, 6, a separator, 6, 28 px rows with an 8 px left pad, a 16 px
+    /// icon and a 4 px gap. Width 166, height capped at 316.67 (estimate: fixed).
+    pub const POPUP_RADIUS: f32 = 6.;
+    pub const POPUP_PAD: f32 = 6.;
+    pub const POPUP_FIELD_HEIGHT: f32 = 24.;
+    pub const POPUP_ROW_HEIGHT: f32 = 28.;
+    pub const POPUP_ROW_PAD_X: f32 = 8.;
+    pub const POPUP_ROW_ICON_GAP: f32 = 4.;
+    pub const POPUP_ROW_RADIUS: f32 = 4.;
+    pub const POPUP_WIDTH: f32 = 166.;
+    pub const POPUP_MAX_HEIGHT: f32 = 316.67;
+    /// The popup opens 2 px below the tab row, its left edge on the `+` glyph's
+    /// left edge, 8 px into the 28 px box (batch 2: popup at 233.3, glyph at 234).
+    pub const POPUP_OFFSET_Y: f32 = 2.;
+    pub const POPUP_OFFSET_X: f32 = 8.;
+    /// Estimate for the popup's shadow (batch 2: about 8 px, heavier below).
+    pub const POPUP_SHADOW_BLUR: f32 = 8.;
+    pub const POPUP_SHADOW_OFFSET_Y: f32 = 2.;
+    /// A tooltip (batch 3): padding 8, 13 px text on an 18 px line, radius 4
+    /// (estimate), at most 600 wide (estimate), 2 px below the hovered tab.
+    pub const TOOLTIP_PAD_X: f32 = 8.;
+    pub const TOOLTIP_PAD_Y: f32 = 8.;
+    /// The tooltip's top sits 16 px below the pointer (batch 3: pointer at 56, box at 72).
+    pub const TOOLTIP_OFFSET_Y: f32 = 16.;
+    pub const TOOLTIP_LINE: f32 = 18.;
+    pub const TOOLTIP_RADIUS: f32 = 4.;
+    /// Fleet's tab tooltip wrapped at 616 wide (batch 3).
+    pub const TOOLTIP_MAX_WIDTH: f32 = 616.;
+}
+
+macro_rules! scaled_metrics {
+    ($($field:ident = $konst:ident),* $(,)?) => {
+        /// [`metrics`] at the current zoom level, the one scale factor Fleet's
+        /// `zoomLevel` applies to every panel. Kept as a global so a view can
+        /// read it in `render`.
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct Metrics {
+            pub zoom: f32,
+            $(pub $field: f32,)*
+        }
+
+        impl Metrics {
+            pub fn at(zoom: f32) -> Metrics {
+                Metrics { zoom, $($field: metrics::$konst * zoom,)* }
+            }
+        }
+    };
+}
+
+scaled_metrics!(
+    toolbar_height = TOOLBAR_HEIGHT,
+    toolbar_button = TOOLBAR_BUTTON,
+    toolbar_gap = TOOLBAR_GAP,
+    toolbar_pad_x = TOOLBAR_PAD_X,
+    toolbar_separator_margin = TOOLBAR_SEPARATOR_MARGIN,
+    logo_size = LOGO_SIZE,
+    icon_size = ICON_SIZE,
+    caption_button_width = CAPTION_BUTTON_WIDTH,
+    caption_glyph = CAPTION_GLYPH,
+    title_name_max_width = TITLE_NAME_MAX_WIDTH,
+    title_branch_gap = TITLE_BRANCH_GAP,
+    title_branch_icon_gap = TITLE_BRANCH_ICON_GAP,
+    island_margin = ISLAND_MARGIN,
+    island_radius = ISLAND_RADIUS,
+    left_panel_width = LEFT_PANEL_WIDTH,
+    right_panel_width = RIGHT_PANEL_WIDTH,
+    bottom_panel_height = BOTTOM_PANEL_HEIGHT,
+    panel_min_width = PANEL_MIN_WIDTH,
+    panel_min_height = PANEL_MIN_HEIGHT,
+    panel_tab_height = PANEL_TAB_HEIGHT,
+    panel_tab_radius = PANEL_TAB_RADIUS,
+    panel_tab_pad_x = PANEL_TAB_PAD_X,
+    panel_tab_selected_pad_x = PANEL_TAB_SELECTED_PAD_X,
+    panel_tab_gap = PANEL_TAB_GAP,
+    panel_tab_plus_gap = PANEL_TAB_PLUS_GAP,
+    panel_header_pad_top = PANEL_HEADER_PAD_TOP,
+    panel_header_pad_bottom = PANEL_HEADER_PAD_BOTTOM,
+    panel_pad_x = PANEL_PAD_X,
+    empty_panel_icon = EMPTY_PANEL_ICON,
+    empty_panel_gap_icon = EMPTY_PANEL_GAP_ICON,
+    empty_panel_title_size = EMPTY_PANEL_TITLE_SIZE,
+    empty_panel_title_line = EMPTY_PANEL_TITLE_LINE,
+    empty_panel_gap_title = EMPTY_PANEL_GAP_TITLE,
+    empty_panel_text_line = EMPTY_PANEL_TEXT_LINE,
+    empty_panel_gap_text = EMPTY_PANEL_GAP_TEXT,
+    button_height = BUTTON_HEIGHT,
+    button_pad_x = BUTTON_PAD_X,
+    button_icon_gap = BUTTON_ICON_GAP,
+    button_chevron_box = BUTTON_CHEVRON_BOX,
+    button_radius = BUTTON_RADIUS,
+    focus_outline = FOCUS_OUTLINE,
+    tree_row_height = TREE_ROW_HEIGHT,
+    tree_row_inset = TREE_ROW_INSET,
+    tree_row_radius = TREE_ROW_RADIUS,
+    tree_root_pad_left = TREE_ROOT_PAD_LEFT,
+    tree_pad_left = TREE_PAD_LEFT,
+    tree_indent = TREE_INDENT,
+    tree_icon_gap = TREE_ICON_GAP,
+    editor_tab_bar_height = EDITOR_TAB_BAR_HEIGHT,
+    editor_tab_height = EDITOR_TAB_HEIGHT,
+    editor_tab_radius = EDITOR_TAB_RADIUS,
+    editor_tab_border = EDITOR_TAB_BORDER,
+    editor_tab_pad_left = EDITOR_TAB_PAD_LEFT,
+    editor_tab_pad_right = EDITOR_TAB_PAD_RIGHT,
+    editor_tab_gap = EDITOR_TAB_GAP,
+    editor_tab_icon_gap = EDITOR_TAB_ICON_GAP,
+    editor_tab_close_gap = EDITOR_TAB_CLOSE_GAP,
+    editor_tab_dot = EDITOR_TAB_DOT,
+    editor_tab_dot_box = EDITOR_TAB_DOT_BOX,
+    editor_tab_scroll_box = EDITOR_TAB_SCROLL_BOX,
+    editor_tab_drag_ring = EDITOR_TAB_DRAG_RING,
+    gutter_number_right = GUTTER_NUMBER_RIGHT,
+    gutter_width = GUTTER_WIDTH,
+    editor_font_size = EDITOR_FONT_SIZE,
+    editor_line_height = EDITOR_LINE_HEIGHT,
+    caret_width = CARET_WIDTH,
+    scrollbar_thumb = SCROLLBAR_THUMB,
+    scrollbar_thumb_min = SCROLLBAR_THUMB_MIN,
+    popup_scrollbar_thumb = POPUP_SCROLLBAR_THUMB,
+    ui_font_size = UI_FONT_SIZE,
+    status_bar_height = STATUS_BAR_HEIGHT,
+    status_pad_x = STATUS_PAD_X,
+    status_pad_right = STATUS_PAD_RIGHT,
+    status_gap = STATUS_GAP,
+    popup_radius = POPUP_RADIUS,
+    popup_pad = POPUP_PAD,
+    popup_field_height = POPUP_FIELD_HEIGHT,
+    popup_row_height = POPUP_ROW_HEIGHT,
+    popup_row_pad_x = POPUP_ROW_PAD_X,
+    popup_row_icon_gap = POPUP_ROW_ICON_GAP,
+    popup_row_radius = POPUP_ROW_RADIUS,
+    popup_width = POPUP_WIDTH,
+    popup_max_height = POPUP_MAX_HEIGHT,
+    popup_offset_y = POPUP_OFFSET_Y,
+    popup_offset_x = POPUP_OFFSET_X,
+    popup_shadow_blur = POPUP_SHADOW_BLUR,
+    popup_shadow_offset_y = POPUP_SHADOW_OFFSET_Y,
+    tooltip_pad_x = TOOLTIP_PAD_X,
+    tooltip_pad_y = TOOLTIP_PAD_Y,
+    tooltip_offset_y = TOOLTIP_OFFSET_Y,
+    tooltip_line = TOOLTIP_LINE,
+    tooltip_radius = TOOLTIP_RADIUS,
+    tooltip_max_width = TOOLTIP_MAX_WIDTH,
+);
+
+impl Global for Metrics {}
+
+impl Metrics {
+    /// The editor's text metrics for the settings: `editor.fontSize` times the
+    /// zoom, and `editor.lineSpacing` times that, else Fleet's measured 22 at 13.
+    pub fn editor_text(&self, settings: &oak_settings::Settings) -> (f32, f32) {
+        let font_size = settings.editor_font_size() * self.zoom;
+        let line_height = match settings.editor_line_spacing() {
+            Some(spacing) => (font_size * spacing).round(),
+            None => (font_size * metrics::EDITOR_LINE_HEIGHT / metrics::EDITOR_FONT_SIZE).round(),
+        };
+        (font_size, line_height)
+    }
 }
 
 pub fn to_hsla(c: Color) -> Hsla {
@@ -133,14 +355,17 @@ pub struct Theme {
     pub tab_border_selected: Hsla,
     pub tab_border_selected_focused: Hsla,
     pub tab_text: Hsla,
+    pub tab_text_hovered: Hsla,
     pub tab_text_selected: Hsla,
     pub tab_close_icon: Hsla,
     pub tab_close_icon_hovered: Hsla,
+    pub tab_drag_outline: Hsla,
     // listItem.* and tree.*
     pub list_bg_hovered: Hsla,
     pub list_bg_selected: Hsla,
     pub list_bg_focused: Hsla,
     pub list_text: Hsla,
+    pub list_text_focused: Hsla,
     pub list_text_secondary: Hsla,
     pub tree_focus_border: Hsla,
     // editor.*
@@ -159,16 +384,28 @@ pub struct Theme {
     // scrollbar.*
     pub scrollbar_thumb: Hsla,
     pub scrollbar_thumb_hovered: Hsla,
+    pub scrollbar_thumb_pressed: Hsla,
     pub scrollbar_track_hovered: Hsla,
-    // statusBar.*, popup.*, tooltip.*
+    // statusBar.*, popup.*, tooltip.*, shadow.*
     pub status_text: Hsla,
     pub popup_bg: Hsla,
     pub popup_border: Hsla,
+    pub popup_separator: Hsla,
+    pub popup_text: Hsla,
     pub tooltip_bg: Hsla,
-    // button.primary.*, toggleButton.on.*
+    pub tooltip_border: Hsla,
+    pub tooltip_text: Hsla,
+    pub tooltip_text_secondary: Hsla,
+    pub shadow_medium: Hsla,
+    // button.primary.*, button.secondary.*, toggleButton.on.*
     pub button_primary_bg: Hsla,
     pub button_primary_bg_hovered: Hsla,
     pub button_primary_text: Hsla,
+    pub button_secondary_bg: Hsla,
+    pub button_secondary_bg_hovered: Hsla,
+    pub button_secondary_bg_pressed: Hsla,
+    pub button_secondary_border: Hsla,
+    pub button_secondary_text: Hsla,
     pub toggle_on_bg: Hsla,
     pub toggle_on_text: Hsla,
     pub smart_mode_enabled: Hsla,
@@ -197,7 +434,7 @@ impl ThemeSource {
         if path.exists() {
             return ThemeSource::File(path.to_path_buf());
         }
-        if let Some(dir) = fleet_themes_dir() {
+        for dir in theme_dirs() {
             let candidate = dir.join(format!("{spec}.json"));
             if candidate.exists() {
                 return ThemeSource::File(candidate);
@@ -205,32 +442,19 @@ impl ThemeSource {
         }
         ThemeSource::Bundled(spec.to_string())
     }
-
-    /// What `--theme` and `$OAK_THEME` leave unsaid: the theme Fleet's own
-    /// `settings.json` names on this machine, else Fleet's default, `dark`.
-    pub fn default_for_machine() -> ThemeSource {
-        if let Some(name) = fleet_settings_theme() {
-            return ThemeSource::parse(&name);
-        }
-        ThemeSource::Bundled("dark".into())
-    }
 }
 
-fn config_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-}
-
-fn fleet_themes_dir() -> Option<PathBuf> {
-    Some(config_home()?.join("JetBrains/Fleet/themes"))
-}
-
-fn fleet_settings_theme() -> Option<String> {
-    let path = config_home()?.join("JetBrains/Fleet/settings.json");
-    let text = std::fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    value.get("theme")?.as_str().map(str::to_string)
+/// The folders a theme name is looked up in after the bundled set: Oak's own
+/// `themes/` and then Fleet's, so a theme installed for Fleet is usable by name.
+fn theme_dirs() -> Vec<PathBuf> {
+    [
+        oak_settings::oak_config_dir(),
+        oak_settings::fleet_config_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|d| d.join("themes"))
+    .collect()
 }
 
 impl Theme {
@@ -336,9 +560,11 @@ impl Theme {
                 Color::rgb(0x08, 0x70, 0xE4).with_alpha(0x80),
             ),
             tab_text: c("tab.text.default", text_primary),
+            tab_text_hovered: c("tab.text.hovered", text_primary),
             tab_text_selected: c("tab.text.selectedFocused", Color::rgb(0xFF, 0xFF, 0xFF)),
             tab_close_icon: c("tab.closeIcon.default", text_primary.with_alpha(0x4D)),
             tab_close_icon_hovered: c("tab.closeIcon.hovered", text_primary.with_alpha(0xB2)),
+            tab_drag_outline: c("tab.focusOutline.dragAndDrop", Color::rgb(0x2A, 0x7D, 0xEB)),
             list_bg_hovered: c("listItem.background.hovered", text_primary.with_alpha(0x0B)),
             list_bg_selected: c(
                 "listItem.background.selected",
@@ -349,6 +575,7 @@ impl Theme {
                 Color::rgb(0x08, 0x70, 0xE4).with_alpha(0x66),
             ),
             list_text: c("listItem.text.default", text_primary),
+            list_text_focused: c("listItem.text.focused", text_primary),
             list_text_secondary: c("listItem.text.secondary", text_primary.with_alpha(0x85)),
             tree_focus_border: c("tree.focusBorder", Color::rgb(0x2A, 0x7D, 0xEB)),
             editor_text: c("editor.text", text_primary),
@@ -377,11 +604,21 @@ impl Theme {
                 .unwrap_or_else(|| to_hsla(Color::rgb(0x2A, 0x52, 0x4F))),
             scrollbar_thumb: c("scrollbar.thumb.default", text_primary.with_alpha(0x26)),
             scrollbar_thumb_hovered: c("scrollbar.thumb.hovered", text_primary.with_alpha(0x33)),
+            scrollbar_thumb_pressed: c("scrollbar.thumb.pressed", text_primary.with_alpha(0x4D)),
             scrollbar_track_hovered: c("scrollbar.track.hovered", text_primary.with_alpha(0x1A)),
             status_text: c("statusBar.text.default", text_primary.with_alpha(0x80)),
             popup_bg: c("popup.background", bg_secondary),
             popup_border: c("popup.border", text_primary.with_alpha(0x21)),
+            popup_separator: c("popup.separator", text_primary.with_alpha(0x16)),
+            popup_text: c("popup.text", text_primary),
             tooltip_bg: c("tooltip.background", Color::rgb(0x32, 0x34, 0x38)),
+            tooltip_border: c("tooltip.border", transparent),
+            tooltip_text: c("tooltip.text.primary", text_primary),
+            tooltip_text_secondary: c("tooltip.text.secondary", text_primary.with_alpha(0x85)),
+            shadow_medium: c(
+                "shadow.background.medium",
+                Color::rgb(0, 0, 0).with_alpha(0xD9),
+            ),
             button_primary_bg: c(
                 "button.primary.background.default",
                 Color::rgb(0x08, 0x70, 0xE4),
@@ -391,6 +628,20 @@ impl Theme {
                 Color::rgb(0x18, 0x68, 0xCB),
             ),
             button_primary_text: c("button.primary.text.default", Color::rgb(0xFF, 0xFF, 0xFF)),
+            button_secondary_bg: c(
+                "button.secondary.background.default",
+                text_primary.with_alpha(0x21),
+            ),
+            button_secondary_bg_hovered: c(
+                "button.secondary.background.hovered",
+                text_primary.with_alpha(0x1C),
+            ),
+            button_secondary_bg_pressed: c(
+                "button.secondary.background.pressed",
+                text_primary.with_alpha(0x26),
+            ),
+            button_secondary_border: c("button.secondary.border.default", transparent),
+            button_secondary_text: c("button.secondary.text.default", text_primary),
             toggle_on_bg: c(
                 "toggleButton.on.background.default",
                 Color::rgb(0x08, 0x70, 0xE4),
@@ -421,5 +672,28 @@ impl Theme {
             key = parent;
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_bundled_theme_loads() {
+        for (name, _) in assets::THEMES {
+            let theme = Theme::load(&ThemeSource::Bundled(name.to_string()))
+                .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+            assert_eq!(theme.dark, *name != "light", "{name}");
+        }
+        let light = Theme::load(&ThemeSource::Bundled("light".into())).unwrap();
+        assert_eq!(
+            light.island_background,
+            to_hsla(Color::rgb(0xFF, 0xFF, 0xFF))
+        );
+        assert_eq!(
+            light.background_primary,
+            to_hsla(Color::rgb(0xEE, 0xEF, 0xF0))
+        );
     }
 }

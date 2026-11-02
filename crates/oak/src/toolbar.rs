@@ -1,48 +1,110 @@
 //! The row above the islands: Fleet's top bar. Left to right: the logo,
 //! the main menu, the three panel toggles, a separator, the tools grid and
-//! the collaboration button; the workspace name in the middle; the smart
-//! mode, run, search, notifications and settings buttons on the right.
+//! the collaboration button; the window title (workspace name and git
+//! branch) centred on the window; the smart mode, run, search, notifications
+//! and settings buttons on the right. On Windows the toolbar is also the
+//! window's caption: the three caption buttons sit at its right end and the
+//! empty parts drag the window (`docs/fleet-probe.md`, batch 1).
 
 use crate::assets::icon;
-use crate::theme::{metrics::*, Theme};
-use gpui::{div, prelude::*, px, App, Div, ElementId, Hsla, SharedString, Stateful, Window};
+use crate::theme::{Metrics, Theme};
+use crate::tooltip::Tooltip;
+use gpui::{
+    div, prelude::*, px, App, Div, ElementId, Hsla, Rgba, SharedString, Stateful, Window,
+    WindowControlArea,
+};
 
 /// A 28 px icon button with a hover wash: Fleet's ghost button.
 pub fn icon_button(
     id: impl Into<ElementId>,
     icon_path: &str,
     theme: &Theme,
-    active: bool,
+    m: &Metrics,
 ) -> Stateful<Div> {
-    // Fleet draws an open panel's toggle no differently from a closed one.
-    let _ = active;
-    let color = theme.icon_primary;
     div()
         .id(id)
-        .size(px(TOOLBAR_BUTTON))
+        .size(px(m.toolbar_button))
+        .flex_shrink_0()
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(4.))
+        .rounded(px(4. * m.zoom))
         .cursor_pointer()
+        // Above the caption's drag area, so a click is the button's.
+        .occlude()
         .hover(|s| s.bg(theme.ghost_hovered))
         .active(|s| s.bg(theme.ghost_pressed))
-        .child(icon(icon_path, ICON_SIZE, color))
+        .child(icon(icon_path, m.icon_size, theme.icon_primary))
 }
 
-pub fn separator(theme: &Theme) -> Div {
+pub fn separator(theme: &Theme, m: &Metrics) -> Div {
     div()
         .w(px(1.))
-        .h(px(16.))
-        .mx(px(TOOLBAR_SEPARATOR_MARGIN))
+        .h(px(16. * m.zoom))
+        .flex_shrink_0()
+        .mx(px(m.toolbar_separator_margin))
         .bg(theme.separator)
 }
 
 pub struct ToolbarState {
     pub workspace_name: SharedString,
+    pub branch: Option<SharedString>,
     pub left_open: bool,
     pub bottom_open: bool,
     pub right_open: bool,
+    /// Draw the caption buttons and make the bar the window's drag area.
+    pub caption: bool,
+    pub maximized: bool,
+    /// Shortcut hints for the toggles' tooltips, as Fleet spells them.
+    pub toggle_hints: [Option<SharedString>; 3],
+}
+
+/// Windows' own close-button hover colour (not a theme key: the system's).
+fn caption_close_hover() -> Hsla {
+    Rgba {
+        r: 0xC4 as f32 / 255.,
+        g: 0x2B as f32 / 255.,
+        b: 0x1C as f32 / 255.,
+        a: 1.,
+    }
+    .into()
+}
+
+fn caption_button(
+    id: &'static str,
+    icon_path: &str,
+    area: WindowControlArea,
+    theme: &Theme,
+    m: &Metrics,
+) -> Stateful<Div> {
+    let close = matches!(area, WindowControlArea::Close);
+    let hover_bg = if close {
+        caption_close_hover()
+    } else {
+        theme.ghost_hovered
+    };
+    let hover_fg = if close {
+        gpui::white()
+    } else {
+        theme.icon_primary
+    };
+    div()
+        .id(id)
+        .group(id)
+        .w(px(m.caption_button_width))
+        .h_full()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .occlude()
+        .hover(|s| s.bg(hover_bg))
+        .active(|s| s.bg(hover_bg.opacity(0.8)))
+        .window_control_area(area)
+        .child(
+            icon(icon_path, m.caption_glyph, theme.icon_primary)
+                .group_hover(id, move |s| s.text_color(hover_fg)),
+        )
 }
 
 /// Renders the bar; the toggles call back through `on_toggle(index)`
@@ -50,71 +112,137 @@ pub struct ToolbarState {
 pub fn render(
     state: ToolbarState,
     theme: &Theme,
+    m: &Metrics,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
 ) -> impl IntoElement {
-    let toggle = |ix: usize, path: &str, open: bool| {
+    let toggle = |ix: usize, path: &str, label: &'static str| {
         let f = on_toggle.clone();
-        icon_button(("panel-toggle", ix), path, theme, open)
+        let hint = state.toggle_hints[ix].clone();
+        icon_button(("panel-toggle", ix), path, theme, m)
+            .map(|b| match hint {
+                Some(h) => b.tooltip(Tooltip::with_detail(label, h)),
+                None => b.tooltip(Tooltip::text(label)),
+            })
             .on_click(move |_, window, cx| f(ix, window, cx))
     };
+    let _ = (state.left_open, state.bottom_open, state.right_open);
     let name_color: Hsla = theme.text_primary;
-    div()
-        .h(px(TOOLBAR_HEIGHT))
-        .w_full()
-        .flex_shrink_0()
+    let title = div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .top_0()
+        .h_full()
         .flex()
         .items_center()
-        .px(px(TOOLBAR_PAD_X))
-        .gap(px(TOOLBAR_GAP))
+        .justify_center()
         .child(
             div()
-                .size(px(TOOLBAR_BUTTON))
+                .flex()
+                .items_center()
+                .text_color(name_color)
+                .child(
+                    div()
+                        .max_w(px(m.title_name_max_width))
+                        .truncate()
+                        .child(state.workspace_name.clone()),
+                )
+                .children(state.branch.clone().map(|branch| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .ml(px(m.title_branch_gap))
+                        .child(icon("oak/git-branch", m.icon_size, theme.icon_primary))
+                        .child(div().ml(px(m.title_branch_icon_gap)).child(branch))
+                })),
+        );
+    div()
+        .h(px(m.toolbar_height))
+        .w_full()
+        .flex_shrink_0()
+        .relative()
+        .flex()
+        .items_center()
+        .pl(px(m.toolbar_pad_x))
+        .when(!state.caption, |d| d.pr(px(m.toolbar_pad_x)))
+        .gap(px(m.toolbar_gap))
+        .when(state.caption, |d| {
+            d.window_control_area(WindowControlArea::Drag)
+        })
+        .child(title)
+        .child(
+            div()
+                .size(px(m.toolbar_button))
+                .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(icon("oak/logo", LOGO_SIZE, theme.icon_primary)),
+                .child(icon("oak/logo", m.logo_size, theme.icon_primary)),
         )
-        .child(icon_button("menu", "expui/general/menu", theme, false))
-        .child(toggle(0, "oak/panel-left", state.left_open))
-        .child(toggle(1, "oak/panel-bottom", state.bottom_open))
-        .child(toggle(2, "oak/panel-right", state.right_open))
-        .child(separator(theme))
-        .child(icon_button("tools", "oak/grid", theme, false))
-        .child(icon_button("collab", "oak/user-add", theme, false))
         .child(
-            div().flex_1().min_w_0().flex().justify_center().child(
+            icon_button("menu", "expui/general/menu", theme, m).tooltip(Tooltip::text("Main Menu")),
+        )
+        .child(toggle(0, "oak/panel-left", "Toggle Left Panel"))
+        .child(toggle(1, "oak/panel-bottom", "Toggle Bottom Panel"))
+        .child(toggle(2, "oak/panel-right", "Toggle Right Panel"))
+        .child(separator(theme, m))
+        .child(icon_button("tools", "oak/grid", theme, m).tooltip(Tooltip::text("Tools")))
+        .child(
+            icon_button("collab", "oak/user-add", theme, m).tooltip(Tooltip::text("Collaborate")),
+        )
+        .child(div().flex_1().min_w_0())
+        .child(
+            icon_button("smart-mode", "expui/actions/lightning", theme, m)
+                .tooltip(Tooltip::text("Smart Mode")),
+        )
+        .child(icon_button("run", "expui/run/run", theme, m).tooltip(Tooltip::text("Run")))
+        .child(
+            icon_button("search", "expui/general/search", theme, m)
+                .tooltip(Tooltip::text("Search Everywhere")),
+        )
+        .child(
+            icon_button("notifications", "expui/toolwindows/notifications", theme, m)
+                .tooltip(Tooltip::text("Notifications")),
+        )
+        .child(
+            icon_button("settings", "expui/general/settings", theme, m)
+                .tooltip(Tooltip::text("Settings")),
+        )
+        .when(state.caption, |d| {
+            d.child(div().w(px(m.toolbar_pad_x)).flex_shrink_0()).child(
                 div()
-                    .id("workspace-name")
-                    .max_w(px(360.))
-                    .px(px(8.))
-                    .h(px(TOOLBAR_BUTTON))
                     .flex()
                     .items_center()
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.ghost_hovered))
-                    .text_color(name_color)
-                    .child(div().truncate().child(state.workspace_name)),
-            ),
-        )
-        .child(icon_button(
-            "smart-mode",
-            "expui/actions/lightning",
-            theme,
-            false,
-        ))
-        .child(icon_button("run", "expui/run/run", theme, false))
-        .child(icon_button("search", "expui/general/search", theme, false))
-        .child(icon_button(
-            "notifications",
-            "expui/toolwindows/notifications",
-            theme,
-            false,
-        ))
-        .child(icon_button(
-            "settings",
-            "expui/general/settings",
-            theme,
-            false,
-        ))
+                    .h_full()
+                    .gap_0()
+                    .flex_shrink_0()
+                    .children([
+                        caption_button(
+                            "caption-minimize",
+                            "oak/caption-minimize",
+                            WindowControlArea::Min,
+                            theme,
+                            m,
+                        ),
+                        caption_button(
+                            "caption-maximize",
+                            if state.maximized {
+                                "oak/caption-restore"
+                            } else {
+                                "oak/caption-maximize"
+                            },
+                            WindowControlArea::Max,
+                            theme,
+                            m,
+                        ),
+                        caption_button(
+                            "caption-close",
+                            "oak/caption-close",
+                            WindowControlArea::Close,
+                            theme,
+                            m,
+                        ),
+                    ]),
+            )
+        })
 }

@@ -23,12 +23,12 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-01) |
+| Table | Count | Oak covers (2026-11-02) |
 | --- | --- | --- |
-| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 63 |
+| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 77 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 0 |
-| Theme `colors` keys | 684 | 56 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 15 |
+| Theme `colors` keys | 684 | 71 |
 | Theme `textAttributes` keys | 157 | 28 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
@@ -74,10 +74,17 @@ Sizes: S is a day or two, M a week, L a few weeks, XL longer.
 Toolbar, Files island, editor island with tabs, status bar, Fleet theme and
 keymap formats, four gpui-free library crates, measured constants at zoom 2.0.
 
-### M1 Shell fidelity (M)
+### M1 Shell fidelity (done, 2026-11-02)
 
 The frame looks right in every static configuration before more surfaces
-are added to it.
+are added to it. Batches 1–3 ran against Fleet and Oak on Windows
+(`docs/fleet-probe.md`, third pass); the `editor` and `light` scenes pass
+`compare.py` on every island, tab-row and status-bar edge. Left for later:
+shared buffers across splits (a split-right copy is its own editor until
+M2), the overflow glyph in a narrow panel's tab row, Fleet's zoom step (Oak
+steps by 0.1), the Windows caption on the other platforms (they keep the
+desktop's title bar, as Fleet does), and the island shadow, which Fleet
+does not draw (the `shadow.*` keys are the popups').
 
 - `zoomLevel` support: one scale factor applied to every metric, with the
   `zoom-in`, `zoom-out`, `reset-zoom` actions; this is also what lets probes
