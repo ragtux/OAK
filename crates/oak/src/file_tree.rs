@@ -27,7 +27,9 @@ use gpui::{
     Focusable, MouseButton, Pixels, Point, SharedString, Subscription, UniformListScrollHandle,
     Window,
 };
+use oak_git::Status;
 use oak_settings::{ClickMode, KeyboardNavigation};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -223,6 +225,8 @@ pub struct FileTree {
     highlight: Option<usize>,
     options: Options,
     renaming: Option<Renaming>,
+    /// Git status by path (M4): names coloured and badged as Fleet's.
+    statuses: HashMap<PathBuf, Status>,
     focus_handle: FocusHandle,
     scroll: UniformListScrollHandle,
 }
@@ -273,6 +277,7 @@ impl FileTree {
             highlight: None,
             options,
             renaming: None,
+            statuses: HashMap::new(),
             focus_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
         };
@@ -791,6 +796,14 @@ impl FileTree {
         }
     }
 
+    /// The git statuses to colour by.
+    pub fn set_statuses(&mut self, statuses: HashMap<PathBuf, Status>, cx: &mut Context<Self>) {
+        if self.statuses != statuses {
+            self.statuses = statuses;
+            cx.notify();
+        }
+    }
+
     // ---- inline rename ------------------------------------------------------------
 
     /// `files/rename` on a row: the row becomes a text field holding the name
@@ -931,11 +944,43 @@ impl FileTree {
         let mut names = row.names.iter();
         let first: SharedString = names.next().cloned().unwrap_or_default().into();
         let rest: Vec<SharedString> = names.cloned().map(Into::into).collect();
-        let text_color = if selected && focused {
-            theme.list_text_focused
-        } else {
-            theme.list_text
+        let status = self.statuses.get(&row.path).copied();
+        // Fleet colours a file's name by its git status whatever the row's
+        // state (eighth pass: added and untracked green, modified and renamed
+        // blue; deleted and conflict are the diff colours, an estimate).
+        let text_color = match status {
+            Some(Status::Added) | Some(Status::Untracked) => theme.git_added_text,
+            Some(Status::Modified) | Some(Status::Renamed) => theme.git_modified_text,
+            Some(Status::Deleted) => theme.git_deleted_text,
+            Some(Status::Conflict) => theme.git_conflict_text,
+            _ if selected && focused => theme.list_text_focused,
+            _ => theme.list_text,
         };
+        let badge: Option<gpui::AnyElement> = status.and_then(|s| {
+            let glyph = |text: &'static str, size: f32, color| {
+                div()
+                    .text_size(px(size))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(color)
+                    .child(text)
+                    .into_any_element()
+            };
+            let dot = |color| {
+                div()
+                    .size(px(m.tree_badge_dot))
+                    .rounded_full()
+                    .bg(color)
+                    .into_any_element()
+            };
+            Some(match s {
+                Status::Added => glyph("+", m.tree_badge_plus_font, theme.icon_green),
+                Status::Untracked => glyph("?", m.tree_badge_font, theme.icon_green),
+                Status::Modified | Status::Renamed => dot(theme.icon_blue),
+                Status::Deleted => dot(theme.icon_red),
+                Status::Conflict => dot(theme.icon_yellow),
+                Status::Ignored => return None,
+            })
+        });
         let id: ElementId = ElementId::NamedInteger("tree-row".into(), ix as u64);
         let drag_paths = if selected {
             self.selected_paths()
@@ -1086,7 +1131,17 @@ impl FileTree {
                                     ]
                                 })),
                         ),
-                    }),
+                    })
+                    .children(badge.map(|b| {
+                        div()
+                            .ml_auto()
+                            .size(px(m.tree_badge_box))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(b)
+                    })),
             )
     }
 }

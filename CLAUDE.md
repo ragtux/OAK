@@ -27,6 +27,7 @@ crates/oak-theme    Fleet theme JSON: palette resolution, typed Color, cascading
 crates/oak-keymap   Fleet keymap JSON: per-platform chord resolution, gpui keystroke spelling
 crates/oak-settings Fleet settings.json: Oak's file over Fleet's, typed accessors with Fleet's defaults, a change watcher; editorconfig (.editorconfig lookup); workbench (the M3 keys)
 crates/oak-search   Workspace search without gpui: fuzzy (the Goto matcher), files (the file index, walked with `ignore`), grep (find/replace in files with Fleet's query fields)
+crates/oak-git      Git through the `git` binary (no gpui): the branch and per-file status (Repo, Status, parse_status)
 docs/               fleet-probe.md (measurements and provenance), roadmap.md (milestones), probe-plan.md (method and harnesses)
 tools/fleet-probe   scripts: inventory Fleet's actions/settings/theme keys, coverage vs Oak, extract themes, measure screenshots
 ```

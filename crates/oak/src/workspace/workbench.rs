@@ -107,6 +107,7 @@ impl Workspace {
     /// file index, the Search tool and an open Text Search follow.
     pub(super) fn files_changed(&mut self, cx: &mut Context<Self>) {
         self.file_tree.update(cx, |tree, cx| tree.reload(cx));
+        self.refresh_git(cx);
         self.reindex(cx);
         self.search_tool.update(cx, |tool, cx| tool.refresh(cx));
         if let Some(goto) = self.goto.clone() {
@@ -349,6 +350,25 @@ impl Workspace {
         self.open_path(path, false, cx);
     }
 
+    /// Reads the branch and every file's git status again: on open, after
+    /// a save or a file operation, and every fifth disk poll.
+    pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let branch = repo.branch().map(SharedString::from);
+        if branch != self.branch {
+            self.branch = branch;
+            cx.notify();
+        }
+        match repo.status() {
+            Ok(statuses) => self
+                .file_tree
+                .update(cx, |tree, cx| tree.set_statuses(statuses, cx)),
+            Err(e) => eprintln!("oak: {e:#}"),
+        }
+    }
+
     /// Starts the once-a-second look at the open files' modification times.
     pub(super) fn watch_disk(&mut self, cx: &mut Context<Self>) {
         self.disk_poll = Some(cx.spawn(async move |this, cx| loop {
@@ -364,6 +384,10 @@ impl Workspace {
     /// A file changed under an open document: reloaded when the document is
     /// clean, else the editor shows Fleet's banner with Overwrite and Reload.
     fn check_disk(&mut self, cx: &mut Context<Self>) {
+        self.disk_ticks = self.disk_ticks.wrapping_add(1);
+        if self.disk_ticks % 5 == 0 {
+            self.refresh_git(cx);
+        }
         let mut changed = false;
         for doc in self.documents.clone() {
             if doc.read(cx).disk_changed() {

@@ -291,7 +291,12 @@ which no source shows.
 - Local history (`local-history/make-snapshot`, snapshots tool).
 - Probes: batches 6–8.
 
-### M4 Git (M)
+### M4 Git (M; begun 2026-11-02)
+
+Begun with what the shots on hand show (`docs/fleet-probe.md`, eighth
+pass): the `oak-git` crate (branch and per-file status through the `git`
+binary) and the Files tree's names coloured and badged by status. The
+rest waits for batch 10.
 
 - Status colours in the tree and tabs (`vcs/*` icons, `tree.*`), line
   status in the gutter (`editor.showLineStatus`), branch tag in the toolbar

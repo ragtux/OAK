@@ -598,6 +598,33 @@ global file only).
 - Wrap: `WRAP_INDENT` 0 confirmed; the ruler at column 80 is at x 1061.3
   in Fleet and 1062.7 in Oak.
 
+## Eighth pass: M4 begun from the shots on hand (2026-11-02)
+
+The fixture is a git repository with one file in each state (`README.md`
+modified, `src/added.rs` staged new, `src/old.rs` renamed to
+`src/renamed.rs`, `notes.txt` untracked), so every Fleet shot of the Files
+tree already shows how Fleet colours git status. Read off
+`settings-fleet-settings.png` and `tabs-fleet-tabs.png`:
+
+| element | measured |
+|---|---|
+| added, untracked | the name in `editor.gitDiff.text.added` (`#69B090`) |
+| modified, renamed | the name in `editor.gitDiff.text.modified` (`#71A3EF`) |
+| unchanged | `#E0E1E4`, selected or not; folders are never coloured (`src` holds the added file and stays white) |
+| badge | at the row's right end, centred 14.3 from the row's edge: a `+` (8.67 × 8) for added, a `?` (6 × 9.33) for untracked, both `icon.background.green` (`#169068`); a 6.67 px dot in `icon.background.blue` (`#2A7DEB`) for modified and renamed |
+| tabs | titles stay `tab.text.*` whatever the status (`notes.txt`, `README.md` open beside `main.rs`) |
+| branch | the toolbar's branch tag is the M1 title, unchanged |
+
+Oak's `oak-git` crate shells out to `git` as Fleet does (`rev-parse
+--show-toplevel`, `rev-parse --abbrev-ref HEAD`, `status --porcelain=v1
+-z --untracked-files=all`), the tree colours names and draws the badges
+from these keys (deleted and conflict rows use the matching
+`editor.gitDiff.text.*` and `icon.background.red/yellow`, an estimate until
+batch 10 shows them; the badge glyph is a 13 px semibold `+`/`?`, also an
+estimate), and the status is read again on open, after a save or a file
+operation and every fifth disk poll. Still batch 10's: the gutter's line
+status (`editor.showLineStatus`), the Git tool, diffs and blame.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

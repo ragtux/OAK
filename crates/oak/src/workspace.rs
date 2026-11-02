@@ -406,6 +406,10 @@ fn tab_body(
 pub struct Workspace {
     root: PathBuf,
     branch: Option<SharedString>,
+    /// The git repository above the root, when git finds one (M4).
+    repo: Option<oak_git::Repo>,
+    /// Disk-poll ticks, for the slower git status refresh.
+    disk_ticks: u32,
     file_tree: Entity<FileTree>,
     panes: Vec<Pane>,
     active_pane: usize,
@@ -507,6 +511,8 @@ impl Workspace {
         let search_tool = Self::make_search_tool(root.clone(), cx);
         let mut this = Workspace {
             branch: git_branch(&root).map(Into::into),
+            repo: oak_git::Repo::discover(&root),
+            disk_ticks: 0,
             root,
             file_tree,
             panes: vec![Pane::new(cx)],
@@ -535,6 +541,7 @@ impl Workspace {
             last_title: String::new(),
         };
         this.init_workbench(window, cx);
+        this.refresh_git(cx);
         this.watch_disk(cx);
         for path in open {
             this.open_path(path, false, cx);
@@ -657,7 +664,7 @@ impl Workspace {
                 EditorEvent::ContextMenu(position) => {
                     this.editor_context_menu(&editor, *position, cx)
                 }
-                EditorEvent::Saved => {}
+                EditorEvent::Saved => this.refresh_git(cx),
             }
             cx.notify()
         })

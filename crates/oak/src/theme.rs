@@ -150,6 +150,16 @@ pub mod metrics {
     pub const FOLD_CHEVRON_X: f32 = 40.;
     pub const BREAKPOINT_HINT_X: f32 = 21.3;
     pub const BREAKPOINT_HINT_SIZE: f32 = 10.;
+    /// The tree's git badge (eighth pass): a 16 px box at the row's right
+    /// end (its centre 14.3 from the row's edge) holding a 6.67 px dot for a
+    /// change or a glyph (`+` added, `?` untracked, 8–9 px tall; a 13 px
+    /// semibold glyph is the estimate).
+    pub const TREE_BADGE_BOX: f32 = 16.;
+    pub const TREE_BADGE_DOT: f32 = 6.67;
+    pub const TREE_BADGE_FONT: f32 = 13.;
+    /// The `+` is 8.67 wide to the `?`'s 6 in Fleet's shot; at 13 px Oak's
+    /// `+` came out 6.67, so it gets 17 (estimate, scaled by the ratio).
+    pub const TREE_BADGE_PLUS_FONT: f32 = 17.;
     /// The shadow under sticky lines (batch 5, estimate).
     pub const STICKY_SHADOW: f32 = 3.;
     /// The fold chevron's box is 16 (`ICON_SIZE`); the folded mark `{…}` is 3
@@ -512,6 +522,10 @@ scaled_metrics!(
     fold_chevron_x = FOLD_CHEVRON_X,
     breakpoint_hint_x = BREAKPOINT_HINT_X,
     breakpoint_hint_size = BREAKPOINT_HINT_SIZE,
+    tree_badge_box = TREE_BADGE_BOX,
+    tree_badge_dot = TREE_BADGE_DOT,
+    tree_badge_font = TREE_BADGE_FONT,
+    tree_badge_plus_font = TREE_BADGE_PLUS_FONT,
     sticky_shadow = STICKY_SHADOW,
     folded_mark_cells = FOLDED_MARK_CELLS,
     folded_mark_radius = FOLDED_MARK_RADIUS,
@@ -776,6 +790,16 @@ pub struct Theme {
     pub fold_icon: Hsla,
     pub fold_icon_hovered: Hsla,
     pub fold_bg_hovered: Hsla,
+    // editor.gitDiff.text.* colour the Files tree's names by git status
+    // (eighth pass); icon.background.* are the badges at the row's right.
+    pub git_added_text: Hsla,
+    pub git_modified_text: Hsla,
+    pub git_deleted_text: Hsla,
+    pub git_conflict_text: Hsla,
+    pub icon_green: Hsla,
+    pub icon_blue: Hsla,
+    pub icon_red: Hsla,
+    pub icon_yellow: Hsla,
     /// The breakpoint hint on the hovered gutter row: Fleet's red at 28 %
     /// (read off the `fold` scene's hover shot; no theme key names it, so
     /// `icon.background.red` with the opacity is an estimate).
@@ -1083,6 +1107,14 @@ impl Theme {
                 Color::rgb(0x7A, 0x7F, 0x86),
             ),
             breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.28),
+            git_added_text: c("editor.gitDiff.text.added", Color::rgb(0x69, 0xB0, 0x90)),
+            git_modified_text: c("editor.gitDiff.text.modified", Color::rgb(0x71, 0xA3, 0xEF)),
+            git_deleted_text: c("editor.gitDiff.text.deleted", Color::rgb(0xF8, 0x7C, 0x88)),
+            git_conflict_text: c("editor.gitDiff.text.conflict", Color::rgb(0xCD, 0x98, 0x4D)),
+            icon_green: c("icon.background.green", Color::rgb(0x16, 0x90, 0x68)),
+            icon_blue: c("icon.background.blue", Color::rgb(0x2A, 0x7D, 0xEB)),
+            icon_red: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)),
+            icon_yellow: c("icon.background.yellow", Color::rgb(0xE5, 0x94, 0x08)),
             fold_bg_hovered: c(
                 "editor.foldIndicator.background.hovered",
                 text_primary.with_alpha(0x16),

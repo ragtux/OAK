@@ -1,0 +1,14 @@
+[package]
+name = "oak-git"
+description = "Git for Oak: the repository's branch and per-file status by shelling out to git, as Fleet does (no gpui)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

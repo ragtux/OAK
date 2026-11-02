@@ -3583,6 +3583,7 @@ dependencies = [
  "anyhow",
  "gpui",
  "gpui_platform",
+ "oak-git",
  "oak-keymap",
  "oak-search",
  "oak-settings",
@@ -3590,6 +3591,14 @@ dependencies = [
  "oak-text",
  "oak-theme",
  "serde_json",
+]
+
+[[package]]
+name = "oak-git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
 ]
 
 [[package]]
