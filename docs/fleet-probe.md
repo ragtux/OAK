@@ -123,7 +123,7 @@ Measured along `compare.py`'s scan lines, logical px:
 | Editor tab width for `main.rs` | 91.3 (383.3–474.7) | 106.7 | 91.3 (382.7–474.0) | `EDITOR_TAB_PAD_LEFT` 4, `EDITOR_TAB_ICON_GAP` 5, `EDITOR_TAB_CLOSE_GAP` 2, `EDITOR_TAB_PAD_RIGHT` 2 (was 8 / 6 / 6 / 8) |
 | Tab icon glyph, title, close glyph (from tab left) | 5.3–19.3, 25.3–72.7, 77.3–84.7 | 12–20, 30.7–74.7, 86–94 | 8–16, 25.3–69.3, 76.7–84.7 | title is 3 px wider in Fleet: its label is a heavier weight; Oak's icon glyph is 8 px wide against Fleet's 14 |
 | Editor line pitch (current-line wash) | 22.0 (76.0–98.0) | 20.7 | 22.0 | `EDITOR_LINE_HEIGHT` 22 (was 21) |
-| Line-number right edge, text start (from island left) | 35.3, 62.0 | 35.3, 61.3 | same | `GUTTER_NUMBER_RIGHT` 36, `GUTTER_WIDTH` 60 |
+| Line-number right edge, text start (from island left) | 35.3, 62.0 | 35.3, 61.3 | same | `GUTTER_NUMBER_RIGHT` 36, `GUTTER_WIDTH` 60 (62 since batch 5: the 61.3 was glyph ink, the selection and the boxes put the origin at 62) |
 | Scrollbar thumb: width, right edge, top | 6.0, flush at 1274, 76.0 | 6.0, 2 px in, 76.0 | 6.0, flush, 76.0 | `SCROLLBAR_THUMB` 6, no inset |
 | Scrollbar thumb length (38-line file) | 523.3 | 334.7 | 334.7 | not yet: Fleet's scroll range past the end is shorter than Oak's page |
 | Island bottom / status bar height | 772.0 / 28.0 | 773.3 / 26.7 | 772.0 / 28.0 | `STATUS_BAR_HEIGHT` 28 (was 27) |
@@ -286,6 +286,44 @@ overflow glyph a narrow panel's tab row shows before its `+`; the right
 window margin of 6; the panel tab padding model (which tab is selected
 changes the row by about 1 px); and the tab tooltip's delay, which gpui
 fixes at 500 ms.
+
+## Fourth pass: M2 batch 5, the editor surface (2026-11-02, Windows, 1.5 device px per logical px)
+
+Scenes `surface` and `surface2`. Ctrl+R is `run-and-debug` on Windows (the
+replace bar is Ctrl+H), which gave the Run & Debug popup as a bonus for M6.
+
+| Element | Fleet | Constant or key |
+| --- | --- | --- |
+| Selection | `editor.selection.focused` fill, the full 22 px line, each row its own rounded rectangle (radius about 3.3: the edge rows start 1.3 px in); a row ending exactly at the line's end (Shift+End) ends at the last character; a row the selection runs past gets one character cell more (7.5–8 measured on lines 1 and 3); an empty selected row shows a 3.33 px stub at the text start; the current-line wash stays under it | `SELECTION_RADIUS` 3.33, `SELECTION_EMPTY_LINE_WIDTH` 3.33, the stub is the space advance |
+| Current line with a selection | the wash is painted; the selection paints over it | |
+| Identifier under the caret | `identifier.underCaret` box on every whole-word occurrence, the caret's own included: the glyph run wide, 20.67 tall (0.67 in from the line's top and bottom), rounded (AA on the end columns, about 2 px) | `OCCURRENCE_INSET` 0.67, `OCCURRENCE_RADIUS` 2 (estimate) |
+| When the boxes appear | with the caret put at 7:12 by Goto they were there; after a click at 7:15 none showed within 2 s. Estimate: when the caret touches an identifier and the view has been idle | |
+| Bracket match | `editor.brace.match` box on both brackets when the caret is next to one: the character cell wide, the full line tall | |
+| Indent guides | one device px of `editor.indentGuide` ink at the text origin of each tab stop before a line's indent (spread over 3 device px: `#1C1D1F #262729 #222325`, together one pixel of the key's alpha), solid although the key says `DASHED`, continuing through blank lines inside a block (line 17), absent between blocks (line 12): a blank line takes the smaller of its neighbours' indents. The caret's block is drawn over in `editor.indentGuide.current` (peak `#454648`): the innermost block that holds the caret's row or that the caret's row opens (caret on line 7 `pub struct Record {`, at its end or inside its text: lines 8–10 are current) | `INDENT_GUIDE_WIDTH` 1 device px; `analysis::current_block` |
+| Caret | 2 px, `editor.caret.background` | `CARET_WIDTH` 2 |
+| Scrollbar | the thumb is translucent (`scrollbar.thumb.default` is `#FFFFFF21`): the current-line wash shows through it; a 12 × 2 px mark in the caret colour sits at the caret line, at `row × line height × track / content`, where the content includes the 4-line overscroll (line 7 → 178) | `SCROLLBAR_MARK_WIDTH` 12, `SCROLLBAR_MARK_HEIGHT` 2 |
+| Find bar (Ctrl+F) | a field 841.3–1258 × 88–116: 416.7 wide, 28 tall, 16 from the island's right edge, 12 below the tab row, 1.33 `inputField.focusBorder.default` inside a 2 px `inputField.focusOutline.default`; a chevron (16 box, glyph 822.7–832) 10 px to its left opens the replace row. Inside, from the left: text at +6 (placeholder "Search (Alt+Up for history)" in `inputField.hint.default`), the match counter ("3/8") right-aligned at 1093, ↑ and ↓ in 16 px boxes at 1101 and 1123, a separator at 1147.3, the toggles Aa, W and .* at 1156.7, 1179.3 and 1203.3 (pitch 22, `toggleButton.*`, no visible border when off), a separator at 1224.7, the close glyph at 1236.7–1247.3, 8 px right pad. Tab from the field focuses ↑ | `FIND_BAR_*` |
+| Matches | `editor.search.results` boxes the full line tall on every match; the current match is selected in the editor (unfocused `editor.selection` while the field has focus) and scrolled into view; a 12 × 2 scrollbar mark per match in `editor.search.results.scrollbarMarkColor` | |
+| Replace bar (Ctrl+H) | a second field 6 px under the first (122–150), same width, `inputField.border.default`, with "Replace" and "Replace All" text buttons at its right; the chevron turns down | |
+| Gutter hover | a chevron for every foldable line in a 16 px box at 416–432 (8 px glyph: `chevronDown` open, `chevronRight` folded) and, on the hovered line, a 10 px circle at 397.3–408 in a dim breakpoint colour; the chevrons go when the pointer leaves the gutter | `FOLD_CHEVRON_X` 40 from the island edge, `BREAKPOINT_HINT_X` 21.3 |
+| Folded block | the lines collapse (7 → 12); the head keeps `{` and `}` with a `{…}` mark between: `editor.foldedMark.background`, 3 characters wide, the full line tall, radius about 3, "..." in `editor.foldedMark.text` | |
+| Sticky lines | the enclosing block heads of the first visible line, one row each at the top on the editor's background, a 1 device px `border` line under them and a 3 px shadow fading below; the content scrolls under | `STICKY_SHADOW` 3 (estimate) |
+| Run & Debug popup (Ctrl+R, M6) | 687 × 182 at (301.3, 64.7), `popup.background`, a title, a 28 px field with the focus ring, a workspace heading, a 24 px `listItem.background.focused` row with Run and Debug buttons, a separator, "Edit Run Configurations..." | |
+
+Not settled by this pass: caret blink timing (harness G), soft wrap, rendered
+whitespace and the `editor.guides` ruler, which need a `fleet_settings`
+scene each. Fleet's scrollbar thumb is about 2 % shorter than track² /
+content (523 against Oak's 536 for 36 + 4 lines in a 694 px track) while its
+marks scale by track / content; Oak keeps the simple formula.
+
+Oak after batch 5 (the `surface` scene replayed, read off with the same
+scans): the selection rows land on Fleet's to 0.67 px (438–921.3, 438–441.3,
+438–680, 438–441.3, 438–446 against 445.3), the brace boxes at 578–586 and
+438–446, the `Record` occurrence box at 500.7–547.3 (Fleet 500–547.3), the
+guides at 438 as one device px of `#363739` with the caret block's at
+`#6B6C6D` (Fleet's ink spread over three device px sums to the same), the
+caret-line scrollbar mark at 178–180. The text origin moved from 60 to 62
+(`GUTTER_WIDTH`): glyph ink now starts at 438.7 against Fleet's 438–439.3.
 
 ## What the shots showed
 

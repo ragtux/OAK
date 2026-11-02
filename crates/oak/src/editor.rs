@@ -22,7 +22,8 @@ use gpui::{
     ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, Window,
 };
 use oak_syntax::Language;
-use oak_text::{Buffer, Cursor, Point as TextPoint, Selection};
+use oak_text::analysis;
+use oak_text::{Buffer, Cursor, Point as TextPoint, Selection, TAB_WIDTH};
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -45,6 +46,20 @@ pub struct TextMetrics {
     pub caret_width: f32,
     pub scrollbar_thumb: f32,
     pub scrollbar_thumb_min: f32,
+    pub selection_radius: f32,
+    pub selection_empty_line_width: f32,
+    pub occurrence_inset: f32,
+    pub occurrence_radius: f32,
+    pub scrollbar_mark_width: f32,
+    pub scrollbar_mark_height: f32,
+}
+
+/// What a find bar has found in this view's document, for painting: every
+/// match and the one the bar is on.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Search {
+    pub matches: Vec<Range<usize>>,
+    pub current: Option<usize>,
 }
 
 impl TextMetrics {
@@ -59,6 +74,12 @@ impl TextMetrics {
             caret_width: m.caret_width,
             scrollbar_thumb: m.scrollbar_thumb,
             scrollbar_thumb_min: m.scrollbar_thumb_min,
+            selection_radius: m.selection_radius,
+            selection_empty_line_width: m.selection_empty_line_width,
+            occurrence_inset: m.occurrence_inset,
+            occurrence_radius: m.occurrence_radius,
+            scrollbar_mark_width: m.scrollbar_mark_width,
+            scrollbar_mark_height: m.scrollbar_mark_height,
         }
     }
 }
@@ -77,6 +98,11 @@ pub struct EditorView {
     focus_handle: FocusHandle,
     dragging: bool,
     marked: Option<Range<usize>>,
+    /// The find bar's matches, when one is open on this view.
+    pub search: Option<Search>,
+    /// The identifier at the caret and where else it occurs, for the buffer
+    /// version and word it was computed for.
+    occurrences: Option<(u64, String, Vec<Range<usize>>)>,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -142,6 +168,31 @@ impl EditorView {
             focus_handle: cx.focus_handle(),
             dragging: false,
             marked: None,
+            search: None,
+            occurrences: None,
+        }
+    }
+
+    /// The whole-word occurrences of the identifier under the caret (its own
+    /// included), cached per buffer version and word.
+    fn occurrences(&mut self, cx: &App) -> Vec<Range<usize>> {
+        let doc = self.document.read(cx);
+        self.cursor.sync(&doc.buffer);
+        if !self.cursor.selection.is_empty() {
+            return Vec::new();
+        }
+        let Some(range) = analysis::identifier_at(&doc.buffer, self.cursor.selection.head) else {
+            return Vec::new();
+        };
+        let word = doc.buffer.slice(range);
+        let version = doc.buffer.version();
+        match &self.occurrences {
+            Some((v, w, found)) if *v == version && *w == word => found.clone(),
+            _ => {
+                let found = analysis::whole_word_occurrences(&doc.buffer, &word);
+                self.occurrences = Some((version, word, found.clone()));
+                found
+            }
         }
     }
 
@@ -954,11 +1005,22 @@ pub struct EditorElement {
     editor: Entity<EditorView>,
 }
 
+/// A highlighted stretch of a row, in display bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoxKind {
+    Occurrence,
+    Bracket,
+    SearchMatch,
+}
+
 struct LaidOutRow {
     row: usize,
     line: DisplayLine,
     shaped: ShapedLine,
     number: ShapedLine,
+    boxes: Vec<(Range<usize>, BoxKind)>,
+    /// Indent-guide columns, and whether each is the caret block's.
+    guides: Vec<(usize, bool)>,
 }
 
 pub struct Prepaint {
@@ -972,6 +1034,10 @@ pub struct Prepaint {
     focused: bool,
     line_count: usize,
     tm: TextMetrics,
+    /// One space's advance, for guide columns past a line's end.
+    space_width: Pixels,
+    /// Rows that get a scrollbar mark: search matches.
+    mark_rows: Vec<usize>,
 }
 
 impl IntoElement for EditorElement {
@@ -1020,7 +1086,7 @@ impl Element for EditorElement {
         let tm = TextMetrics::current(cx);
         let lh = px(tm.line_height);
         let focused = self.editor.read(cx).focus_handle.is_focused(window);
-        let (document, cursor, selection, scroll_y, scroll_x) =
+        let (document, cursor, selection, scroll_y, scroll_x, occurrences, search) =
             self.editor.update(cx, |editor, cx| {
                 // A zoom or font change keeps the same first line in view.
                 if editor.tm != tm {
@@ -1035,15 +1101,21 @@ impl Element for EditorElement {
                 }
                 let (cursor, selection) =
                     editor.with_buffer(cx, |c, b| (c.cursor_point(b), c.selection.range()));
+                let occurrences = editor.occurrences(cx);
                 (
                     editor.document.clone(),
                     cursor,
                     selection,
                     editor.scroll_y,
                     editor.scroll_x,
+                    occurrences,
+                    editor.search.clone(),
                 )
             });
+        let space_width =
+            shape_display_line(&DisplayLine::new(" "), &[], &theme, tm.font_size, window).width;
         let mut rows = Vec::new();
+        let mut mark_rows = Vec::new();
         let (line_count, first_row) = document.update(cx, |doc, _| {
             let line_count = doc.buffer.line_count();
             let first_row = (scroll_y / lh).floor().max(0.) as usize;
@@ -1055,6 +1127,29 @@ impl Element for EditorElement {
             let first_byte = doc.buffer.line_to_byte(first_row.min(line_count - 1));
             let spans = doc.spans().to_vec();
             let mut span_ix = spans.partition_point(|s| s.range.end <= first_byte);
+            // The boxes: occurrences, the bracket pair and the find matches, as
+            // char ranges in the whole buffer.
+            let caret = doc.buffer.point_to_offset(cursor);
+            let mut boxes: Vec<(Range<usize>, BoxKind)> = occurrences
+                .iter()
+                .map(|r| (r.clone(), BoxKind::Occurrence))
+                .collect();
+            if selection.is_empty() {
+                if let Some((open, close)) = analysis::matching_bracket(&doc.buffer, caret) {
+                    boxes.push((open..open + 1, BoxKind::Bracket));
+                    boxes.push((close..close + 1, BoxKind::Bracket));
+                }
+            }
+            if let Some(search) = &search {
+                for m in &search.matches {
+                    boxes.push((m.clone(), BoxKind::SearchMatch));
+                    mark_rows.push(doc.buffer.offset_to_point(m.start).row);
+                }
+            }
+            mark_rows.sort_unstable();
+            mark_rows.dedup();
+            let indents = analysis::guide_indents(&doc.buffer, first_row..last_row);
+            let current_block = analysis::current_block(&doc.buffer, cursor.row);
             for row in first_row..last_row {
                 let source = doc.buffer.line(row);
                 let line_start = doc.buffer.line_to_byte(row);
@@ -1096,11 +1191,36 @@ impl Element for EditorElement {
                     }],
                     None,
                 );
+                let char_start = doc.buffer.line_to_char(row);
+                let char_end = char_start + doc.buffer.line_len(row);
+                let row_boxes = boxes
+                    .iter()
+                    .filter(|(r, _)| r.start < char_end && r.end > char_start)
+                    .map(|(r, kind)| {
+                        let a = r.start.max(char_start) - char_start;
+                        let b = r.end.min(char_end) - char_start;
+                        (
+                            line.display_byte_for_char(a)..line.display_byte_for_char(b),
+                            *kind,
+                        )
+                    })
+                    .collect();
+                let guides = (0..indents[row - first_row])
+                    .step_by(TAB_WIDTH)
+                    .map(|col| {
+                        let current = current_block
+                            .as_ref()
+                            .is_some_and(|(c, rows)| *c == col && rows.contains(&row));
+                        (col, current)
+                    })
+                    .collect();
                 rows.push(LaidOutRow {
                     row,
                     line,
                     shaped,
                     number,
+                    boxes: row_boxes,
+                    guides,
                 });
             }
             (line_count, first_row)
@@ -1116,6 +1236,8 @@ impl Element for EditorElement {
             focused,
             line_count,
             tm,
+            space_width,
+            mark_rows,
         }
     }
 
@@ -1155,11 +1277,13 @@ impl Element for EditorElement {
                 .collect()
         };
 
+        let device_px = px(1. / window.scale_factor());
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for (laid, (line_start, line_end)) in prepaint.rows.iter().zip(buffer_rows) {
                 let y = bounds.origin.y + lh * laid.row as f32 - prepaint.scroll_y;
-                // The current line's wash, across gutter and text alike.
-                if laid.row == prepaint.cursor.row && prepaint.selection.is_empty() {
+                // The current line's wash, across gutter and text alike, under
+                // everything else on the row (it stays under a selection).
+                if laid.row == prepaint.cursor.row {
                     let color = if prepaint.focused {
                         theme.current_line_focused
                     } else {
@@ -1170,7 +1294,32 @@ impl Element for EditorElement {
                         color,
                     ));
                 }
-                // The selection on this row.
+                // Occurrences, the bracket pair and the find matches.
+                for (range, kind) in &laid.boxes {
+                    let x0 = laid.shaped.x_for_index(range.start);
+                    let x1 = laid.shaped.x_for_index(range.end);
+                    let (color, inset, radius) = match kind {
+                        BoxKind::Occurrence => (
+                            theme.occurrence_bg,
+                            px(tm.occurrence_inset),
+                            px(tm.occurrence_radius),
+                        ),
+                        BoxKind::Bracket => (theme.brace_match_bg, px(0.), px(0.)),
+                        BoxKind::SearchMatch => (theme.search_result_bg, px(0.), px(0.)),
+                    };
+                    window.paint_quad(
+                        fill(
+                            Bounds::new(
+                                point(text_x + x0, y + inset),
+                                size((x1 - x0).max(px(0.)), lh - inset * 2.),
+                            ),
+                            color,
+                        )
+                        .corner_radii(Corners::all(radius)),
+                    );
+                }
+                // The selection on this row: its own rounded rectangle ending at
+                // the row's last character; an empty row shows a short stub.
                 let sel = &prepaint.selection;
                 if !sel.is_empty() && sel.start <= line_end && sel.end >= line_start {
                     let a = sel.start.max(line_start) - line_start;
@@ -1178,18 +1327,35 @@ impl Element for EditorElement {
                     let x0 = laid.shaped.x_for_index(laid.line.display_byte_for_char(a));
                     let mut x1 = laid.shaped.x_for_index(laid.line.display_byte_for_char(b));
                     if sel.end > line_end {
-                        // The selection runs past the line break: show it as a stub.
-                        x1 += px(tm.font_size * 0.6);
+                        // The selection runs past the line break: one character
+                        // cell more, or a short stub on an empty row.
+                        x1 += if line_end == line_start {
+                            px(tm.selection_empty_line_width)
+                        } else {
+                            prepaint.space_width
+                        };
                     }
                     let color = if prepaint.focused {
                         theme.selection_focused
                     } else {
                         theme.selection
                     };
-                    window.paint_quad(fill(
-                        Bounds::new(point(text_x + x0, y), size((x1 - x0).max(px(0.)), lh)),
-                        color,
-                    ));
+                    if x1 > x0 {
+                        window.paint_quad(
+                            fill(Bounds::new(point(text_x + x0, y), size(x1 - x0, lh)), color)
+                                .corner_radii(Corners::all(px(tm.selection_radius))),
+                        );
+                    }
+                }
+                // Indent guides: one device pixel at each tab stop before the
+                // indent; the caret block's guide gets its colour painted over.
+                for (col, current) in &laid.guides {
+                    let x = text_x + prepaint.space_width * *col as f32;
+                    let guide = Bounds::new(point(x, y), size(device_px, lh));
+                    window.paint_quad(fill(guide, theme.indent_guide));
+                    if *current {
+                        window.paint_quad(fill(guide, theme.indent_guide_current));
+                    }
                 }
                 // Line number, right-aligned in the gutter.
                 let _ = laid.number.paint(
@@ -1218,11 +1384,10 @@ impl Element for EditorElement {
             // starts at the text area's top and sits flush with the island's right edge;
             // the content it measures includes the overscroll past the last line.
             let total = lh * (prepaint.line_count as f32 + EDITOR_OVERSCROLL_LINES);
-            if total > bounds.size.height {
-                let track_h = bounds.size.height;
-                let thumb_h =
-                    (track_h * (bounds.size.height / total)).max(px(tm.scrollbar_thumb_min));
-                let max_scroll = total - bounds.size.height;
+            let track_h = bounds.size.height;
+            if total > track_h {
+                let thumb_h = (track_h * (track_h / total)).max(px(tm.scrollbar_thumb_min));
+                let max_scroll = total - track_h;
                 let thumb_y =
                     bounds.origin.y + (track_h - thumb_h) * (prepaint.scroll_y / max_scroll);
                 let x = right - px(tm.scrollbar_thumb);
@@ -1234,6 +1399,23 @@ impl Element for EditorElement {
                     .corner_radii(Corners::all(px(tm.scrollbar_thumb / 2.))),
                 );
             }
+            // Marks on the scrollbar: a row's place is its top scaled by track over
+            // content (batch 5: line 7 at 178 in a 696 px track over 41 + 4 lines).
+            let mark = |window: &mut Window, row: usize, color: Hsla| {
+                let scale = if total > track_h { track_h / total } else { 1. };
+                let y = bounds.origin.y + lh * row as f32 * scale;
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(right - px(tm.scrollbar_mark_width), y),
+                        size(px(tm.scrollbar_mark_width), px(tm.scrollbar_mark_height)),
+                    ),
+                    color,
+                ));
+            };
+            for row in &prepaint.mark_rows {
+                mark(window, *row, theme.search_result_mark);
+            }
+            mark(window, prepaint.cursor.row, theme.editor_caret);
         });
 
         let _ = prepaint.first_row;

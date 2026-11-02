@@ -6,6 +6,7 @@
 //! Positions are char offsets into the rope; the UI turns them into byte
 //! offsets per line when it shapes text.
 
+pub mod analysis;
 mod buffer;
 mod editor;
 

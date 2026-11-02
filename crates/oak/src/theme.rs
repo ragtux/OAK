@@ -121,7 +121,7 @@ pub mod metrics {
     pub const EDITOR_TAB_DRAG_RING: f32 = 2.;
     /// The gutter: line numbers right-aligned at `GUTTER_NUMBER_RIGHT`, text from `GUTTER_WIDTH`.
     pub const GUTTER_NUMBER_RIGHT: f32 = 36.;
-    pub const GUTTER_WIDTH: f32 = 60.;
+    pub const GUTTER_WIDTH: f32 = 62.;
     pub const EDITOR_FONT_SIZE: f32 = 13.;
     /// 33 device px at 1.5 (Windows probe); 60 at 2.76 (KDE probe) agrees with 22.
     pub const EDITOR_LINE_HEIGHT: f32 = 22.;
@@ -129,6 +129,25 @@ pub mod metrics {
     /// 38-line file in a 696 px view was 523 px, which fits 4 lines (Windows probe).
     pub const EDITOR_OVERSCROLL_LINES: f32 = 4.;
     pub const CARET_WIDTH: f32 = 2.;
+    /// Batch 5: each selected row is its own rounded rectangle; an empty
+    /// selected row shows a short stub at the text start.
+    pub const SELECTION_RADIUS: f32 = 3.33;
+    pub const SELECTION_EMPTY_LINE_WIDTH: f32 = 3.33;
+    /// The identifier-under-caret box is 0.67 in from the line's top and bottom
+    /// with about 2 px of rounding (batch 5).
+    pub const OCCURRENCE_INSET: f32 = 0.67;
+    pub const OCCURRENCE_RADIUS: f32 = 2.;
+    /// The caret-line and search marks on the scrollbar: 12 wide, 2 tall,
+    /// against the island's right edge (batch 5).
+    pub const SCROLLBAR_MARK_WIDTH: f32 = 12.;
+    pub const SCROLLBAR_MARK_HEIGHT: f32 = 2.;
+    /// The gutter's fold chevron box starts 40 from the island's left edge and
+    /// the breakpoint hint circle (10 px) at 21.3 (batch 5).
+    pub const FOLD_CHEVRON_X: f32 = 40.;
+    pub const BREAKPOINT_HINT_X: f32 = 21.3;
+    pub const BREAKPOINT_HINT_SIZE: f32 = 10.;
+    /// The shadow under sticky lines (batch 5, estimate).
+    pub const STICKY_SHADOW: f32 = 3.;
     /// The thumb sits flush with the island's right edge (Windows probe).
     pub const SCROLLBAR_THUMB: f32 = 6.;
     pub const SCROLLBAR_THUMB_MIN: f32 = 24.;
@@ -258,6 +277,16 @@ scaled_metrics!(
     editor_font_size = EDITOR_FONT_SIZE,
     editor_line_height = EDITOR_LINE_HEIGHT,
     caret_width = CARET_WIDTH,
+    selection_radius = SELECTION_RADIUS,
+    selection_empty_line_width = SELECTION_EMPTY_LINE_WIDTH,
+    occurrence_inset = OCCURRENCE_INSET,
+    occurrence_radius = OCCURRENCE_RADIUS,
+    scrollbar_mark_width = SCROLLBAR_MARK_WIDTH,
+    scrollbar_mark_height = SCROLLBAR_MARK_HEIGHT,
+    fold_chevron_x = FOLD_CHEVRON_X,
+    breakpoint_hint_x = BREAKPOINT_HINT_X,
+    breakpoint_hint_size = BREAKPOINT_HINT_SIZE,
+    sticky_shadow = STICKY_SHADOW,
     scrollbar_thumb = SCROLLBAR_THUMB,
     scrollbar_thumb_min = SCROLLBAR_THUMB_MIN,
     popup_scrollbar_thumb = POPUP_SCROLLBAR_THUMB,
@@ -316,6 +345,8 @@ pub struct Syntax {
     pub weight: FontWeight,
     pub italic: bool,
     pub underline: Option<Hsla>,
+    /// `scrollbarMarkColor`: the mark this attribute leaves on the scrollbar.
+    pub scrollbar_mark: Option<Hsla>,
 }
 
 #[derive(Clone, Debug)]
@@ -381,6 +412,16 @@ pub struct Theme {
     pub selection_focused: Hsla,
     pub search_match_bg: Hsla,
     pub brace_match_bg: Hsla,
+    /// `identifier.underCaret`: the box on the identifier at the caret and its
+    /// other occurrences, and its scrollbar mark.
+    pub occurrence_bg: Hsla,
+    pub occurrence_mark: Hsla,
+    /// `editor.indentGuide` and `.current`.
+    pub indent_guide: Hsla,
+    pub indent_guide_current: Hsla,
+    /// `editor.search.results`: the box on a find match and its scrollbar mark.
+    pub search_result_bg: Hsla,
+    pub search_result_mark: Hsla,
     // scrollbar.*
     pub scrollbar_thumb: Hsla,
     pub scrollbar_thumb_hovered: Hsla,
@@ -511,6 +552,7 @@ impl Theme {
                 },
                 italic: a.italic,
                 underline: a.decoration.and_then(|d| d.color.map(to_hsla)),
+                scrollbar_mark: a.scrollbar_mark.map(to_hsla),
             })
         };
         let syntax = t
@@ -600,6 +642,22 @@ impl Theme {
             selection_focused: selection_attr("editor.selection.focused")
                 .unwrap_or_else(|| to_hsla(Color::rgb(0x22, 0x50, 0x90))),
             search_match_bg: c("search.match.background", Color::rgb(0x6C, 0x4B, 0x18)),
+            occurrence_bg: selection_attr("identifier.underCaret")
+                .unwrap_or_else(|| to_hsla(text_primary.with_alpha(0x21))),
+            occurrence_mark: attr("identifier.underCaret")
+                .and_then(|a| a.scrollbar_mark)
+                .unwrap_or_else(|| to_hsla(text_primary.with_alpha(0x43))),
+            indent_guide: attr("editor.indentGuide")
+                .and_then(|a| a.color)
+                .unwrap_or_else(|| to_hsla(text_primary.with_alpha(0x21))),
+            indent_guide_current: attr("editor.indentGuide.current")
+                .and_then(|a| a.color)
+                .unwrap_or_else(|| to_hsla(text_primary.with_alpha(0x43))),
+            search_result_bg: selection_attr("editor.search.results")
+                .unwrap_or_else(|| to_hsla(Color::rgb(0x9F, 0x68, 0x0C).with_alpha(0x80))),
+            search_result_mark: attr("editor.search.results")
+                .and_then(|a| a.scrollbar_mark)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xD4, 0x95, 0x50))),
             brace_match_bg: selection_attr("editor.brace.match")
                 .unwrap_or_else(|| to_hsla(Color::rgb(0x2A, 0x52, 0x4F))),
             scrollbar_thumb: c("scrollbar.thumb.default", text_primary.with_alpha(0x26)),

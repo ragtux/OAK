@@ -1,0 +1,51 @@
+{
+  "name": "surface",
+  "about": "Batch 5, the editor surface: a one-line and a multi-line selection, the identifier-under-caret occurrences, the bracket match, the find bar empty and with a query (match highlights, scrollbar marks, toggle buttons), the replace bar, the gutter hovered for fold markers, and the sticky lines after scrolling into fn main. Fleet: main.rs opened through Goto; Oak: from the command line (the find bar and friends arrive with M2).",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["key", "shift+end"], ["wait", 400], ["shot", "selection"],
+      ["key", "shift+down"], ["key", "shift+down"], ["key", "shift+right"], ["key", "shift+right"], ["key", "shift+right"], ["wait", 400], ["shot", "selection-multiline"],
+      ["move", 545, 219], ["click"], ["wait", 900], ["shot", "occurrences"],
+      ["key", "end"], ["wait", 600], ["shot", "brace"],
+      ["key", "ctrl+f"], ["wait", 1000], ["shot", "find"],
+      ["type", "Record"], ["wait", 1200], ["shot", "find-typed"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+r"], ["wait", 1000], ["shot", "replace"],
+      ["key", "escape"], ["wait", 500],
+      ["hover", 48, 219, 900], ["shot", "fold-hover"],
+      ["move", 900, 400], ["wait", 300],
+      ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["key", "shift+end"], ["wait", 400], ["shot", "selection"],
+      ["key", "shift+down"], ["key", "shift+down"], ["key", "shift+right"], ["key", "shift+right"], ["key", "shift+right"], ["wait", 400], ["shot", "selection-multiline"],
+      ["move", 545, 219], ["click"], ["wait", 900], ["shot", "occurrences"],
+      ["key", "end"], ["wait", 600], ["shot", "brace"],
+      ["key", "ctrl+f"], ["wait", 1000], ["shot", "find"],
+      ["type", "Record"], ["wait", 1200], ["shot", "find-typed"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+r"], ["wait", 1000], ["shot", "replace"],
+      ["key", "escape"], ["wait", 500],
+      ["hover", 48, 219, 900], ["shot", "fold-hover"],
+      ["move", 900, 400], ["wait", 300],
+      ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "selection row (y=87, line 1)", "axis": "x", "at": 87, "from": 376, "edges": ["island left", "selection left", "selection right"]},
+    {"name": "find bar column (x=1000)", "axis": "y", "at": 1000, "from": 36, "to": 200, "edges": ["island top", "find bar top", "find bar bottom"]}
+  ],
+  "samples": [
+    {"name": "selection", "at": [700, 87], "key": "editor.selection.focused"},
+    {"name": "current line", "at": [1000, 87], "key": "editor.currentLine.background.focused"}
+  ]
+}

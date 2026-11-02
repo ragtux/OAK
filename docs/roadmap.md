@@ -118,10 +118,17 @@ Everything Fleet's editor does to a plain text file.
   log (`oak-text`'s `Cursor::sync`). Undo and the dirty state are the
   document's. The `splits` scene (Oak only) shows it.
 
+- Done 2026-11-02 (batch 5, `surface` and `surface2` scenes): the editor
+  surface measured and drawn as Fleet does: rounded selection rows with the
+  newline cell and the empty-row stub, the current-line wash under a
+  selection, `identifier.underCaret` boxes on every whole-word occurrence,
+  `editor.brace.match` on the bracket pair, indent guides with the caret
+  block's in `.current`, the caret-line and search-match scrollbar marks
+  (`oak-text`'s `analysis` module, gpui-free). The find-match boxes paint
+  from `EditorView::search`, which the find bar will fill.
 - Multiple carets (`editor/add-caret-above|below`,
   `editor/add-carets-to-ends-of-selected-lines`, `select-next-occurrence`,
-  `select-all-occurrences`, `unselect-occurrence`), occurrence highlighting
-  (`editor.identifierUnderCaret*`, `editor.searchResult*`).
+  `select-all-occurrences`, `unselect-occurrence`).
 - Find and replace bar (`find`, `replace`, `replace-one`, `replace-all`,
   `next-occurrence`, `prev-occurrence`) with the match-case, words, regex
   and in-selection toggles (`inputField.*`, `toggleButton.*`).

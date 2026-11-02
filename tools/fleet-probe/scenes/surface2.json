@@ -1,0 +1,37 @@
+{
+  "name": "surface2",
+  "about": "Batch 5, second pass: the replace bar (Ctrl+H on Windows; Ctrl+R is run-and-debug), the gutter hovered for fold markers at the right x (the editor island starts at 376), a folded block, and a longer wait on the occurrences.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["key", "ctrl+h"], ["wait", 1000], ["shot", "replace"],
+      ["type", "Record"], ["wait", 600], ["key", "tab"], ["wait", 300], ["type", "Row"], ["wait", 800], ["shot", "replace-typed"],
+      ["key", "escape"], ["wait", 500],
+      ["move", 545, 219], ["click"], ["wait", 2000], ["shot", "occurrences"],
+      ["hover", 424, 219, 900], ["shot", "fold-hover"],
+      ["click"], ["wait", 800], ["shot", "folded"],
+      ["click"], ["wait", 500],
+      ["move", 900, 600], ["wait", 300]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["key", "ctrl+h"], ["wait", 800], ["shot", "replace"],
+      ["type", "Record"], ["wait", 400], ["key", "tab"], ["wait", 300], ["type", "Row"], ["wait", 600], ["shot", "replace-typed"],
+      ["key", "escape"], ["wait", 500],
+      ["move", 545, 219], ["click"], ["wait", 1200], ["shot", "occurrences"],
+      ["hover", 424, 219, 900], ["shot", "fold-hover"],
+      ["click"], ["wait", 600], ["shot", "folded"],
+      ["click"], ["wait", 500],
+      ["move", 900, 600], ["wait", 300]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [],
+  "samples": []
+}
