@@ -42,6 +42,8 @@ crates/oak-syntax   tree-sitter highlighting mapped to Fleet's textAttributes ke
 crates/oak-theme    Fleet-format theme files: parsing and palette resolution (no gpui)
 crates/oak-keymap   Fleet-format keymap files and their gpui keystroke spelling (no gpui)
 docs/fleet-probe.md what was measured on Fleet, where each value came from, and what is still estimated
+docs/roadmap.md     the milestones to a faithful Fleet clone, and what each one covers
+docs/probe-plan.md  how Fleet is measured and the harnesses that make a probe repeatable
 tools/fleet-probe   the scripts those measurements were made with
 ```
 
