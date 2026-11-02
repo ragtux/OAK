@@ -6,6 +6,7 @@
 //! window's caption: the three caption buttons sit at its right end and the
 //! empty parts drag the window (`docs/fleet-probe.md`, batch 1).
 
+use crate::actions::{GotoEverything, GotoTool, OpenSettings, ShowMainMenu, ToggleNotifications};
 use crate::assets::icon;
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
@@ -57,6 +58,8 @@ pub struct ToolbarState {
     pub maximized: bool,
     /// Shortcut hints for the toggles' tooltips, as Fleet spells them.
     pub toggle_hints: [Option<SharedString>; 3],
+    /// Unread notifications: a dot on the bell (estimate: batch 7).
+    pub unread_notifications: usize,
 }
 
 /// Windows' own close-button hover colour (not a theme key: the system's).
@@ -180,13 +183,19 @@ pub fn render(
                 .child(icon("oak/logo", m.logo_size, theme.icon_primary)),
         )
         .child(
-            icon_button("menu", "expui/general/menu", theme, m).tooltip(Tooltip::text("Main Menu")),
+            icon_button("menu", "expui/general/menu", theme, m)
+                .tooltip(Tooltip::text("Main Menu"))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowMainMenu), cx)),
         )
         .child(toggle(0, "oak/panel-left", "Toggle Left Panel"))
         .child(toggle(1, "oak/panel-bottom", "Toggle Bottom Panel"))
         .child(toggle(2, "oak/panel-right", "Toggle Right Panel"))
         .child(separator(theme, m))
-        .child(icon_button("tools", "oak/grid", theme, m).tooltip(Tooltip::text("Tools")))
+        .child(
+            icon_button("tools", "oak/grid", theme, m)
+                .tooltip(Tooltip::text("Tools"))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(GotoTool), cx)),
+        )
         .child(
             icon_button("collab", "oak/user-add", theme, m).tooltip(Tooltip::text("Collaborate")),
         )
@@ -198,15 +207,30 @@ pub fn render(
         .child(icon_button("run", "expui/run/run", theme, m).tooltip(Tooltip::text("Run")))
         .child(
             icon_button("search", "expui/general/search", theme, m)
-                .tooltip(Tooltip::text("Search Everywhere")),
+                .tooltip(Tooltip::text("Search Everywhere"))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(GotoEverything), cx)),
         )
         .child(
             icon_button("notifications", "expui/toolwindows/notifications", theme, m)
-                .tooltip(Tooltip::text("Notifications")),
+                .tooltip(Tooltip::text("Notifications"))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleNotifications), cx))
+                .relative()
+                .when(state.unread_notifications > 0, |b| {
+                    b.child(
+                        div()
+                            .absolute()
+                            .top(px(5. * m.zoom))
+                            .right(px(5. * m.zoom))
+                            .size(px(6. * m.zoom))
+                            .rounded_full()
+                            .bg(theme.smart_mode_enabled),
+                    )
+                }),
         )
         .child(
             icon_button("settings", "expui/general/settings", theme, m)
-                .tooltip(Tooltip::text("Settings")),
+                .tooltip(Tooltip::text("Settings"))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
         )
         .when(state.caption, |d| {
             d.child(div().w(px(m.toolbar_pad_x)).flex_shrink_0()).child(

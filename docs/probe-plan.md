@@ -53,7 +53,9 @@ Pillow: it finds the editor's window by process id, sets the *client* area
 to the scene's logical size at the window's DPI, sends keys, text and
 pointer events through `SendInput`, and grabs the client area with
 `ImageGrab`. `winprobe.py run <scene> fleet|oak <fixture> <out>` is a whole
-probe. Fleet on Windows draws its own caption into the toolbar, so the
+probe; `winprobe.py attach <scene> fleet <pid> <out>` plays the scene into a
+Fleet window the user already has open (Fleet is a single instance, so a
+second launch only hands the folder to the first). Fleet on Windows draws its own caption into the toolbar, so the
 client area is the full window and the shots of both editors start at the
 toolbar's top edge. Two things to know: Fleet's Trust dialog is dismissed
 by Escape (Smart Mode stays off), and Oak must be built with
@@ -105,7 +107,8 @@ order; A–D unblock M1, E and F are an afternoon each and pay off at once.
 Status (2026-11-02): A, B, D and H exist for Windows (`make-fixture.py`,
 `winprobe.py`, `compare.py`, with scenes `editor`, `light`, `panels`,
 `splitters`, `tabs`, `settings-live`, `splits`, `surface`, `surface2`, and
-the M2 scenes `find`, `fold` and `wrap` still to be run); C's in-app probe
+the M2 scenes `find`, `fold` and `wrap` and the M3 scenes `goto` and `popups`
+shot on both editors on 2026-11-02, their `compare.py` pass still to run); C's in-app probe
 mode, E, F's lint and the KDE launchers are still to do. B's settings override is the scene's
 `fleet_settings` object (written to Fleet's `settings.json` for the run and
 restored after); an Oak launch gets a fresh `OAK_CONFIG_DIR` so no layout or

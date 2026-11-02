@@ -8,15 +8,20 @@
 
 mod actions;
 mod assets;
+mod dialog;
 mod document;
 mod editor;
 mod file_tree;
 mod find;
+mod goto;
 mod input;
 mod keymap;
 mod layout;
+mod menu;
+mod notifications;
 mod popup;
 mod scrollbar;
+mod search_tool;
 mod settings;
 mod theme;
 mod toolbar;
@@ -72,6 +77,38 @@ fn parse_args() -> Args {
     args
 }
 
+/// Opens a workspace window on `root` with `open` in tabs: the first one at
+/// startup, more for `show-recent-workspaces`.
+pub fn open_workspace_window(
+    root: PathBuf,
+    open: Vec<PathBuf>,
+    scratch: bool,
+    window_size: (f32, f32),
+    cx: &mut App,
+) {
+    let (width, height) = window_size;
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    let result = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Oak".into()),
+                // Fleet draws its own caption on Windows (docs/fleet-probe.md).
+                appears_transparent: cfg!(windows),
+                traffic_light_position: None,
+            }),
+            // KWin ties an activation token to an application through this id.
+            app_id: Some("oak".into()),
+            window_min_size: Some(size(px(480.), px(320.))),
+            ..Default::default()
+        },
+        |window, cx| cx.new(|cx| Workspace::new(root, open, scratch, window, cx)),
+    );
+    if let Err(e) = result {
+        eprintln!("oak: cannot open a window: {e:#}");
+    }
+}
+
 fn main() {
     let args = parse_args();
     let overrides = settings::Overrides {
@@ -83,7 +120,7 @@ fn main() {
     };
     let (root, open) = workspace::resolve_args(&args.paths);
     let scratch = args.scratch;
-    let (width, height) = args.size.unwrap_or((1280., 800.));
+    let window_size = args.size.unwrap_or((1280., 800.));
 
     gpui_platform::application()
         .with_assets(assets::Assets)
@@ -96,40 +133,31 @@ fn main() {
             editor::bind_keys(cx);
             file_tree::bind_keys(cx);
             input::bind_keys(cx);
-            let keymap = keymap::load();
+            let preset = cx
+                .global::<settings::AppSettings>()
+                .settings
+                .keymap()
+                .to_string();
+            let keymap = keymap::load(&preset);
             keymap::bind(&keymap, cx);
+            cx.set_global(keymap::Hints::from_keymap(&keymap));
             cx.bind_keys([
                 KeyBinding::new("ctrl-q", actions::Quit, None),
                 KeyBinding::new("up", actions::PopupUp, Some("Popup")),
                 KeyBinding::new("down", actions::PopupDown, Some("Popup")),
+                KeyBinding::new("left", actions::PopupLeft, Some("Popup")),
+                KeyBinding::new("right", actions::PopupRight, Some("Popup")),
+                KeyBinding::new("pageup", actions::PopupPageUp, Some("Popup")),
+                KeyBinding::new("pagedown", actions::PopupPageDown, Some("Popup")),
+                KeyBinding::new("tab", actions::PopupTab, Some("Popup")),
+                KeyBinding::new("shift-tab", actions::PopupBackTab, Some("Popup")),
                 KeyBinding::new("enter", actions::PopupConfirm, Some("Popup")),
                 KeyBinding::new("escape", actions::PopupCancel, Some("Popup")),
                 KeyBinding::new("backspace", actions::PopupBackspace, Some("Popup")),
+                KeyBinding::new("up", actions::PopupUp, Some("SearchTool")),
+                KeyBinding::new("down", actions::PopupDown, Some("SearchTool")),
             ]);
-            let hints = [
-                keymap::hint(&keymap, "toggle-left-panel"),
-                keymap::hint(&keymap, "toggle-bottom-panel"),
-                keymap::hint(&keymap, "toggle-right-panel"),
-            ];
-
-            let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Oak".into()),
-                        // Fleet draws its own caption on Windows (docs/fleet-probe.md).
-                        appears_transparent: cfg!(windows),
-                        traffic_light_position: None,
-                    }),
-                    // KWin ties an activation token to an application through this id.
-                    app_id: Some("oak".into()),
-                    window_min_size: Some(size(px(480.), px(320.))),
-                    ..Default::default()
-                },
-                |window, cx| cx.new(|cx| Workspace::new(root, open, scratch, hints, window, cx)),
-            )
-            .expect("open the main window");
+            open_workspace_window(root, open, scratch, window_size, cx);
             cx.activate(true);
         });
 }

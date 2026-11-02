@@ -1,9 +1,13 @@
-//! The panel layout a workspace was left with: which panels are open and how
-//! wide, kept per workspace root in `~/.config/oak/layout.json` (Fleet keeps
-//! the same in its local storage).
+//! The state a worksace was left with: which panels are open and how wide,
+//! the recent files (what Fleet keeps as `RecentNavigationEntity` rows) and
+//! whether the Goto preview is hidden (`GotoPanelViewState.isPreviewHidden`),
+//! kept per workspace root in `~/.config/oak/layout.json` (Fleet keeps the
+//! same in its local storage). The roots in the file, by when they were last
+//! opened, are the recent workspaces.
 
 use serde_json::{json, Map, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PanelLayout {
@@ -11,15 +15,26 @@ pub struct PanelLayout {
     pub size: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub left: PanelLayout,
     pub bottom: PanelLayout,
     pub right: PanelLayout,
+    /// Most recent first.
+    pub recent: Vec<PathBuf>,
+    pub goto_preview_hidden: bool,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl Layout {
-    /// A fresh Fleet window: the Files island open at 360, the others closed.
+    /// A fresh Fleet window: the Files island open at 360, the others closed,
+    /// the Goto preview shown (Fleet's stored default).
     pub fn fresh() -> Layout {
         use crate::theme::metrics::*;
         Layout {
@@ -35,10 +50,12 @@ impl Layout {
                 open: false,
                 size: RIGHT_PANEL_WIDTH,
             },
+            recent: Vec::new(),
+            goto_preview_hidden: false,
         }
     }
 
-    fn file() -> Option<std::path::PathBuf> {
+    fn file() -> Option<PathBuf> {
         oak_settings::oak_config_dir().map(|d| d.join("layout.json"))
     }
 
@@ -75,10 +92,25 @@ impl Layout {
                     .unwrap_or(default.size),
             }
         };
+        let recent = entry
+            .get("recent")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(PathBuf::from))
+                    .collect()
+            })
+            .unwrap_or_default();
         Layout {
             left: panel("left", fresh.left),
             bottom: panel("bottom", fresh.bottom),
             right: panel("right", fresh.right),
+            recent,
+            goto_preview_hidden: entry
+                .get("gotoPreviewHidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 
@@ -86,9 +118,21 @@ impl Layout {
         let Some(path) = Self::file() else { return };
         let mut all = Self::read_all();
         let panel = |p: PanelLayout| json!({"open": p.open, "size": p.size});
+        let recent: Vec<Value> = self
+            .recent
+            .iter()
+            .map(|p| Value::String(p.display().to_string()))
+            .collect();
         all.insert(
             root.display().to_string(),
-            json!({"left": panel(self.left), "bottom": panel(self.bottom), "right": panel(self.right)}),
+            json!({
+                "left": panel(self.left),
+                "bottom": panel(self.bottom),
+                "right": panel(self.right),
+                "recent": recent,
+                "gotoPreviewHidden": self.goto_preview_hidden,
+                "opened": now_secs(),
+            }),
         );
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -98,5 +142,21 @@ impl Layout {
                 eprintln!("oak: cannot save {}: {e}", path.display());
             }
         }
+    }
+
+    /// Every workspace root the file knows, most recently opened first,
+    /// those still on disk.
+    pub fn recent_workspaces() -> Vec<PathBuf> {
+        let all = Self::read_all();
+        let mut roots: Vec<(u64, PathBuf)> = all
+            .iter()
+            .map(|(root, v)| {
+                let opened = v.get("opened").and_then(Value::as_u64).unwrap_or(0);
+                (opened, PathBuf::from(root))
+            })
+            .filter(|(_, p)| p.is_dir())
+            .collect();
+        roots.sort_by_key(|a| std::cmp::Reverse(a.0));
+        roots.into_iter().map(|(_, p)| p).collect()
     }
 }

@@ -12,19 +12,28 @@ use crate::file_tree::{FileTree, FileTreeEvent};
 use crate::find::{FindBar, FindBarEvent};
 use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
+mod workbench;
+use crate::dialog::{ConfirmDialog, DialogButton};
+use crate::goto::GotoPanel;
+use crate::menu::ContextMenu;
+use crate::notifications::Notifications;
 use crate::scrollbar::{scrollbar, EmptyView};
+use crate::search_tool::SearchTool;
 use crate::settings::{self, AppSettings};
 use crate::theme::{metrics::EMPTY_PANEL_INSET, Metrics, Theme};
 use crate::toolbar;
 use crate::tooltip::Tooltip;
+use gpui::AnyWindowHandle;
 use gpui::{
     canvas, deferred, div, point, prelude::*, px, App, Bounds, BoxShadow, Context, Div,
     DragMoveEvent, ElementId, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent,
-    MouseButton, Pixels, Point, PromptLevel, Render, ScrollHandle, SharedString, Stateful, Window,
+    MouseButton, Pixels, Point, Render, ScrollHandle, SharedString, Stateful, Window,
 };
+use oak_search::FileIndex;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// How many copied texts `editor/paste-from-history` offers.
@@ -89,7 +98,7 @@ pub enum Tool {
 
 impl Tool {
     /// Alphabetical, as Fleet's chooser lists them.
-    const ALL: [Tool; 14] = [
+    pub const ALL: [Tool; 14] = [
         Tool::Breakpoints,
         Tool::BuildOutput,
         Tool::Debug,
@@ -106,7 +115,7 @@ impl Tool {
         Tool::Terminal,
     ];
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Tool::Breakpoints => "Breakpoints",
             Tool::BuildOutput => "Build Output",
@@ -125,7 +134,7 @@ impl Tool {
         }
     }
 
-    fn icon(self) -> &'static str {
+    pub fn icon(self) -> &'static str {
         match self {
             Tool::Breakpoints => "oak/breakpoint",
             Tool::BuildOutput => "expui/toolwindows/build",
@@ -368,7 +377,20 @@ pub struct Workspace {
     autosave_generation: u64,
     /// The tab being dragged, whose slot stays empty until the drop.
     dragging_tab: Option<(usize, usize)>,
-    toggle_hints: [Option<SharedString>; 3],
+    /// M3: the Search tool, the notifications, the popups and their state.
+    search_tool: Entity<SearchTool>,
+    notifications: Entity<Notifications>,
+    goto: Option<Entity<GotoPanel>>,
+    menu: Option<Entity<ContextMenu>>,
+    dialog: Option<Entity<ConfirmDialog>>,
+    dialog_callback: Option<workbench::DialogCallback>,
+    /// Files shown in this workspace, most recent first (`goto/recent-file`).
+    recent: Vec<PathBuf>,
+    goto_preview_hidden: bool,
+    /// The workspace's files for `goto/file`, rebuilt when the disk changes.
+    file_index: Arc<FileIndex>,
+    /// This workspace's window, for deferred focus changes.
+    window: AnyWindowHandle,
     focus_handle: FocusHandle,
     last_title: String,
 }
@@ -404,7 +426,6 @@ impl Workspace {
         root: PathBuf,
         open: Vec<PathBuf>,
         scratch: bool,
-        toggle_hints: [Option<String>; 3],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -418,6 +439,7 @@ impl Workspace {
                         this.focus_active_editor(cx);
                     }
                 }
+                other => this.on_file_tree_event(other, cx),
             },
         )
         .detach();
@@ -431,6 +453,7 @@ impl Workspace {
             Panel::new(layout.bottom, Vec::new(), cx),
             Panel::new(layout.right, Vec::new(), cx),
         ];
+        let search_tool = Self::make_search_tool(root.clone(), cx);
         let mut this = Workspace {
             branch: git_branch(&root).map(Into::into),
             root,
@@ -445,10 +468,20 @@ impl Workspace {
             clipboard_history: Vec::new(),
             autosave_generation: 0,
             dragging_tab: None,
-            toggle_hints: toggle_hints.map(|h| h.map(Into::into)),
+            search_tool,
+            notifications: cx.new(|_| Notifications::new()),
+            goto: None,
+            menu: None,
+            dialog: None,
+            dialog_callback: None,
+            recent: layout.recent.clone(),
+            goto_preview_hidden: layout.goto_preview_hidden,
+            file_index: Arc::new(FileIndex::default()),
+            window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
         };
+        this.init_workbench(window, cx);
         for path in open {
             this.open_path(path, false, cx);
         }
@@ -473,6 +506,8 @@ impl Workspace {
             left: self.panels[0].layout(),
             bottom: self.panels[1].layout(),
             right: self.panels[2].layout(),
+            recent: self.recent.clone(),
+            goto_preview_hidden: self.goto_preview_hidden,
         }
     }
 
@@ -513,12 +548,16 @@ impl Workspace {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => text,
                 Err(_) => {
-                    eprintln!("oak: {} is not UTF-8 text; not opened", path.display());
+                    self.notify_error(
+                        "Not a text file",
+                        format!("{} is not UTF-8 text", path.display()),
+                        cx,
+                    );
                     return None;
                 }
             },
             Err(e) => {
-                eprintln!("oak: cannot read {}: {e}", path.display());
+                self.notify_error("Cannot read file", format!("{}: {e}", path.display()), cx);
                 return None;
             }
         };
@@ -560,6 +599,9 @@ impl Workspace {
                     this.schedule_autosave(cx);
                 }
                 EditorEvent::Copied(text) => this.remember_copied(text),
+                EditorEvent::ContextMenu(position) => {
+                    this.editor_context_menu(&editor, *position, cx)
+                }
                 EditorEvent::Saved => {}
             }
             cx.notify()
@@ -598,7 +640,7 @@ impl Workspace {
             .collect();
         for editor in editors {
             if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
-                eprintln!("oak: save failed: {e}");
+                self.notify_error("Save failed", format!("{e}"), cx);
             }
         }
     }
@@ -636,36 +678,27 @@ impl Workspace {
         }
         if Self::is_big_file(&path, cx) {
             // Fleet confirms before opening a file past the threshold.
-            let Some(window) = cx.windows().first().copied() else {
-                return;
-            };
             let size_mb = std::fs::metadata(&path)
                 .map(|m| m.len() as f64 / 1024. / 1024.)
                 .unwrap_or(0.);
-            let message = format!(
-                "{} is {size_mb:.1} MB. Open it anyway?",
-                path.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default()
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            self.confirm(
+                format!("{name} is {size_mb:.1} MB. Open it anyway?"),
+                Some("Large files open without highlighting.".into()),
+                vec![
+                    DialogButton::primary("Open"),
+                    DialogButton::secondary("Cancel"),
+                ],
+                cx,
+                move |this, choice, cx| {
+                    if choice == 0 {
+                        this.open_path_unchecked(path, preview, cx);
+                    }
+                },
             );
-            let answer = window.update(cx, |_, window, cx| {
-                window.prompt(
-                    PromptLevel::Warning,
-                    &message,
-                    Some("Large files open without highlighting."),
-                    &["Open", "Cancel"],
-                    cx,
-                )
-            });
-            let Ok(answer) = answer else {
-                return;
-            };
-            cx.spawn(async move |this, cx| {
-                if answer.await == Ok(0) {
-                    let _ = this.update(cx, |this, cx| this.open_path_unchecked(path, preview, cx));
-                }
-            })
-            .detach();
             return;
         }
         self.open_path_unchecked(path, preview, cx);
@@ -706,7 +739,7 @@ impl Workspace {
                 let _ = std::fs::create_dir_all(dir);
             }
             if let Err(e) = std::fs::write(&path, template) {
-                eprintln!("oak: cannot create {}: {e}", path.display());
+                self.notify_error("Cannot create file", format!("{}: {e}", path.display()), cx);
                 return;
             }
         }
@@ -717,6 +750,7 @@ impl Workspace {
     /// After a tab became active: the tree follows (`files.selectOpenedFile`).
     fn after_activate(&mut self, cx: &mut Context<Self>) {
         if let Some(path) = self.active_editor().and_then(|e| e.read(cx).path(cx)) {
+            self.touch_recent(&path);
             self.file_tree.update(cx, |tree, cx| {
                 if tree.select_path(&path) {
                     cx.notify();
@@ -736,12 +770,7 @@ impl Workspace {
     fn focus_active_editor(&self, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor() {
             let handle = editor.read(cx).focus_handle(cx);
-            cx.defer(move |cx| {
-                let _ = cx
-                    .windows()
-                    .first()
-                    .map(|w| w.update(cx, |_, window, cx| handle.focus(window, cx)));
-            });
+            self.focus_later(handle, cx);
         }
     }
 
@@ -867,7 +896,7 @@ impl Workspace {
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor().cloned() {
             if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
-                eprintln!("oak: save failed: {e}");
+                self.notify_error("Save failed", format!("{e}"), cx);
             }
         }
     }
@@ -880,7 +909,7 @@ impl Workspace {
             .collect();
         for editor in editors {
             if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
-                eprintln!("oak: save failed: {e}");
+                self.notify_error("Save failed", format!("{e}"), cx);
             }
         }
     }
@@ -951,7 +980,7 @@ impl Workspace {
     }
 
     fn close_window(&mut self, _: &CloseWindow, _: &mut Window, cx: &mut Context<Self>) {
-        cx.quit();
+        self.request_quit(cx);
     }
 
     fn next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -1059,7 +1088,11 @@ impl Workspace {
             return;
         };
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("oak: cannot create {}: {e}", dir.display());
+            self.notify_error(
+                "Cannot create folder",
+                format!("{}: {e}", dir.display()),
+                cx,
+            );
             return;
         }
         let path = (1..)
@@ -1067,7 +1100,7 @@ impl Workspace {
             .find(|p| !p.exists())
             .expect("a free scratch name");
         if let Err(e) = std::fs::write(&path, "") {
-            eprintln!("oak: cannot create {}: {e}", path.display());
+            self.notify_error("Cannot create file", format!("{}: {e}", path.display()), cx);
             return;
         }
         self.open_path(path, false, cx);
@@ -1144,12 +1177,35 @@ impl Workspace {
                         let _ = std::fs::create_dir_all(parent);
                     }
                     if path.exists() {
-                        eprintln!("oak: {} exists", path.display());
+                        self.notify_error("File exists", path.display().to_string(), cx);
                     } else if let Err(e) = std::fs::write(&path, "") {
-                        eprintln!("oak: cannot create {}: {e}", path.display());
+                        self.notify_error(
+                            "Cannot create file",
+                            format!("{}: {e}", path.display()),
+                            cx,
+                        );
                     } else {
-                        self.file_tree.update(cx, |tree, cx| tree.reload(cx));
+                        self.files_changed(cx);
                         self.open_path(path, false, cx);
+                    }
+                }
+            }
+            PromptKind::NewFolder { dir } => {
+                let name = text.trim();
+                if !name.is_empty() {
+                    let path = dir.join(name);
+                    match std::fs::create_dir_all(&path) {
+                        Ok(()) => {
+                            self.files_changed(cx);
+                            self.file_tree.update(cx, |tree, _| {
+                                tree.select_path(&path);
+                            });
+                        }
+                        Err(e) => self.notify_error(
+                            "Cannot create folder",
+                            format!("{}: {e}", path.display()),
+                            cx,
+                        ),
                     }
                 }
             }
@@ -1160,7 +1216,11 @@ impl Workspace {
                     if to != path {
                         match std::fs::rename(&path, &to) {
                             Ok(()) => self.path_renamed(&path, to, cx),
-                            Err(e) => eprintln!("oak: cannot rename {}: {e}", path.display()),
+                            Err(e) => self.notify_error(
+                                "Cannot rename",
+                                format!("{}: {e}", path.display()),
+                                cx,
+                            ),
                         }
                     }
                 }
@@ -1190,8 +1250,8 @@ impl Workspace {
                 doc.update(cx, |d, cx| d.set_path(Some(to.clone()), cx));
             }
         }
-        self.file_tree.update(cx, |tree, cx| {
-            tree.reload(cx);
+        self.files_changed(cx);
+        self.file_tree.update(cx, |tree, _| {
             tree.select_path(&to);
         });
         cx.notify();
@@ -1215,28 +1275,38 @@ impl Workspace {
         self.open_prompt(PromptKind::Rename { path }, &name, Vec::new(), window, cx);
     }
 
-    /// `files/delete`: confirms, then removes the file and closes its tabs.
+    /// `files/delete`: confirms in Fleet's dialog, then removes the files (every
+    /// selected row when the tree has the focus) and closes their tabs.
     fn delete_file(&mut self, _: &DeleteFile, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.target_file(window, cx) else {
+        let paths = self.target_files(window, cx);
+        if paths.is_empty() {
             return;
+        }
+        let title = if paths.len() == 1 {
+            let name = paths[0]
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            format!("Delete {name}?")
+        } else {
+            format!("Delete {} items?", paths.len())
         };
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            &format!("Delete {name}?"),
-            Some("The file is removed from disk."),
-            &["Delete", "Cancel"],
+        self.confirm(
+            title,
+            Some("The files are removed from disk.".into()),
+            vec![
+                DialogButton::dangerous("Delete"),
+                DialogButton::secondary("Cancel"),
+            ],
             cx,
+            move |this, choice, cx| {
+                if choice == 0 {
+                    for path in &paths {
+                        this.delete_path(path, cx);
+                    }
+                }
+            },
         );
-        cx.spawn(async move |this, cx| {
-            if answer.await == Ok(0) {
-                let _ = this.update(cx, |this, cx| this.delete_path(&path, cx));
-            }
-        })
-        .detach();
     }
 
     fn delete_path(&mut self, path: &Path, cx: &mut Context<Self>) {
@@ -1246,7 +1316,7 @@ impl Workspace {
             std::fs::remove_file(path)
         };
         if let Err(e) = result {
-            eprintln!("oak: cannot delete {}: {e}", path.display());
+            self.notify_error("Cannot delete", format!("{}: {e}", path.display()), cx);
             return;
         }
         for p in 0..self.panes.len() {
@@ -1269,7 +1339,7 @@ impl Workspace {
         }
         self.closed.retain(|c| c != path);
         self.prune_documents(cx);
-        self.file_tree.update(cx, |tree, cx| tree.reload(cx));
+        self.files_changed(cx);
         self.focus_active_editor(cx);
         cx.notify();
     }
@@ -1343,7 +1413,7 @@ impl Workspace {
         bar.update(cx, |bar, cx| bar.prev(cx));
     }
     fn quit(&mut self, _: &Quit, _: &mut Window, cx: &mut Context<Self>) {
-        cx.quit();
+        self.request_quit(cx);
     }
 
     /// `split-right`: a new split to the right of the active one, holding a
@@ -1731,6 +1801,7 @@ impl Workspace {
         let close = entity.clone();
         let drop = entity.clone();
         let middle = entity.clone();
+        let right = entity.clone();
         div()
             .id(ElementId::NamedInteger(
                 format!("tab-{p}").into(),
@@ -1792,6 +1863,12 @@ impl Workspace {
             })
             .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
                 middle.update(cx, |this, cx| this.close_tab_at(p, ix, window, cx));
+            })
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                let position = event.position;
+                right.update(cx, |this, cx| {
+                    this.tab_context_menu(p, ix, position, window, cx)
+                });
             })
             .tooltip(Tooltip::text(path_text))
             .child(
@@ -2235,6 +2312,8 @@ impl Workspace {
                 .unwrap_or(Tool::Files);
             let body: gpui::AnyElement = match tool {
                 Tool::Files => self.file_tree.clone().into_any_element(),
+                Tool::Search => self.search_tool.clone().into_any_element(),
+                Tool::Notifications => self.notifications_view().into_any_element(),
                 other => div()
                     .size_full()
                     .flex()
@@ -2532,7 +2611,8 @@ impl Render for Workspace {
                 right_open: self.panels[2].open,
                 caption: cfg!(windows),
                 maximized: window.is_maximized(),
-                toggle_hints: self.toggle_hints.clone(),
+                toggle_hints: workbench::toggle_hints(cx),
+                unread_notifications: self.notifications.read(cx).unread(),
             },
             &theme,
             &m,
@@ -2632,6 +2712,33 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::delete_file))
             .on_action(cx.listener(Self::change_line_endings))
             .on_action(cx.listener(Self::paste_from_history))
+            .on_action(cx.listener(Self::goto_everything))
+            .on_action(cx.listener(Self::goto_file))
+            .on_action(cx.listener(Self::goto_symbol))
+            .on_action(cx.listener(Self::goto_action))
+            .on_action(cx.listener(Self::goto_tool))
+            .on_action(cx.listener(Self::goto_recent_file))
+            .on_action(cx.listener(Self::show_file_symbols))
+            .on_action(cx.listener(Self::toggle_goto_preview))
+            .on_action(cx.listener(Self::show_recent_workspaces))
+            .on_action(cx.listener(Self::find_in_path))
+            .on_action(cx.listener(Self::replace_in_path))
+            .on_action(cx.listener(Self::search_jump_to_tool))
+            .on_action(cx.listener(Self::files_jump_to_tool))
+            .on_action(cx.listener(Self::new_folder))
+            .on_action(cx.listener(Self::toggle_hidden_files))
+            .on_action(cx.listener(Self::open_in_associated_application))
+            .on_action(cx.listener(Self::show_in_file_manager))
+            .on_action(cx.listener(Self::copy_path))
+            .on_action(cx.listener(Self::show_context_menu))
+            .on_action(cx.listener(Self::show_main_menu))
+            .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::toggle_notifications))
+            .on_action(cx.listener(Self::clear_notifications))
+            .on_action(cx.listener(Self::make_snapshot))
+            .on_action(cx.listener(Self::close_all_tabs))
+            .on_action(cx.listener(Self::copy_relative_path))
+            .on_action(cx.listener(Self::about))
             .on_drag_move(
                 cx.listener(|this, e: &DragMoveEvent<SplitterDrag>, window, cx| {
                     let side = e.drag(cx).side;
@@ -2669,6 +2776,7 @@ impl Render for Workspace {
             })
             .children(chooser)
             .children(prompt)
+            .children(self.render_workbench_overlays(&theme, &m, cx))
     }
 }
 

@@ -30,6 +30,8 @@ pub enum PromptKind {
     NewFile { dir: PathBuf },
     /// A new name for `path`.
     Rename { path: PathBuf },
+    /// A folder name, created under `dir` (`files/new-folder`).
+    NewFolder { dir: PathBuf },
     /// LF or CRLF for the active document.
     LineEndings,
     /// One of the recent clipboard texts, pasted into the active editor.
@@ -42,6 +44,7 @@ impl PromptKind {
             PromptKind::GotoLine => "Go to Line:Column",
             PromptKind::NewFile { .. } => "New File",
             PromptKind::Rename { .. } => "Rename",
+            PromptKind::NewFolder { .. } => "New Folder",
             PromptKind::LineEndings => "Line Endings",
             PromptKind::PasteHistory => "Paste from History",
         }
@@ -52,6 +55,7 @@ impl PromptKind {
             PromptKind::GotoLine => "Line:Column",
             PromptKind::NewFile { .. } => "File name",
             PromptKind::Rename { .. } => "New name",
+            PromptKind::NewFolder { .. } => "Folder name",
             _ => "",
         }
     }
@@ -59,7 +63,10 @@ impl PromptKind {
     fn has_field(&self) -> bool {
         matches!(
             self,
-            PromptKind::GotoLine | PromptKind::NewFile { .. } | PromptKind::Rename { .. }
+            PromptKind::GotoLine
+                | PromptKind::NewFile { .. }
+                | PromptKind::Rename { .. }
+                | PromptKind::NewFolder { .. }
         )
     }
 }

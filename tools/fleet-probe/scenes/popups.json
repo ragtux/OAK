@@ -1,0 +1,42 @@
+{
+  "name": "popups",
+  "about": "Batch 7: the Files tree's context menu, a tab's, the editor's, the main menu under the toolbar's menu button, the Search tool empty and with 'Record' typed, the replace-in-path form, the delete confirmation on a tree row, and the recent-workspaces list (Ctrl+Alt+W). Fleet opens main.rs through Goto first; Oak gets it from the command line. The scans read a menu's box along a row and a column through it.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["move", 100, 139], ["click", "right"], ["wait", 1000], ["shot", "tree-menu"], ["key", "escape"], ["wait", 500],
+      ["move", 430, 56], ["click", "right"], ["wait", 1000], ["shot", "tab-menu"], ["key", "escape"], ["wait", 500],
+      ["move", 700, 300], ["click", "right"], ["wait", 1000], ["shot", "editor-menu"], ["key", "escape"], ["wait", 500],
+      ["move", 46, 18], ["click"], ["wait", 1000], ["shot", "main-menu"], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+shift+f"], ["wait", 1500], ["shot", "search"],
+      ["type", "Record"], ["wait", 2500], ["shot", "search-typed"], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+shift+h"], ["wait", 1500], ["shot", "replace"], ["key", "escape"], ["wait", 500],
+      ["move", 100, 478], ["click"], ["wait", 800], ["key", "shift+delete"], ["wait", 1200], ["shot", "delete-dialog"], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+alt+w"], ["wait", 1500], ["shot", "recent-workspaces"], ["key", "escape"], ["wait", 500]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["move", 100, 139], ["click", "right"], ["wait", 600], ["shot", "tree-menu"], ["key", "escape"], ["wait", 400],
+      ["move", 430, 56], ["click", "right"], ["wait", 600], ["shot", "tab-menu"], ["key", "escape"], ["wait", 400],
+      ["move", 700, 300], ["click", "right"], ["wait", 600], ["shot", "editor-menu"], ["key", "escape"], ["wait", 400],
+      ["move", 46, 18], ["click"], ["wait", 600], ["shot", "main-menu"], ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+shift+f"], ["wait", 800], ["shot", "search"],
+      ["type", "Record"], ["wait", 1500], ["shot", "search-typed"], ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+shift+h"], ["wait", 800], ["shot", "replace"], ["key", "escape"], ["wait", 400],
+      ["move", 100, 478], ["click"], ["wait", 600], ["key", "shift+delete"], ["wait", 800], ["shot", "delete-dialog"], ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+alt+w"], ["wait", 800], ["shot", "recent-workspaces"], ["key", "escape"], ["wait", 400]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "tree menu row (y=160)", "axis": "x", "at": 160, "from": 0, "to": 700, "edges": ["menu left", "menu right"]},
+    {"name": "tree menu column (x=150)", "axis": "y", "at": 150, "from": 100, "to": 600, "edges": ["menu top", "menu bottom"]}
+  ],
+  "samples": [
+    {"name": "menu fill", "at": [120, 150], "key": "popup.background"}
+  ]
+}

@@ -20,12 +20,13 @@ Native Rust/GPUI code editor in the shape of JetBrains Fleet.
 ## Layout
 
 ```
-crates/oak          GPUI app (bin): main, workspace (panels, splits, tabs, status bar, prompts, autosave), toolbar (with the Windows caption), file_tree, document (one per file, shared by its views: buffer, syntax tree, folds, indent, save), editor (carets, folds and a display map on a document; the element paints it), find (the find/replace bar), input (a single-line field), popup (prompts under the toolbar), theme (Metrics = sizes x zoom), settings (globals, live reload, zoom), layout, tooltip, scrollbar, keymap, assets
+crates/oak          GPUI app (bin): main, workspace (panels, splits, tabs, status bar, prompts, autosave; workspace/workbench holds the M3 tools: Goto, Search, menus, dialogs, notifications, recent workspaces), toolbar (with the Windows caption), file_tree (multi-select, drag and drop, hidden files, the right-click menu), document (one per file, shared by its views: buffer, syntax tree, folds, indent, save), editor (carets, folds and a display map on a document; the element paints it), find (the find/replace bar), goto (the Goto panel with its preview), search_tool (find/replace in files), menu (context and main menus), dialog (Fleet's confirm dialog and buttons), notifications (toasts and the Notifications tool), input (a single-line field), popup (prompts under the toolbar), theme (Metrics = sizes x zoom), settings (globals, live reload, zoom), layout (panels, recent files, recent workspaces), tooltip, scrollbar, keymap (the action table: bindings, `goto/action`, menus), assets
 crates/oak-text     Buffer (ropey) with an edit log and the document's Indent, Cursor + TextEditor (one or more selections, undo grouping, every edit command, auto-pairs and the indenter), analysis (identifier occurrences, bracket match, indent guides), search (the find bar's queries, on regex), indent (detection)
-crates/oak-syntax   tree-sitter grammars (rust, json, toml, markdown) -> Fleet textAttributes keys; structure (SyntaxTree: expand/shrink, folds, bracket pairs, errors)
+crates/oak-syntax   tree-sitter grammars (rust, json, toml, markdown) -> Fleet textAttributes keys; structure (SyntaxTree: expand/shrink, folds, bracket pairs, errors); symbols (the file outline for goto/symbol)
 crates/oak-theme    Fleet theme JSON: palette resolution, typed Color, cascading attribute lookup
 crates/oak-keymap   Fleet keymap JSON: per-platform chord resolution, gpui keystroke spelling
-crates/oak-settings Fleet settings.json: Oak's file over Fleet's, typed accessors with Fleet's defaults, a change watcher; editorconfig (.editorconfig lookup)
+crates/oak-settings Fleet settings.json: Oak's file over Fleet's, typed accessors with Fleet's defaults, a change watcher; editorconfig (.editorconfig lookup); workbench (the M3 keys)
+crates/oak-search   Workspace search without gpui: fuzzy (the Goto matcher), files (the file index, walked with `ignore`), grep (find/replace in files with Fleet's query fields)
 docs/               fleet-probe.md (measurements and provenance), roadmap.md (milestones), probe-plan.md (method and harnesses)
 tools/fleet-probe   scripts: inventory Fleet's actions/settings/theme keys, coverage vs Oak, extract themes, measure screenshots
 ```

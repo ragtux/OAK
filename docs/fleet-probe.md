@@ -379,6 +379,111 @@ Estimates introduced by this pass, the first targets for the three scenes:
   `editor.caretSmoothAnimation` false, `editor.ligatures` true,
   `editor.honorCamelHumps` true, `editor.useSelectionForSearch` true.
 
+## Sixth pass: M3 workbench tools, built from Fleet's state files (2026-11-02)
+
+Fleet's help site was retired in December 2025 (every page redirects to a
+blog post), so the first build of the Goto panel, the Search tool, the menus
+and the dialogs came from the two sources left, Fleet's own data files
+(source 1) and its runtime state (source 2), plus the popups batch 5 caught.
+The same day Fleet's side of the `goto` and `popups` scenes ran (the last
+subsection) and the estimates below gave way to the measured values; they
+are kept as the record of what the state files alone could say.
+
+### What Fleet's state says
+
+Fleet's local storage on this machine (`%APPDATA%\JetBrains\Fleet\localStorage`,
+per-workspace `frontend/db.1.48.0.json` and `layout-recovery.6.json`) is a
+durable snapshot of its entity store, and three entities describe the M3 tools:
+
+| Entity | Fields and values seen | Oak |
+| --- | --- | --- |
+| `fleet.frontend.ui.gotoPanel.GotoPanelViewState` | `isPreviewHidden` false, `isPreviewHorizontal` false, `splitRatioHorizontal` 0.33, `splitRatioVertical` 0.5, `queryHistoryMap` `{"Goto": ["main.rs"]}` | the preview shows by default, beside the list, the list taking 0.33 of the width (`GOTO_LIST_SHARE`); `gotoPreviewHidden` persisted per workspace in `layout.json` |
+| `fleet.frontend.navigation.RecentNavigationEntity` | `title`, `iconKey` (`icons.file-types.rust`), `key` (a file address), `location` (document + caret offsets), `timestamp` (a counter), `reachable` | the recent files, most recent first, lead the empty Everything and Files lists; kept in `layout.json` as `recent` |
+| Search tool tab (`viewTypeId` `text-search`) | `query` `{text, caseSensitive, words, regex, order 0, limit 100, rootDirectory null, path "", mask ""}`, `replacement`, `searchMode` `FIND`, `hasCloseButton` false | the same toggles, the file mask, the limit of 100 and a replace mode; `order`, `rootDirectory` and `path` are not exposed yet |
+
+The resolved keymap (`localStorage/keymap.0.json`, 241 entries) gives the
+chords' presentable spelling (`Ctrl+Alt+Down`), which the menus and the
+Goto hints use (`keymap::presentable`), but no action titles: those are
+derived from the ids (`keymap::action_title`), with a hand table for the
+ones whose words are not English.
+
+### Batches 6 and 7, measured (2026-11-02, Fleet running beside the probe)
+
+Fleet's side of the `goto` and `popups` scenes ran the same day against the
+window the user had open (the driver's `run` starts its own Fleet, which a
+running one absorbs; `attach.py` in the session's scratchpad plays a scene's
+steps into an existing window instead). The values are device px ÷ 1.5 read
+off the shots with run-length scans; the colours are the shots' pixels
+resolved against the dark theme. They replaced the estimates above in
+`theme.rs::metrics` and the Goto panel was rebuilt to this structure.
+
+**The Goto popup** is one popup with four tab chips, not a list with tabs
+beneath the field; its preview sits under the list, not beside it
+(`isPreviewHorizontal` false means the split is stacked). Ctrl+Shift+F opens
+its Text Search tab, not the Search tool in the panel.
+
+| Element | Fleet | Constant or key |
+| --- | --- | --- |
+| Popup | 300.67–980.67 × 64.67–743.33 with a preview (680 wide, centred; 678.67 tall in an 800 window); Actions, Tools and Recent Workspaces end 2 px under their last row; `popup.background` (`popup.goto.background` has the same value), 1 px `popup.border` | `GOTO_WIDTH` 680, `GOTO_TOP` 64.67, `GOTO_MAX_HEIGHT` 678.67, `GOTO_BOTTOM_PAD` 2 |
+| Tab chips | Goto · Actions · Tools · Text Search at 70–98 (28 tall), the first at x 308 (8 in), text 8 in, 6 between chips; the selected one on `tab.background.selectedFocused` inside `tab.border.selectedFocused`; two 24 px icon buttons at the right end (the preview toggle, open in a window) | `GOTO_TAB_TOP` 5.33, `GOTO_TAB_HEIGHT` 28, `GOTO_TAB_PAD_X` 8, `GOTO_TAB_GAP` 6, `GOTO_ICON_BUTTON` 24 |
+| Field | 308.67–972.67 × 108–136 (28 tall, 8 in, 10 under the chips) with the 2 px `inputField.focusOutline.default` ring outside it (106–138); text at +8; no magnifier; "Search files, classes, functions, and symbols" | `GOTO_TAB_FIELD_GAP` 10, `GOTO_FIELD_HEIGHT` 28 |
+| Filter buttons (Goto tab) | Files · Symbols · Symbols in File at 144–168 (24 tall), 6 under the ring, 10.67 apart: `button.secondary.*` off, `button.primary.*` on | `GOTO_CHIP_HEIGHT` 24, `GOTO_CHIP_TOP_GAP` 6, `GOTO_CHIP_GAP` 10.67 |
+| Section header | "Recent" (empty query), "Found", "Active", "New" in `text.secondary`, a 26 px row 8 under the buttons | `GOTO_HEADER_HEIGHT` 26, `GOTO_BLOCK_GAP` 8 |
+| Rows | 26 px pitch, a 24 px wash of `listItem.background.focused` (#194474) on the selected row, 8 px row padding, a 16 px icon then 4 to the text; with nothing between the ring and the list (Actions, Recent Workspaces) the first wash starts 10 under the ring; a file's folder follows its name in `listItem.text.secondary`; a symbol's file, an action's shortcut, a match's `file:line` and a workspace's path are right-aligned in `text.secondary`; Actions and Text Search rows carry no icon | `GOTO_ROW_PITCH` 26, `GOTO_ROW_HEIGHT` 24, `GOTO_LIST_FIELD_GAP` 10 |
+| Matched letters | a box of `search.match.background` (#9F680C80) behind them, the text in `search.match.text` | |
+| Everything | files and symbols only (Actions and Tools are their own tabs); "Recent" holds the recent files, the first selected | |
+| Tools | "Active" (the tools in the panels), 8 px, a 1 px `popup.separator`, 4 px, "New" and every tool with its icon | `GOTO_SEPARATOR_ABOVE` 8, `GOTO_SEPARATOR_BELOW` 4 |
+| Preview | a box on `island.background` 8 in from the sides, 462–736.67 under the Goto list (0.465 of the height left under the list's top), 6.67 above the popup's edge, holding the editor and a `src / main.rs / Record` breadcrumb at its bottom; `toggle-goto-preview` (Alt+2) removes it and the list runs to the bottom | `GOTO_PREVIEW_SHARE` 0.465, `GOTO_PREVIEW_BOTTOM_PAD` 6.67 |
+| Symbols in File | an outline with chevrons: `Record`, then `id: u32`, `new(id: u32, name: &str) → Self` indented about 24; no header, no preview, the popup still full height | `GOTO_TREE_INDENT` 24 (estimate), `Symbol::signature` |
+| Recent Workspaces (Ctrl+Alt+W) | the same popup with a bold "Recent Workspaces" title in the tab row's place, "Search workspaces", rows with the path right-aligned | |
+| Text Search (Ctrl+Shift+F) | the fourth tab: the field holds Aa · W · .* and a replace toggle at its right; 6 under the ring an "In folder" field 492 wide with a folder icon and a "File mask: *.*" field 164 wide, 8 apart, 28 tall; a 28 px row "8 results in 1 files"; one 26 px row per match with the line (indent stripped) and `main.rs:5` at the right; the preview below. Ctrl+Shift+H adds a Replace field 8 under the ring and "Replace · Replace All" secondary buttons (24 tall, 8.67 apart) 11.33 above the popup's bottom | `SEARCH_MASK_WIDTH` 164, `SEARCH_COUNT_ROW` 28, `GOTO_BUTTONS_PAD` 11.33, `GOTO_BUTTON_GAP` 8.67 |
+
+**Menus.**
+
+| Element | Fleet | Constant |
+| --- | --- | --- |
+| Position | the top-left corner at the pointer (a right click at (100, 139) gave a menu at 100.67 × 138.67); the main menu at 36.67 × 36.67, its left edge on the menu button's box, 2 under the toolbar | the menu button's x, `TOOLBAR_HEIGHT` + `POPUP_OFFSET_Y` |
+| Rows | 28 tall; labels 14.67 in (6 px popup padding, 8 px row padding); shortcuts in `text.secondary` right-aligned 14.67 from the edge; a `›` in `text.secondary` on a submenu row | `MENU_ROW_HEIGHT` 28, `MENU_ROW_PAD_X` 8, `POPUP_PAD` 6 |
+| Separator | a 12 px block: the 1 px `popup.separator` with 5.5 above and below | `MENU_SEPARATOR_PAD` 5.5 |
+| Width | the longest row: the tree's menu 230.67, the editor's 232, a tab's 170.67, the main menu 139 | measured from the labels at render; `MENU_MIN_WIDTH` 140 |
+| Tree menu | New File..., New Folder..., sep, Find in Files..., Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › | Oak: the same without Cut, Copy, Paste and Git (the file clipboard and M4) |
+| Tab menu | Close Ctrl+F4, Close Other Tabs, Close All Tabs, Close Saved Tabs, sep, Split Right Ctrl+\, Split Down, Pin, sep, Open In › | Oak: without Split Down and Pin |
+| Editor menu | Quick Fixes... Alt+Enter, sep, AI Actions ›, Refactor ›, Go To ›, Reformat Code Alt+Shift+F, sep, Git ›, sep, Cut, Copy, Paste, sep, Plugins › (greyed) | Oak: Go To ›, sep, Cut, Copy, Paste (the rest are M4 and M7) |
+| Main menu | File, Edit, View, Goto, Code, Run, Git, Window, Help, every row a submenu | Oak: the nine, Run and Git holding a greyed row |
+
+`compare.py` on the `goto` pairs after the rebuild: the popup's top, the
+field, the selected row and the popup's fill within 0.7 px; the preview box
+first landed 12.7 px low because its share had been taken of the whole
+height under the list's top, where Fleet halves what is left after the 8 px
+gap (`splitRatioVertical` 0.5): `GOTO_PREVIEW_SHARE` is now 0.5 of that, which puts Oak's box top at 459.3
+against Fleet's 462 (Fleet's own preview is 1.7 short of an exact half).
+
+The M2 scenes `find`, `fold` and `wrap` ran against Fleet the same way. What
+they add to the fifth pass, for the M2 follow-up: the find field's edges sit
+2 px left of Oak's because Fleet's right window margin is 6 (the M1
+leftover); with the field open on a file scrolled to its top and a query
+typed, Fleet's text moved down 52 px (line 1 from 87 to 139) while the
+empty field and the replace form left it in place, a behaviour Oak does not
+have yet; the hovered gutter line carries a red breakpoint hint (#55262F at
+398–408.7) and the fold chevron's hover wash reads #2A2C2F where Oak paints
+#53565A (`editor.foldIndicator.background.hovered` resolves differently or
+Oak draws it over a lighter base); every foldable line shows its chevron
+while the gutter is hovered, as Oak's does. The `wrap` scene (run with its
+`fleet_settings` through `attach`) confirms `WRAP_INDENT` 0: the
+continuation rows of the 300-column line start at the text origin, the
+current-line wash covers all three rows of the wrapped line, and the
+`editor.guides` ruler stands at column 80 (x 1061.3, Oak 1062.7).
+
+Still estimated after this pass: the preview box's radius (6) and its
+breadcrumb line (24); the outline's indent (24); the confirm dialog (twice the
+scene's click on a tree row left the keyboard in Fleet's editor, so
+Shift+Delete cut a line there instead, undone each time; Fleet's tree takes
+the focus on some other event, to be found before the dialog can be shot);
+toasts and the Notifications tool, which no probe step triggers; the Search
+tool in the panel, which no chord opens. The Fleet shots carried over to Oak
+with no change to the bundled themes: every colour read off them resolved to
+a key already in use.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

@@ -229,6 +229,99 @@ pub mod metrics {
     pub const TOOLTIP_RADIUS: f32 = 4.;
     /// Fleet's tab tooltip wrapped at 616 wide (batch 3).
     pub const TOOLTIP_MAX_WIDTH: f32 = 616.;
+    /// The Goto panel (batch 6, `docs/fleet-probe.md` sixth pass): 680 wide,
+    /// centred, its top at 64.67 and its bottom at 743.33 in an 800 window when
+    /// it holds a preview (`GOTO_MAX_HEIGHT`), else as tall as its rows plus 2.
+    /// Inside, 8 px from the edges: the tab chips (28 tall, 5.33 below the
+    /// top), 10, the field (28 with the 2 px ring outside), 6, the filter
+    /// buttons (24), 8, a 26 px header, then 26 px rows with a 24 px wash;
+    /// without the buttons the rows start 10 below the ring. The preview box
+    /// sits at the bottom, 6.67 above the popup's edge, taking half of what is
+    /// left under the list's top once the 8 px gap is taken out (Fleet's
+    /// `splitRatioVertical` 0.5; 274.67 tall in an 800 window).
+    pub const GOTO_TOP: f32 = 64.67;
+    pub const GOTO_MAX_HEIGHT: f32 = 678.67;
+    pub const GOTO_WIDTH: f32 = 680.;
+    pub const GOTO_PREVIEW_SHARE: f32 = 0.5;
+    pub const GOTO_FIELD_HEIGHT: f32 = 28.;
+    pub const GOTO_ROW_HEIGHT: f32 = 24.;
+    pub const GOTO_TAB_HEIGHT: f32 = 28.;
+    pub const GOTO_TAB_PAD_X: f32 = 8.;
+    pub const GOTO_TAB_GAP: f32 = 6.;
+    pub const GOTO_TAB_TOP: f32 = 5.33;
+    pub const GOTO_TAB_FIELD_GAP: f32 = 10.;
+    pub const GOTO_PAD: f32 = 8.;
+    pub const GOTO_CHIP_HEIGHT: f32 = 24.;
+    pub const GOTO_CHIP_GAP: f32 = 10.67;
+    pub const GOTO_CHIP_TOP_GAP: f32 = 6.;
+    pub const GOTO_BLOCK_GAP: f32 = 8.;
+    pub const GOTO_LIST_FIELD_GAP: f32 = 10.;
+    pub const GOTO_HEADER_HEIGHT: f32 = 26.;
+    pub const GOTO_ROW_PITCH: f32 = 26.;
+    pub const GOTO_PREVIEW_BOTTOM_PAD: f32 = 6.67;
+    pub const GOTO_BOTTOM_PAD: f32 = 2.;
+    pub const GOTO_ICON_BUTTON: f32 = 24.;
+    /// The Tools list: 8 above its separator, 4 below it (batch 6).
+    pub const GOTO_SEPARATOR_ABOVE: f32 = 8.;
+    pub const GOTO_SEPARATOR_BELOW: f32 = 4.;
+    /// The Text Search tab (batch 7): the folder and mask fields 6 below the
+    /// ring, 28 tall, the mask 164 wide, 8 apart; a 28 px count row; the
+    /// Replace and Replace All buttons 8.67 apart, 11.33 above the bottom.
+    pub const SEARCH_MASK_WIDTH: f32 = 164.;
+    pub const SEARCH_COUNT_ROW: f32 = 28.;
+    pub const GOTO_BUTTONS_PAD: f32 = 11.33;
+    pub const GOTO_BUTTON_GAP: f32 = 8.67;
+    /// Estimates left in the Goto panel: the preview box's radius and its
+    /// breadcrumb footer, the Symbols in File tree's indent per level.
+    pub const GOTO_PREVIEW_RADIUS: f32 = 6.;
+    pub const GOTO_PREVIEW_FOOTER: f32 = 24.;
+    pub const GOTO_TREE_INDENT: f32 = 24.;
+    /// A key-cap hint (`shortcut.*`): 20 tall, 4 px padding, radius 3 (estimate).
+    pub const SHORTCUT_HEIGHT: f32 = 20.;
+    pub const SHORTCUT_PAD_X: f32 = 4.;
+    pub const SHORTCUT_RADIUS: f32 = 3.;
+    /// Context menus (batch 7): the popup's top-left corner at the pointer,
+    /// 6 px padding, 28 px rows with 8 px row padding, a separator block of
+    /// 12 (the 1 px line with 5.5 above and below), the shortcut in
+    /// `text.secondary` right-aligned; the width follows the longest row
+    /// (the tree's menu 230.67, the editor's 232, a tab's 170.67, the main
+    /// menu 139), with 24 between a label and its shortcut (estimate).
+    pub const MENU_ROW_HEIGHT: f32 = 28.;
+    pub const MENU_ROW_PAD_X: f32 = 8.;
+    pub const MENU_MIN_WIDTH: f32 = 140.;
+    pub const MENU_SHORTCUT_GAP: f32 = 24.;
+    pub const MENU_SEPARATOR_PAD: f32 = 5.5;
+    /// Confirm dialogs (batch 7, estimates): 420 wide, 16 px padding, 24 px
+    /// buttons 8 apart, the title 13 px semibold on a 20 line, 8 to the message.
+    pub const DIALOG_WIDTH: f32 = 420.;
+    pub const DIALOG_PAD: f32 = 16.;
+    pub const DIALOG_BUTTON_GAP: f32 = 8.;
+    pub const DIALOG_TITLE_LINE: f32 = 20.;
+    pub const DIALOG_TITLE_GAP: f32 = 8.;
+    pub const DIALOG_BUTTONS_GAP: f32 = 16.;
+    /// Toasts (batch 7, estimates): 360 wide in the window's bottom-right
+    /// corner, 12 px padding, 8 apart, 16 from the edges, shown 5 s.
+    pub const TOAST_WIDTH: f32 = 360.;
+    pub const TOAST_PAD: f32 = 12.;
+    pub const TOAST_GAP: f32 = 8.;
+    pub const TOAST_MARGIN: f32 = 16.;
+    pub const TOAST_RADIUS: f32 = 6.;
+    pub const TOAST_MS: u64 = 5000;
+    /// Notifications tool rows: a 16 px icon, 8 gap, title and message on 18 px
+    /// lines, 10 px padding (estimates).
+    pub const NOTIFICATION_PAD: f32 = 10.;
+    pub const NOTIFICATION_ICON_GAP: f32 = 8.;
+    pub const NOTIFICATION_LINE: f32 = 18.;
+    /// The Search tool (batch 7 and 8 do not cover it; estimates): a 28 px
+    /// field like the find bar's, 6 px gaps, 24 px result rows indented 16 per
+    /// level, the match line in the editor face.
+    pub const SEARCH_FIELD_HEIGHT: f32 = 28.;
+    pub const SEARCH_GAP: f32 = 6.;
+    pub const SEARCH_ROW_HEIGHT: f32 = 24.;
+    pub const SEARCH_INDENT: f32 = 16.;
+    /// The Files tree's keyboard-highlight rectangle (`files.keyboardNavigation`
+    /// highlight): 1 px of `tree.focusBorder` (estimate).
+    pub const TREE_HIGHLIGHT_BORDER: f32 = 1.;
 }
 
 macro_rules! scaled_metrics {
@@ -377,6 +470,63 @@ scaled_metrics!(
     tooltip_line = TOOLTIP_LINE,
     tooltip_radius = TOOLTIP_RADIUS,
     tooltip_max_width = TOOLTIP_MAX_WIDTH,
+    goto_top = GOTO_TOP,
+    goto_max_height = GOTO_MAX_HEIGHT,
+    goto_width = GOTO_WIDTH,
+    goto_field_height = GOTO_FIELD_HEIGHT,
+    goto_row_height = GOTO_ROW_HEIGHT,
+    goto_tab_height = GOTO_TAB_HEIGHT,
+    goto_tab_pad_x = GOTO_TAB_PAD_X,
+    goto_tab_gap = GOTO_TAB_GAP,
+    goto_pad = GOTO_PAD,
+    goto_tab_top = GOTO_TAB_TOP,
+    goto_tab_field_gap = GOTO_TAB_FIELD_GAP,
+    goto_chip_height = GOTO_CHIP_HEIGHT,
+    goto_chip_gap = GOTO_CHIP_GAP,
+    goto_chip_top_gap = GOTO_CHIP_TOP_GAP,
+    goto_block_gap = GOTO_BLOCK_GAP,
+    goto_list_field_gap = GOTO_LIST_FIELD_GAP,
+    goto_header_height = GOTO_HEADER_HEIGHT,
+    goto_row_pitch = GOTO_ROW_PITCH,
+    goto_preview_bottom_pad = GOTO_PREVIEW_BOTTOM_PAD,
+    goto_bottom_pad = GOTO_BOTTOM_PAD,
+    goto_icon_button = GOTO_ICON_BUTTON,
+    goto_separator_above = GOTO_SEPARATOR_ABOVE,
+    goto_separator_below = GOTO_SEPARATOR_BELOW,
+    search_mask_width = SEARCH_MASK_WIDTH,
+    search_count_row = SEARCH_COUNT_ROW,
+    goto_buttons_pad = GOTO_BUTTONS_PAD,
+    goto_button_gap = GOTO_BUTTON_GAP,
+    goto_preview_radius = GOTO_PREVIEW_RADIUS,
+    goto_preview_footer = GOTO_PREVIEW_FOOTER,
+    goto_tree_indent = GOTO_TREE_INDENT,
+    shortcut_height = SHORTCUT_HEIGHT,
+    shortcut_pad_x = SHORTCUT_PAD_X,
+    shortcut_radius = SHORTCUT_RADIUS,
+    menu_row_height = MENU_ROW_HEIGHT,
+    menu_row_pad_x = MENU_ROW_PAD_X,
+    menu_min_width = MENU_MIN_WIDTH,
+    menu_shortcut_gap = MENU_SHORTCUT_GAP,
+    menu_separator_pad = MENU_SEPARATOR_PAD,
+    dialog_width = DIALOG_WIDTH,
+    dialog_pad = DIALOG_PAD,
+    dialog_button_gap = DIALOG_BUTTON_GAP,
+    dialog_title_line = DIALOG_TITLE_LINE,
+    dialog_title_gap = DIALOG_TITLE_GAP,
+    dialog_buttons_gap = DIALOG_BUTTONS_GAP,
+    toast_width = TOAST_WIDTH,
+    toast_pad = TOAST_PAD,
+    toast_gap = TOAST_GAP,
+    toast_margin = TOAST_MARGIN,
+    toast_radius = TOAST_RADIUS,
+    notification_pad = NOTIFICATION_PAD,
+    notification_icon_gap = NOTIFICATION_ICON_GAP,
+    notification_line = NOTIFICATION_LINE,
+    search_field_height = SEARCH_FIELD_HEIGHT,
+    search_gap = SEARCH_GAP,
+    search_row_height = SEARCH_ROW_HEIGHT,
+    search_indent = SEARCH_INDENT,
+    tree_highlight_border = TREE_HIGHLIGHT_BORDER,
 );
 
 impl Global for Metrics {}
@@ -428,6 +578,8 @@ pub struct Theme {
     pub text_positive: Hsla,
     pub text_dangerous: Hsla,
     pub text_bright: Hsla,
+    /// `button.warning.background.default`: the warning hue (no `text.warning` key exists).
+    pub warning: Hsla,
     // background.*, island.background, border, separator.default
     pub background_primary: Hsla,
     pub background_secondary: Hsla,
@@ -545,8 +697,35 @@ pub struct Theme {
     pub input_selection: Hsla,
     // search.*
     pub search_counter_bg: Hsla,
+    /// `search.match.text`: the text of a match in a Search tool result row
+    /// (`search_match_bg` above is its background).
+    pub search_match_text: Hsla,
     pub smart_mode_enabled: Hsla,
     pub link: Hsla,
+    // shortcut.*: the key-cap hints in the Goto panel and menus
+    pub shortcut_text: Hsla,
+    pub shortcut_bg: Hsla,
+    // notification.*, toast.*
+    pub notification_bg: Hsla,
+    pub notification_bg_unread: Hsla,
+    pub notification_text: Hsla,
+    pub notification_text_secondary: Hsla,
+    pub notification_separator: Hsla,
+    pub toast_bg: Hsla,
+    pub toast_border: Hsla,
+    pub toast_text: Hsla,
+    // dragAndDrop.*: the target a dragged file is over
+    pub drag_bg: Hsla,
+    pub drag_border: Hsla,
+    pub drag_border_highlight: Hsla,
+    // button.dangerous.*
+    pub button_dangerous_bg: Hsla,
+    pub button_dangerous_bg_hovered: Hsla,
+    pub button_dangerous_text: Hsla,
+    // popup.goto.background, popup.footer.*
+    pub popup_goto_bg: Hsla,
+    pub popup_footer_bg: Hsla,
+    pub popup_footer_text: Hsla,
 
     syntax: HashMap<String, Syntax>,
 }
@@ -669,6 +848,10 @@ impl Theme {
             text_positive: c("text.positive", Color::rgb(0x40, 0x9D, 0x78)),
             text_dangerous: c("text.dangerous", Color::rgb(0xEC, 0x5D, 0x6F)),
             text_bright: c("text.bright", Color::rgb(0xFF, 0xFF, 0xFF)),
+            warning: c(
+                "button.warning.background.default",
+                Color::rgb(0xD9, 0x8B, 0x2D),
+            ),
             background_primary: to_hsla(bg_primary),
             background_secondary: to_hsla(bg_secondary),
             island_background: c("island.background", bg_secondary),
@@ -858,7 +1041,48 @@ impl Theme {
             ),
             search_counter_bg: c("search.counter.background", text_primary.with_alpha(0x2C)),
             smart_mode_enabled: c("smartMode.background.enabled", Color::rgb(0x2A, 0x7D, 0xEB)),
+            search_match_text: c("search.match.text", text_primary),
             link: first(&["link.text.default"], Color::rgb(0x4B, 0x8D, 0xEC)),
+            shortcut_text: c("shortcut.text", text_primary),
+            shortcut_bg: c("shortcut.background", text_primary.with_alpha(0x21)),
+            notification_bg: c("notification.background.default", bg_secondary),
+            notification_bg_unread: c(
+                "notification.background.unread",
+                text_primary.with_alpha(0x0B),
+            ),
+            notification_text: c("notification.text.primary", text_primary),
+            notification_text_secondary: c(
+                "notification.text.secondary",
+                text_primary.with_alpha(0x85),
+            ),
+            notification_separator: c("notification.separator", Color::rgb(0x3E, 0x41, 0x47)),
+            toast_bg: c("toast.background", Color::rgb(0x32, 0x34, 0x38)),
+            toast_border: c("toast.border", transparent),
+            toast_text: c("toast.text", text_primary),
+            drag_bg: c(
+                "dragAndDrop.background",
+                Color::rgb(0x08, 0x70, 0xE4).with_alpha(0x26),
+            ),
+            drag_border: c("dragAndDrop.border.default", Color::rgb(0x2A, 0x7D, 0xEB)),
+            drag_border_highlight: c("dragAndDrop.border.highlight", Color::rgb(0x2A, 0x7D, 0xEB)),
+            button_dangerous_bg: c(
+                "button.dangerous.background.default",
+                Color::rgb(0xC9, 0x4F, 0x4F),
+            ),
+            button_dangerous_bg_hovered: c(
+                "button.dangerous.background.hovered",
+                Color::rgb(0xB3, 0x45, 0x45),
+            ),
+            button_dangerous_text: c(
+                "button.dangerous.text.default",
+                Color::rgb(0xFF, 0xFF, 0xFF),
+            ),
+            popup_goto_bg: first(&["popup.goto.background", "popup.background"], bg_secondary),
+            popup_footer_bg: first(
+                &["popup.footer.background", "popup.background"],
+                bg_secondary,
+            ),
+            popup_footer_text: c("popup.footer.text", text_primary.with_alpha(0x85)),
             syntax,
         }
         .with_transparent_fallbacks(transparent)

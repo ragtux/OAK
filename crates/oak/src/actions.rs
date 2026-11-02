@@ -52,6 +52,34 @@ actions!(
         DeleteFile,
         ChangeLineEndings,
         PasteFromHistory,
+        // M3: the Goto panel, the Search tool, the Files tool, popups, windows
+        GotoEverything,
+        GotoFile,
+        GotoSymbol,
+        GotoAction,
+        GotoTool,
+        GotoRecentFile,
+        ShowFileSymbols,
+        ToggleGotoPreview,
+        FindInPath,
+        ReplaceInPath,
+        SearchJumpToTool,
+        FilesJumpToTool,
+        NewFolder,
+        ToggleHiddenFiles,
+        OpenInAssociatedApplication,
+        ShowInFileManager,
+        CopyPath,
+        ShowContextMenu,
+        ShowMainMenu,
+        OpenSettings,
+        ShowRecentWorkspaces,
+        ToggleNotifications,
+        ClearNotifications,
+        MakeSnapshot,
+        CloseAllTabs,
+        CopyRelativePath,
+        About,
     ]
 );
 
@@ -120,7 +148,19 @@ actions!(
     ]
 );
 
-actions!(files, [TreeUp, TreeDown, TreeLeft, TreeRight, TreeOpen]);
+actions!(
+    files,
+    [
+        TreeUp,
+        TreeDown,
+        TreeLeft,
+        TreeRight,
+        TreeOpen,
+        TreeSelect,
+        TreeExtendUp,
+        TreeExtendDown
+    ]
+);
 
 actions!(
     popup,
@@ -129,6 +169,12 @@ actions!(
         PopupDown,
         PopupConfirm,
         PopupCancel,
-        PopupBackspace
+        PopupBackspace,
+        PopupLeft,
+        PopupRight,
+        PopupTab,
+        PopupBackTab,
+        PopupPageUp,
+        PopupPageDown
     ]
 );

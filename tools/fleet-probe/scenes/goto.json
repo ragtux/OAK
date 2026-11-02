@@ -1,0 +1,53 @@
+{
+  "name": "goto",
+  "about": "Batch 6: the Goto panel in each of its lists, empty and with a query: Everything (Ctrl+K), Files (Ctrl+P), the file symbols of main.rs (Ctrl+Shift+O), Actions (Ctrl+Shift+K) with 'close' typed, Tools (Ctrl+T), and Everything again with the preview toggled off (Alt+2). Fleet opens main.rs through Goto first; Oak gets it from the command line. The scans read the popup's edges along the window's centre column and along a row through the field; the sample checks the popup's fill above the field.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["key", "ctrl+k"], ["wait", 1200], ["shot", "everything"],
+      ["type", "rec"], ["wait", 1500], ["shot", "everything-typed"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+p"], ["wait", 1000], ["shot", "files"],
+      ["type", "config"], ["wait", 1500], ["shot", "files-typed"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+shift+o"], ["wait", 1200], ["shot", "file-symbols"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+shift+k"], ["wait", 1000], ["type", "close"], ["wait", 1500], ["shot", "actions"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+t"], ["wait", 1000], ["shot", "tools"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 1000], ["key", "alt+2"], ["wait", 800], ["shot", "preview-hidden"],
+      ["key", "alt+2"], ["wait", 500], ["key", "escape"], ["wait", 500]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["key", "ctrl+k"], ["wait", 800], ["shot", "everything"],
+      ["type", "rec"], ["wait", 800], ["shot", "everything-typed"],
+      ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+p"], ["wait", 800], ["shot", "files"],
+      ["type", "config"], ["wait", 800], ["shot", "files-typed"],
+      ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+shift+o"], ["wait", 800], ["shot", "file-symbols"],
+      ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+shift+k"], ["wait", 800], ["type", "close"], ["wait", 800], ["shot", "actions"],
+      ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+t"], ["wait", 800], ["shot", "tools"],
+      ["key", "escape"], ["wait", 400],
+      ["key", "ctrl+k"], ["wait", 800], ["key", "alt+2"], ["wait", 600], ["shot", "preview-hidden"],
+      ["key", "alt+2"], ["wait", 400], ["key", "escape"], ["wait", 400]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "goto centre column (x=640)", "axis": "y", "at": 640, "from": 62, "to": 760, "edges": ["popup top", "ring top", "field top", "field bottom", "ring bottom", "first row top", "first row bottom", "preview top"]},
+    {"name": "goto field row (y=122)", "axis": "x", "at": 122, "from": 280, "to": 320, "edges": ["popup left", "ring left", "field left"]}
+  ],
+  "samples": [
+    {"name": "goto popup fill above the field", "at": [640, 68], "key": "popup.background"},
+    {"name": "selected row", "at": [640, 214], "key": "listItem.background.focused"}
+  ]
+}

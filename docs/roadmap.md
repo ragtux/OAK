@@ -23,12 +23,12 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-02, after M2) |
+| Table | Count | Oak covers (2026-11-02, after the M3 build) |
 | --- | --- | --- |
-| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 101 |
+| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 114 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 47 |
-| Theme `colors` keys | 684 | 97 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 58 |
+| Theme `colors` keys | 684 | 118 |
 | Theme `textAttributes` keys | 157 | 32 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
@@ -187,9 +187,70 @@ it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
 Theme groups: `editor` (43), `highlight`, `inputField`, `toggleButton`,
 `ghostButton`, most `textAttributes`.
 
-### M3 Workbench tools (L)
+### M3 Workbench tools (built 2026-11-02; batches 6 and 7 measured, batch 8 to run)
 
-The tools Fleet has without a backend, each in Fleet's island.
+The tools Fleet has without a backend, each in Fleet's island. Built in one
+pass on 2026-11-02 from what Fleet's own files say (its local storage holds
+the Goto panel's view state and the Search tool's query model,
+`docs/fleet-probe.md`, sixth pass) and from the popups batch 5 caught, then
+rebuilt the same day to what the `goto` and `popups` scenes showed on Fleet:
+the Goto popup is 680 wide with four tab chips (Goto, Actions, Tools, Text
+Search), filter buttons under the field, 26 px rows and the preview under
+the list; `find-in-path` opens its Text Search tab; menus have 28 px rows
+and submenus. The dialogs, toasts and the panel's Search tool are still
+estimates (Fleet's help site was retired in December 2025, so its pages are
+no longer a source). Left for later: the Settings tool
+(batch 8 has to read the 430 defaults off Fleet's pages first; `open-settings`
+opens the settings file and says so), the snapshots tool (snapshots are
+written by `local-history/make-snapshot`, not yet listed), the `showShortcuts`
+overlay and `inputSequenceTimeoutMilliseconds` (gpui owns chord timing),
+`restoreWorkspacesOnStartup` and the empty state, a notification's actions
+and banners (`banner.*`), the Search tool's path scope (Fleet's query has a
+`path`; Oak searches the whole workspace), and Goto's typed mode prefixes,
+which no source shows.
+
+- Done: the Goto panel (`crates/oak/src/goto.rs`): `goto/everything`,
+  `goto/file`, `goto/symbol` and `show-file-symbols` (tree-sitter symbols,
+  `oak-syntax`'s `symbols` module), `goto/action` (every action id Oak binds,
+  with its chord), `goto/tool`, `goto/recent-file` (the recent files lead the
+  empty list, as Fleet's `RecentNavigationEntity` rows do),
+  `show-recent-workspaces`, `toggle-goto-preview` (a read-only editor under
+  the list, shown by default as Fleet stores it), `goto_panel.showShortcuts`,
+  `ff.previewAndPrioritiseFileSymbolsInGotoEverywhere`; Shift+Enter opens in
+  a split, Tab switches lists. The matcher and the file index are
+  `oak-search` (`fuzzy`, `files`), the index walked with the `ignore` crate.
+- Done: `find-in-path` and `replace-in-path` as the Goto popup's Text
+  Search tab (Fleet's own place for them): the match-case, words and regex
+  toggles, the folder and file-mask fields, Fleet's limit of 100, one row
+  per match with the matches in `search.match.*`, open documents searched
+  with their unsaved text, Replace and Replace All through the documents
+  (one undo step each) and on disk for the rest,
+  `ff.searchInBigUnindexedFiles`; the Search tool in the panel
+  (`crates/oak/src/search_tool.rs`, `search/jump-to-tool`) shows the same
+  results as a tree. The engine is `oak-search`'s `grep` module.
+- Done: the Files tool: `files/new-folder`, multi-select (Ctrl and Shift),
+  `files/delete` on every selected row, drag and drop onto a folder
+  (`dragAndDrop.*`), `toggle-hidden-files`, `files.keyboardNavigation`
+  (highlight mode with its cursor rectangle), `open-in-associated-application`,
+  `files/show-in-file-manager`, `copy-path`, the right-click menu and
+  `show-context-menu`.
+- Done: popups and chrome (`menu.rs`, `dialog.rs`, `notifications.rs`):
+  context menus for the tree, the tabs and the editor with Fleet's rows and
+  submenus (`Open In ›`, `Go To ›`), the main menu with Fleet's nine
+  submenus (`popup.*`, `listItem.*`), Fleet's confirm dialog for
+  deletes, big files, unsaved changes and `warn.before.quitting`
+  (`button.primary|secondary|dangerous.*`), toasts and the Notifications tool
+  (`toast.*`, `notification.*`) fed by what used to go to stderr, the
+  unread dot on the toolbar's bell.
+- Done: windows: `show-recent-workspaces` opens another window on a root
+  from `layout.json`; the toolbar's buttons dispatch their actions.
+- Done: keymap presets: the `keymap` setting names a preset file copied to
+  `~/.config/oak/keymaps/<name>.json`, merged over Fleet's defaults.
+- Done: `local-history/make-snapshot` writes a copy under Oak's
+  `local-history/` folder.
+- Probes: batches 6 and 7 as the `goto` and `popups` scenes, run on both
+  editors (the `compare.py` pass is still to be run on the pairs); batch 8
+  not started.
 
 - Goto panel: `goto/everything`, `goto/file`, `goto/symbol` (file symbols
   via tree-sitter, `show-file-symbols`), `goto/action`, `goto/tool`, recent

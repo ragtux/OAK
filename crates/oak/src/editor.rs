@@ -43,6 +43,8 @@ pub enum EditorEvent {
     Changed,
     Saved,
     Copied(String),
+    /// A right click at this window position: the workspace opens the editor menu.
+    ContextMenu(Point<Pixels>),
 }
 
 /// The editor's sizes at the current zoom and settings: `editor.fontSize`,
@@ -399,6 +401,8 @@ pub struct EditorView {
     sticky_rows: Vec<usize>,
     /// One space's measured advance (the wrap width and the guides use it).
     space_px: Pixels,
+    /// A preview (the Goto panel's): no edit changes the buffer.
+    pub read_only: bool,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -479,6 +483,7 @@ impl EditorView {
             blink_task: None,
             sticky_rows: Vec::new(),
             space_px: px(0.),
+            read_only: false,
         }
     }
 
@@ -581,6 +586,9 @@ impl EditorView {
     /// Runs a command on this view's cursor and the shared buffer; the
     /// document tells every view, this one included, to repaint.
     fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Cursor, &mut Buffer)) {
+        if self.read_only {
+            return;
+        }
         let cursor = &mut self.cursor;
         self.document.update(cx, |doc, cx| {
             cursor.sync(&doc.buffer);
@@ -1406,6 +1414,31 @@ impl EditorView {
             self.search = search;
             cx.notify();
         }
+    }
+
+    /// `select_range` for a byte range (a symbol's name from the syntax tree).
+    pub fn select_bytes(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        let (start, end) = {
+            let b = &self.document.read(cx).buffer;
+            (b.byte_to_char(range.start), b.byte_to_char(range.end))
+        };
+        self.select_range(start..end, cx);
+    }
+
+    /// A right click: the caret moves there unless the click lands in the
+    /// selection (estimate: what most editors do), then the menu opens.
+    fn right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_handle.focus(window, cx);
+        if let Hit::Text(offset) = self.hit(event.position, window, cx) {
+            let inside = self.with_buffer(cx, |c, _| {
+                c.selections().iter().any(|s| s.range().contains(&offset))
+            });
+            if !inside {
+                self.go(cx, |c, b| c.set_cursor(b, offset));
+                cx.notify();
+            }
+        }
+        cx.emit(EditorEvent::ContextMenu(event.position));
     }
 
     /// Selects `range` (the caret at its end), unfolding and scrolling to it.
@@ -3039,6 +3072,11 @@ impl Element for EditorElement {
                 && event.button == MouseButton::Left
             {
                 editor.update(cx, |editor, cx| editor.mouse_down(event, window, cx));
+            } else if phase == DispatchPhase::Bubble
+                && hitbox.is_hovered(window)
+                && event.button == MouseButton::Right
+            {
+                editor.update(cx, |editor, cx| editor.right_click(event, window, cx));
             }
         });
         let editor = self.editor.clone();

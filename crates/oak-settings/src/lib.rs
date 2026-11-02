@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 mod editorconfig;
+mod workbench;
 pub use editorconfig::{EditorConfig, EndOfLine};
+pub use workbench::KeyboardNavigation;
 
 /// Where the two files live on this machine.
 #[derive(Clone, Debug, PartialEq, Eq)]

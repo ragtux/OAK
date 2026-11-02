@@ -25,6 +25,8 @@ wrapper and H). One script, one state file, so each step is a command:
     winprobe.py close                              WM_CLOSE, then wait for exit
     winprobe.py run <scene.json> <editor> <workspace> <out dir>
                                                    launch, run the scene's steps for that editor, close
+    winprobe.py attach <scene.json> <editor> <pid> <out dir>
+                                                   the same against a window already open (a running Fleet)
 
 The launched window is remembered in %LOCALAPPDATA%/oak-probe/current.json (pid, hwnd, scale),
 so the commands above can run one at a time from a shell. Sizes and coordinates are logical
@@ -533,6 +535,49 @@ def run_scene(scene_path, editor, workspace, out_dir):
             restore_fleet_settings()
 
 
+def attach_scene(scene_path, editor, pid, out_dir):
+    """`run_scene` against a window that is already open: the one the process `pid` (or a
+    process below it) owns. Fleet is a single instance, so `launch` cannot start a second one
+    while the user has it open; this places that window at the scene's size, applies the
+    scene's `fleet_settings` (Fleet reloads its settings.json live), plays the steps and leaves
+    the window open."""
+    with open(scene_path) as fh:
+        scene = json.load(fh)
+    name = os.path.splitext(os.path.basename(scene_path))[0]
+    size = tuple(scene.get("size", [1280, 800]))
+    pos = tuple(scene.get("pos", [100, 100]))
+    pids = descendants(pid)
+    best = None
+    for w in top_windows():
+        if w["pid"] not in pids or w["tool"]:
+            continue
+        l, t, r, b = w["rect"]
+        area = (r - l) * (b - t)
+        if best is None or area > best[0]:
+            best = (area, w)
+    if best is None:
+        raise SystemExit(f"no window for pid {pid}")
+    w = best[1]
+    s = {"editor": editor, "pid": w["pid"], "launcher_pid": pid, "hwnd": w["hwnd"],
+         "class": w["class"], "title": w["title"], "scale": scale_of(w["hwnd"])}
+    if editor == "fleet" and "fleet_settings" in scene:
+        with_fleet_settings(scene["fleet_settings"])
+    try:
+        focus(w["hwnd"])
+        time.sleep(0.5)
+        s["client"] = place(w["hwnd"], size, pos)
+        save_state(s)
+        mouse_move_abs(*to_device(s, size[0] / 2, size[1] / 2))
+        time.sleep(1.5)
+        focus(w["hwnd"])
+        steps = scene.get("steps", {}).get(editor, scene.get("steps", {}).get("both", []))
+        for step in steps:
+            do(s, step, out_dir, f"{name}-{editor}")
+    finally:
+        if editor == "fleet" and "fleet_settings" in scene:
+            restore_fleet_settings()
+
+
 INPUT_STEPS = ("key", "type", "move", "click", "drag", "hover", "mousedown", "mouseup")
 
 
@@ -649,6 +694,9 @@ def main(argv):
         return
     if cmd == "run":
         run_scene(args[0], args[1], args[2], args[3] if len(args) > 3 else "out")
+        return
+    if cmd == "attach":
+        attach_scene(args[0], args[1], int(args[2]), args[3] if len(args) > 3 else "out")
         return
     s = load_state()
     if cmd == "place":

@@ -763,6 +763,40 @@
     {
       "key": "shift-numpadenter",
       "action": "wrap-line"
+    },
+    {
+      "mac": "cmd-shift-p",
+      "key": "ctrl-shift-p",
+      "action": "goto/symbol"
+    },
+    {
+      "mac": "cmd-t",
+      "key": "ctrl-t",
+      "action": "goto/tool"
+    },
+    {
+      "mac": "cmd-shift-o",
+      "key": "ctrl-shift-o",
+      "action": "show-file-symbols"
+    },
+    {
+      "mac": "cmd-digit2",
+      "key": "alt-digit2",
+      "action": "toggle-goto-preview"
+    },
+    {
+      "mac": "alt-cmd-shift-f",
+      "key": "ctrl-shift-h",
+      "action": "replace-in-path"
+    },
+    {
+      "mac": "ctrl-w",
+      "key": "ctrl-alt-w",
+      "action": "show-recent-workspaces"
+    },
+    {
+      "mac": "cmd-shift-period",
+      "action": "toggle-hidden-files"
     }
   ]
 }

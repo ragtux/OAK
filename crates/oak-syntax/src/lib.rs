@@ -11,7 +11,9 @@ use std::path::Path;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
 
 pub mod structure;
+pub mod symbols;
 pub use structure::{enclosing_heads, Fold, SyntaxTree};
+pub use symbols::{Symbol, SymbolKind};
 
 /// The languages Oak ships grammars for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
