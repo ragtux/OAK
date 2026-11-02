@@ -1,0 +1,23 @@
+{
+  "name": "splits",
+  "about": "Oak only: one document in two splits. Typing in the right split shows in the left at once with both tabs modified; undo in the left split reverts the right; a caret in the other split keeps its place across the edit. Fleet's own behaviour is the reference by description (one buffer per file), not by shot.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 3000,
+  "steps": {
+    "oak": [
+      ["wait", 500],
+      ["move", 900, 400], ["click"], ["wait", 200],
+      ["key", "ctrl+backslash"], ["wait", 800],
+      ["type", "shared "], ["wait", 500], ["shot", "typed-right"],
+      ["move", 600, 400], ["click"], ["wait", 300],
+      ["key", "ctrl+z"], ["wait", 500], ["shot", "undone-left"],
+      ["type", "L"], ["wait", 500], ["shot", "typed-left"],
+      ["key", "ctrl+s"], ["wait", 500], ["shot", "saved"],
+      ["key", "ctrl+z"], ["key", "ctrl+s"], ["wait", 300]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [],
+  "samples": []
+}

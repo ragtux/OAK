@@ -6,6 +6,7 @@
 
 use crate::actions::*;
 use crate::assets::{file_icon, icon};
+use crate::document::Document;
 use crate::editor::{EditorEvent, EditorView};
 use crate::file_tree::{FileTree, FileTreeEvent};
 use crate::layout::{Layout, PanelLayout};
@@ -342,6 +343,8 @@ pub struct Workspace {
     panels: [Panel; 3],
     /// Paths of closed tabs, most recent last, for `tabs/reopen-closed-tab`.
     closed: Vec<PathBuf>,
+    /// One document per open file, shared by every tab and split showing it.
+    documents: Vec<Entity<Document>>,
     chooser: Option<Chooser>,
     /// The tab being dragged, whose slot stays empty until the drop.
     dragging_tab: Option<(usize, usize)>,
@@ -415,6 +418,7 @@ impl Workspace {
             active_pane: 0,
             panels,
             closed: Vec::new(),
+            documents: Vec::new(),
             chooser: None,
             dragging_tab: None,
             toggle_hints: toggle_hints.map(|h| h.map(Into::into)),
@@ -463,18 +467,55 @@ impl Workspace {
         self.panes.iter().enumerate().find_map(|(p, pane)| {
             pane.tabs
                 .iter()
-                .position(|t| t.editor.read(cx).path.as_deref() == Some(path))
+                .position(|t| t.editor.read(cx).path(cx).as_deref() == Some(path))
                 .map(|ix| (p, ix))
         })
     }
 
+    /// The document for `path`, shared with every tab already showing it,
+    /// else read from disk. `None` when the file cannot be read as text.
+    fn document_for(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<Entity<Document>> {
+        if let Some(doc) = self
+            .documents
+            .iter()
+            .find(|d| d.read(cx).path.as_deref() == Some(path))
+        {
+            return Some(doc.clone());
+        }
+        let text = match std::fs::read(path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(_) => {
+                    eprintln!("oak: {} is not UTF-8 text; not opened", path.display());
+                    return None;
+                }
+            },
+            Err(e) => {
+                eprintln!("oak: cannot read {}: {e}", path.display());
+                return None;
+            }
+        };
+        let doc = cx.new(|_| Document::new(Some(path.to_path_buf()), &text));
+        self.documents.push(doc.clone());
+        Some(doc)
+    }
+
+    /// Drops the documents no tab shows any more.
+    fn prune_documents(&mut self, cx: &App) {
+        let shown: Vec<Entity<Document>> = self
+            .panes
+            .iter()
+            .flat_map(|p| p.tabs.iter().map(|t| t.editor.read(cx).document.clone()))
+            .collect();
+        self.documents.retain(|d| shown.contains(d));
+    }
+
     fn new_editor(
         &mut self,
-        path: Option<PathBuf>,
-        text: &str,
+        document: Entity<Document>,
         cx: &mut Context<Self>,
     ) -> Entity<EditorView> {
-        let editor = cx.new(|cx| EditorView::new(path, text, cx));
+        let editor = cx.new(|cx| EditorView::new(document, cx));
         cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             if let EditorEvent::Changed = event {
                 // An edit promotes a preview tab to a real one.
@@ -506,26 +547,16 @@ impl Workspace {
             self.after_activate(cx);
             return;
         }
-        let text = match std::fs::read(&path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(text) => text,
-                Err(_) => {
-                    eprintln!("oak: {} is not UTF-8 text; not opened", path.display());
-                    return;
-                }
-            },
-            Err(e) => {
-                eprintln!("oak: cannot read {}: {e}", path.display());
-                return;
-            }
+        let Some(document) = self.document_for(&path, cx) else {
+            return;
         };
-        let editor = self.new_editor(Some(path), &text, cx);
+        let editor = self.new_editor(document, cx);
         let p = self.active_pane;
         let pane = &mut self.panes[p];
         let existing_preview = pane
             .tabs
             .iter()
-            .position(|t| t.preview && !t.editor.read(cx).is_dirty());
+            .position(|t| t.preview && !t.editor.read(cx).is_dirty(cx));
         match (preview, existing_preview) {
             (true, Some(ix)) => {
                 pane.tabs[ix].editor = editor;
@@ -538,6 +569,7 @@ impl Workspace {
         }
         let ix = pane.active.unwrap_or(0);
         pane.scroll.scroll_to_item(ix);
+        self.prune_documents(cx);
         self.after_activate(cx);
     }
 
@@ -559,7 +591,7 @@ impl Workspace {
 
     /// After a tab became active: the tree follows (`files.selectOpenedFile`).
     fn after_activate(&mut self, cx: &mut Context<Self>) {
-        if let Some(path) = self.active_editor().and_then(|e| e.read(cx).path.clone()) {
+        if let Some(path) = self.active_editor().and_then(|e| e.read(cx).path(cx)) {
             self.file_tree.update(cx, |tree, cx| {
                 if tree.select_path(&path) {
                     cx.notify();
@@ -618,9 +650,11 @@ impl Workspace {
             return;
         }
         let tab = self.panes[p].tabs.remove(ix);
-        if let Some(path) = tab.editor.read(cx).path.clone() {
+        if let Some(path) = tab.editor.read(cx).path(cx) {
             self.closed.push(path);
         }
+        drop(tab);
+        self.prune_documents(cx);
         let pane = &mut self.panes[p];
         pane.active = if pane.tabs.is_empty() {
             None
@@ -773,7 +807,7 @@ impl Workspace {
     ) {
         let p = self.active_pane;
         for ix in (0..self.panes[p].tabs.len()).rev() {
-            if !self.panes[p].tabs[ix].editor.read(cx).is_dirty() {
+            if !self.panes[p].tabs[ix].editor.read(cx).is_dirty(cx) {
                 self.close_tab_at(p, ix, window, cx);
             }
         }
@@ -862,7 +896,9 @@ impl Workspace {
         self.focus_editor_now(window, cx);
     }
     fn new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = self.new_editor(None, "", cx);
+        let document = cx.new(|_| Document::new(None, ""));
+        self.documents.push(document.clone());
+        let editor = self.new_editor(document, cx);
         let p = self.active_pane;
         let pane = &mut self.panes[p];
         pane.tabs.push(Tab {
@@ -878,22 +914,16 @@ impl Workspace {
     }
 
     /// `split-right`: a new split to the right of the active one, holding a
-    /// copy of the active tab (its own editor on the same file until buffers
-    /// are shared, M2), which takes the focus.
+    /// second view on the active tab's document (same buffer, its own caret),
+    /// which takes the focus.
     fn split_right(&mut self, _: &SplitRight, window: &mut Window, cx: &mut Context<Self>) {
         let p = self.active_pane;
         let source = self.panes[p]
             .active_tab()
-            .map(|t| t.editor.read(cx).path.clone());
+            .map(|t| t.editor.read(cx).document.clone());
         let mut pane = Pane::new(cx);
-        if let Some(path) = source {
-            let editor = match &path {
-                Some(path) => match std::fs::read_to_string(path) {
-                    Ok(text) => self.new_editor(Some(path.clone()), &text, cx),
-                    Err(_) => self.new_editor(None, "", cx),
-                },
-                None => self.new_editor(None, "", cx),
-            };
+        if let Some(document) = source {
+            let editor = self.new_editor(document, cx);
             pane.tabs.push(Tab {
                 editor,
                 preview: false,
@@ -1229,14 +1259,14 @@ impl Workspace {
         let e = tab.editor.read(cx);
         let selected = pane.active == Some(ix);
         let focused = selected && e.focus_handle(cx).is_focused(window);
-        let title: SharedString = e.title().into();
-        let dirty = e.is_dirty();
+        let title: SharedString = e.title(cx).into();
+        let dirty = e.is_dirty(cx);
         let preview = tab.preview;
-        let icon_path = file_icon(&e.title());
+        let icon_path = file_icon(&e.title(cx));
         let path_text: SharedString = e
-            .path
-            .as_ref()
-            .map(|p| display_path(p))
+            .path(cx)
+            .as_deref()
+            .map(display_path)
             .unwrap_or_else(|| "Untitled".into())
             .into();
         let close_left = Self::settings(cx).tab_close_button_on_the_left();
@@ -1940,32 +1970,35 @@ impl Workspace {
         &self,
         theme: &Theme,
         m: &Metrics,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut crumbs: Vec<SharedString> = Vec::new();
         let mut right: Vec<SharedString> = Vec::new();
-        if let Some(editor) = self.active_editor() {
-            let e = editor.read(cx);
-            if let Some(path) = &e.path {
+        if let Some(editor) = self.active_editor().cloned() {
+            let (path, title, crlf, caret, language) = editor.update(cx, |e, cx| {
+                (
+                    e.path(cx),
+                    e.title(cx),
+                    e.uses_crlf(cx),
+                    e.cursor_position(cx),
+                    e.language(cx),
+                )
+            });
+            if let Some(path) = &path {
                 let rel = path.strip_prefix(&self.root).unwrap_or(path.as_path());
                 crumbs.extend(
                     rel.components()
                         .map(|c| c.as_os_str().to_string_lossy().to_string().into()),
                 );
             } else {
-                crumbs.push(e.title().into());
+                crumbs.push(title.into());
             }
             // Fleet's order: line ending, caret, encoding, language (Windows probe).
-            right.push(if e.text.buffer.uses_crlf() {
-                "CRLF".into()
-            } else {
-                "LF".into()
-            });
-            let p = e.cursor_position();
-            right.push(format!("{}:{}", p.row + 1, p.column + 1).into());
+            right.push(if crlf { "CRLF".into() } else { "LF".into() });
+            right.push(format!("{}:{}", caret.row + 1, caret.column + 1).into());
             right.push("UTF-8".into());
             right.push(
-                e.language
+                language
                     .map(|l| l.display_name())
                     .unwrap_or("Plain text")
                     .into(),
@@ -2026,7 +2059,7 @@ impl Render for Workspace {
         }
         let root_name = self.file_tree.read(cx).root_name();
         let title = match self.active_editor() {
-            Some(e) => format!("{} — {}", e.read(cx).title(), root_name),
+            Some(e) => format!("{} — {}", e.read(cx).title(cx), root_name),
             None => root_name.clone(),
         };
         if title != self.last_title {

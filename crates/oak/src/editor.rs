@@ -1,13 +1,16 @@
-//! The code editor: an [`EditorView`] entity owning the text model and the
-//! cursor, and the [`EditorElement`] that lays its visible lines out and
-//! paints them, Fleet-style: a gutter of right-aligned line numbers, the
-//! current line washed across the whole width, the caret two pixels wide,
-//! a thin scrollbar on the right.
+//! The code editor: an [`EditorView`] entity holding a cursor and a scroll
+//! position on a shared [`Document`], and the [`EditorElement`] that lays its
+//! visible lines out and paints them, Fleet-style: a gutter of right-aligned
+//! line numbers, the current line washed across the whole width, the caret
+//! two pixels wide, a thin scrollbar on the right. Two views on one document
+//! (a file in two splits) edit the same buffer; each keeps its own cursor,
+//! which follows the other's edits.
 //!
 //! Text is painted a line at a time through gpui's shaper. Only the rows
 //! in view are shaped each frame, so the cost is the viewport, not the file.
 
 use crate::actions::*;
+use crate::document::{Document, DocumentEvent};
 use crate::settings::AppSettings;
 use crate::theme::{metrics::EDITOR_OVERSCROLL_LINES, Metrics, Theme};
 use gpui::{
@@ -18,14 +21,15 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, Window,
 };
-use oak_syntax::{Highlighter, Language, Span};
-use oak_text::{Point as TextPoint, TextEditor};
+use oak_syntax::Language;
+use oak_text::{Buffer, Cursor, Point as TextPoint, Selection};
 use std::ops::Range;
 use std::path::PathBuf;
 
+/// What the view tells the workspace: the document changed under it (so a
+/// preview tab is promoted) or was saved.
 #[derive(Clone, Debug)]
 pub enum EditorEvent {
-    /// The text or the dirty state changed; tabs and the title bar re-read it.
     Changed,
     Saved,
 }
@@ -60,12 +64,9 @@ impl TextMetrics {
 }
 
 pub struct EditorView {
-    pub path: Option<PathBuf>,
-    pub text: TextEditor,
-    pub language: Option<Language>,
-    highlighter: Highlighter,
-    spans: Vec<Span>,
-    spans_version: Option<u64>,
+    pub document: Entity<Document>,
+    /// This view's caret and selection on the document.
+    pub cursor: Cursor,
     /// Scroll offsets in pixels.
     scroll_y: Pixels,
     scroll_x: Pixels,
@@ -119,15 +120,21 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 impl EditorView {
-    pub fn new(path: Option<PathBuf>, text: &str, cx: &mut Context<Self>) -> Self {
-        let language = path.as_deref().and_then(Language::from_path);
+    pub fn new(document: Entity<Document>, cx: &mut Context<Self>) -> Self {
+        let cursor = Cursor::new(&document.read(cx).buffer);
+        // Any view's edit repaints this one, and tells the workspace.
+        cx.subscribe(&document, |this, _doc, event: &DocumentEvent, cx| {
+            cx.emit(match event {
+                DocumentEvent::Changed => EditorEvent::Changed,
+                DocumentEvent::Saved => EditorEvent::Saved,
+            });
+            let _ = this;
+            cx.notify();
+        })
+        .detach();
         EditorView {
-            path,
-            text: TextEditor::new(text),
-            language,
-            highlighter: Highlighter::new(),
-            spans: Vec::new(),
-            spans_version: None,
+            document,
+            cursor,
             scroll_y: px(0.),
             scroll_x: px(0.),
             last_bounds: Bounds::default(),
@@ -138,45 +145,58 @@ impl EditorView {
         }
     }
 
-    pub fn title(&self) -> String {
-        self.path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Untitled".into())
+    pub fn path(&self, cx: &App) -> Option<PathBuf> {
+        self.document.read(cx).path.clone()
     }
 
-    pub fn is_dirty(&self) -> bool {
-        self.text.buffer.is_dirty()
+    pub fn title(&self, cx: &App) -> String {
+        self.document.read(cx).title()
     }
 
-    pub fn cursor_position(&self) -> TextPoint {
-        self.text.cursor_point()
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        self.document.read(cx).is_dirty()
+    }
+
+    pub fn language(&self, cx: &App) -> Option<Language> {
+        self.document.read(cx).language
+    }
+
+    pub fn uses_crlf(&self, cx: &App) -> bool {
+        self.document.read(cx).buffer.uses_crlf()
+    }
+
+    /// The caret's row and column, after catching up with other views' edits.
+    pub fn cursor_position(&mut self, cx: &App) -> TextPoint {
+        let doc = self.document.read(cx);
+        self.cursor.sync(&doc.buffer);
+        self.cursor.cursor_point(&doc.buffer)
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        std::fs::write(path, self.text.buffer.text_for_file())?;
-        self.text.buffer.mark_saved();
-        cx.emit(EditorEvent::Saved);
-        cx.notify();
-        Ok(())
+        self.document.update(cx, |doc, cx| doc.save(cx))
     }
 
-    fn ensure_highlights(&mut self) {
-        let version = self.text.buffer.version();
-        if self.spans_version == Some(version) {
-            return;
-        }
-        self.spans = match self.language {
-            Some(lang) => self
-                .highlighter
-                .highlight(lang, self.text.buffer.text().as_bytes()),
-            None => Vec::new(),
-        };
-        self.spans_version = Some(version);
+    /// Runs a command on this view's cursor and the shared buffer; the
+    /// document tells every view, this one included, to repaint.
+    fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Cursor, &mut Buffer)) {
+        let cursor = &mut self.cursor;
+        self.document.update(cx, |doc, cx| {
+            cursor.sync(&doc.buffer);
+            doc.edit(cx, |buffer| f(cursor, buffer));
+        });
+    }
+
+    /// Moves this view's cursor; nothing in the buffer changes.
+    fn go(&mut self, cx: &App, f: impl FnOnce(&mut Cursor, &Buffer)) {
+        let doc = self.document.read(cx);
+        self.cursor.sync(&doc.buffer);
+        f(&mut self.cursor, &doc.buffer);
+    }
+
+    fn with_buffer<R>(&mut self, cx: &App, f: impl FnOnce(&Cursor, &Buffer) -> R) -> R {
+        let doc = self.document.read(cx);
+        self.cursor.sync(&doc.buffer);
+        f(&self.cursor, &doc.buffer)
     }
 
     fn line_height(&self) -> Pixels {
@@ -191,9 +211,9 @@ impl EditorView {
     }
 
     /// Scrolls just enough for the caret's row to be on screen.
-    fn scroll_to_cursor(&mut self) {
+    fn scroll_to_cursor(&mut self, cx: &App) {
         let lh = self.line_height();
-        let row = self.text.cursor_point().row as f32;
+        let row = self.cursor_position(cx).row as f32;
         let top = lh * row;
         let bottom = top + lh;
         let height = self.last_bounds.size.height;
@@ -208,135 +228,136 @@ impl EditorView {
     }
 
     /// The scrollable extent: the lines plus Fleet's overscroll past the end.
-    fn content_height(&self) -> Pixels {
-        self.line_height() * (self.text.buffer.line_count() as f32 + EDITOR_OVERSCROLL_LINES)
+    fn content_height(&self, line_count: usize) -> Pixels {
+        self.line_height() * (line_count as f32 + EDITOR_OVERSCROLL_LINES)
     }
 
-    fn max_scroll_y(&self) -> Pixels {
-        (self.content_height() - self.last_bounds.size.height).max(px(0.))
+    fn max_scroll_y(&self, cx: &App) -> Pixels {
+        let lines = self.document.read(cx).buffer.line_count();
+        (self.content_height(lines) - self.last_bounds.size.height).max(px(0.))
     }
 
     fn after_edit(&mut self, cx: &mut Context<Self>) {
-        self.scroll_to_cursor();
-        cx.emit(EditorEvent::Changed);
+        self.scroll_to_cursor(cx);
         cx.notify();
     }
 
     fn after_move(&mut self, cx: &mut Context<Self>) {
-        self.scroll_to_cursor();
+        self.scroll_to_cursor(cx);
         cx.notify();
     }
 
     // ---- actions --------------------------------------------------------
 
     fn move_up(&mut self, _: &MoveUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_up(false);
+        self.go(cx, |c, b| c.move_up(b, false));
         self.after_move(cx);
     }
     fn move_down(&mut self, _: &MoveDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_down(false);
+        self.go(cx, |c, b| c.move_down(b, false));
         self.after_move(cx);
     }
     fn move_left(&mut self, _: &MoveLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_left(false);
+        self.go(cx, |c, b| c.move_left(b, false));
         self.after_move(cx);
     }
     fn move_right(&mut self, _: &MoveRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_right(false);
+        self.go(cx, |c, b| c.move_right(b, false));
         self.after_move(cx);
     }
     fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_up(true);
+        self.go(cx, |c, b| c.move_up(b, true));
         self.after_move(cx);
     }
     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_down(true);
+        self.go(cx, |c, b| c.move_down(b, true));
         self.after_move(cx);
     }
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_left(true);
+        self.go(cx, |c, b| c.move_left(b, true));
         self.after_move(cx);
     }
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_right(true);
+        self.go(cx, |c, b| c.move_right(b, true));
         self.after_move(cx);
     }
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line_start(false);
+        self.go(cx, |c, b| c.move_line_start(b, false));
         self.after_move(cx);
     }
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line_end(false);
+        self.go(cx, |c, b| c.move_line_end(b, false));
         self.after_move(cx);
     }
     fn select_home(&mut self, _: &SelectHome, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line_start(true);
+        self.go(cx, |c, b| c.move_line_start(b, true));
         self.after_move(cx);
     }
     fn select_end(&mut self, _: &SelectEnd, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line_end(true);
+        self.go(cx, |c, b| c.move_line_end(b, true));
         self.after_move(cx);
     }
     fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
         let rows = self.rows_per_page();
-        self.text.move_page(rows, true, false);
+        self.go(cx, |c, b| c.move_page(b, rows, true, false));
         self.scroll_y = (self.scroll_y - self.line_height() * rows as f32).max(px(0.));
         self.after_move(cx);
     }
     fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
         let rows = self.rows_per_page();
-        self.text.move_page(rows, false, false);
-        self.scroll_y = (self.scroll_y + self.line_height() * rows as f32).min(self.max_scroll_y());
+        self.go(cx, |c, b| c.move_page(b, rows, false, false));
+        let max = self.max_scroll_y(cx);
+        self.scroll_y = (self.scroll_y + self.line_height() * rows as f32).min(max);
         self.after_move(cx);
     }
     fn select_page_up(&mut self, _: &SelectPageUp, _: &mut Window, cx: &mut Context<Self>) {
         let rows = self.rows_per_page();
-        self.text.move_page(rows, true, true);
+        self.go(cx, |c, b| c.move_page(b, rows, true, true));
         self.after_move(cx);
     }
     fn select_page_down(&mut self, _: &SelectPageDown, _: &mut Window, cx: &mut Context<Self>) {
         let rows = self.rows_per_page();
-        self.text.move_page(rows, false, true);
+        self.go(cx, |c, b| c.move_page(b, rows, false, true));
         self.after_move(cx);
     }
     fn doc_start(&mut self, _: &DocStart, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_doc_start(false);
+        self.go(cx, |c, b| c.move_doc_start(b, false));
         self.after_move(cx);
     }
     fn doc_end(&mut self, _: &DocEnd, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_doc_end(false);
+        self.go(cx, |c, b| c.move_doc_end(b, false));
         self.after_move(cx);
     }
     fn select_doc_start(&mut self, _: &SelectDocStart, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_doc_start(true);
+        self.go(cx, |c, b| c.move_doc_start(b, true));
         self.after_move(cx);
     }
     fn select_doc_end(&mut self, _: &SelectDocEnd, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_doc_end(true);
+        self.go(cx, |c, b| c.move_doc_end(b, true));
         self.after_move(cx);
     }
     fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_word_left(false);
+        self.go(cx, |c, b| c.move_word_left(b, false));
         self.after_move(cx);
     }
     fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_word_right(false);
+        self.go(cx, |c, b| c.move_word_right(b, false));
         self.after_move(cx);
     }
     fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_word_left(true);
+        self.go(cx, |c, b| c.move_word_left(b, true));
         self.after_move(cx);
     }
     fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_word_right(true);
+        self.go(cx, |c, b| c.move_word_right(b, true));
         self.after_move(cx);
     }
     fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.backspace();
+        self.edit(cx, |c, b| c.backspace(b));
         self.after_edit(cx);
     }
     fn delete(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.delete();
+        self.edit(cx, |c, b| c.delete(b));
         self.after_edit(cx);
     }
     fn delete_word_backward(
@@ -345,7 +366,7 @@ impl EditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.text.delete_word_backward();
+        self.edit(cx, |c, b| c.delete_word_backward(b));
         self.after_edit(cx);
     }
     fn delete_word_forward(
@@ -354,168 +375,184 @@ impl EditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.text.delete_word_forward();
+        self.edit(cx, |c, b| c.delete_word_forward(b));
         self.after_edit(cx);
     }
     fn delete_line(&mut self, _: &DeleteLine, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.delete_line();
+        self.edit(cx, |c, b| c.delete_line(b));
         self.after_edit(cx);
     }
     fn duplicate_line(&mut self, _: &DuplicateLine, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.duplicate_line();
+        self.edit(cx, |c, b| c.duplicate_line(b));
         self.after_edit(cx);
     }
     fn move_line_up(&mut self, _: &MoveLineUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line(true);
+        self.edit(cx, |c, b| c.move_line(b, true));
         self.after_edit(cx);
     }
     fn move_line_down(&mut self, _: &MoveLineDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line(false);
+        self.edit(cx, |c, b| c.move_line(b, false));
         self.after_edit(cx);
     }
     fn newline(&mut self, _: &Newline, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.newline();
+        self.edit(cx, |c, b| c.newline(b));
         self.after_edit(cx);
     }
     fn newline_below(&mut self, _: &NewlineBelow, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.move_line_end(false);
-        self.text.newline();
+        self.edit(cx, |c, b| {
+            c.move_line_end(b, false);
+            c.newline(b);
+        });
         self.after_edit(cx);
     }
     fn newline_above(&mut self, _: &NewlineAbove, _: &mut Window, cx: &mut Context<Self>) {
-        let row = self.text.cursor_point().row;
-        if row == 0 {
-            self.text.set_cursor(0);
-            self.text.newline();
-            self.text.move_up(false);
-        } else {
-            self.text.move_up(false);
-            self.text.move_line_end(false);
-            self.text.newline();
-        }
+        self.edit(cx, |c, b| {
+            if c.cursor_point(b).row == 0 {
+                c.set_cursor(b, 0);
+                c.newline(b);
+                c.move_up(b, false);
+            } else {
+                c.move_up(b, false);
+                c.move_line_end(b, false);
+                c.newline(b);
+            }
+        });
         self.after_edit(cx);
     }
     fn tab(&mut self, _: &Tab, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.tab();
+        self.edit(cx, |c, b| c.tab(b));
         self.after_edit(cx);
     }
     fn outdent(&mut self, _: &Outdent, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.outdent();
+        self.edit(cx, |c, b| c.outdent(b));
         self.after_edit(cx);
     }
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.undo();
+        self.edit(cx, |c, b| c.undo(b));
         self.after_edit(cx);
     }
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.redo();
+        self.edit(cx, |c, b| c.redo(b));
         self.after_edit(cx);
     }
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let text = self.selected_or_line();
+        let text = self.selected_or_line(cx);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
-        let text = self.selected_or_line();
+        let text = self.selected_or_line(cx);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        if self.text.selection.is_empty() {
-            self.text.delete_line();
-        } else {
-            self.text.delete();
-        }
+        self.edit(cx, |c, b| {
+            if c.selection.is_empty() {
+                c.delete_line(b);
+            } else {
+                c.delete(b);
+            }
+        });
         self.after_edit(cx);
     }
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let text = text.replace("\r\n", "\n");
-            self.text.commit();
-            self.text.insert(&text);
-            self.text.commit();
+            self.edit(cx, |c, b| {
+                c.commit();
+                c.insert(b, &text);
+                c.commit();
+            });
             self.after_edit(cx);
         }
     }
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
-        self.text.select_all();
+        self.go(cx, |c, b| c.select_all(b));
         cx.notify();
     }
     fn comment_line(&mut self, _: &CommentLine, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(prefix) = self.language.and_then(Language::line_comment) else {
+        let Some(prefix) = self.language(cx).and_then(Language::line_comment) else {
             return;
         };
-        self.text.toggle_line_comment(prefix);
+        self.edit(cx, |c, b| c.toggle_line_comment(b, prefix));
         self.after_edit(cx);
     }
     fn join_lines(&mut self, _: &JoinLines, _: &mut Window, cx: &mut Context<Self>) {
-        let row = self.text.cursor_point().row;
-        if row + 1 >= self.text.buffer.line_count() {
-            return;
-        }
-        let end = self.text.buffer.line_to_char(row) + self.text.buffer.line_len(row);
-        let next = self.text.buffer.line(row + 1);
-        let lead = next.chars().take_while(|c| c.is_whitespace()).count();
-        let glue = if next.trim().is_empty() { "" } else { " " };
-        self.text.replace_range(end..end + 1 + lead, glue);
+        self.edit(cx, |c, b| {
+            let row = c.cursor_point(b).row;
+            if row + 1 >= b.line_count() {
+                return;
+            }
+            let end = b.line_to_char(row) + b.line_len(row);
+            let next = b.line(row + 1);
+            let lead = next.chars().take_while(|ch| ch.is_whitespace()).count();
+            let glue = if next.trim().is_empty() { "" } else { " " };
+            c.replace_range(b, end..end + 1 + lead, glue);
+        });
         self.after_edit(cx);
     }
     fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        let head = self.text.selection.head;
-        self.text.set_cursor(head);
+        self.go(cx, |c, b| {
+            let head = c.selection.head;
+            c.set_cursor(b, head);
+        });
         cx.notify();
     }
 
     /// The selection, or the whole current line when there is none (what
     /// Fleet copies on a bare Ctrl+C).
-    fn selected_or_line(&self) -> String {
-        if self.text.selection.is_empty() {
-            let row = self.text.cursor_point().row;
-            let mut line = self.text.buffer.line(row);
-            line.push('\n');
-            line
-        } else {
-            self.text.selected_text()
-        }
+    fn selected_or_line(&mut self, cx: &App) -> String {
+        self.with_buffer(cx, |c, b| {
+            if c.selection.is_empty() {
+                let row = c.cursor_point(b).row;
+                let mut line = b.line(row);
+                line.push('\n');
+                line
+            } else {
+                c.selected_text(b)
+            }
+        })
     }
 
     // ---- mouse ----------------------------------------------------------
 
     fn offset_at(&self, position: Point<Pixels>, window: &mut Window, cx: &App) -> usize {
+        let buffer = &self.document.read(cx).buffer;
         let bounds = self.last_bounds;
         let lh = self.line_height();
         let y = position.y - bounds.origin.y + self.scroll_y;
-        let row = ((y / lh).floor().max(0.) as usize).min(self.text.buffer.line_count() - 1);
+        let row = ((y / lh).floor().max(0.) as usize).min(buffer.line_count() - 1);
         let x = position.x - bounds.origin.x - px(self.tm.gutter_width) + self.scroll_x;
         let theme = cx.global::<Theme>();
-        let line = DisplayLine::new(&self.text.buffer.line(row));
+        let line = DisplayLine::new(&buffer.line(row));
         let shaped = shape_display_line(&line, &[], theme, self.tm.font_size, window);
         let disp_byte = shaped.closest_index_for_x(x.max(px(0.)));
         let column = line.char_for_display_byte(disp_byte);
-        self.text
-            .buffer
-            .point_to_offset(TextPoint::new(row, column))
+        buffer.point_to_offset(TextPoint::new(row, column))
     }
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
         let offset = self.offset_at(event.position, window, cx);
-        match event.click_count {
+        let shift = event.modifiers.shift;
+        let clicks = event.click_count;
+        self.go(cx, |c, b| match clicks {
             2 => {
-                let range = self.text.word_range_at(offset);
-                self.text.select(range.start, range.end);
+                let range = c.word_range_at(b, offset);
+                c.select(b, range.start, range.end);
             }
             n if n >= 3 => {
-                let row = self.text.buffer.offset_to_point(offset).row;
-                let range = self.text.line_range(row);
-                self.text.select(range.start, range.end);
+                let row = b.offset_to_point(offset).row;
+                let range = c.line_range(b, row);
+                c.select(b, range.start, range.end);
             }
             _ => {
-                if event.modifiers.shift {
-                    let anchor = self.text.selection.anchor;
-                    self.text.select(anchor, offset);
+                if shift {
+                    let anchor = c.selection.anchor;
+                    c.select(b, anchor, offset);
                 } else {
-                    self.text.set_cursor(offset);
+                    c.set_cursor(b, offset);
                 }
-                self.dragging = true;
             }
+        });
+        if clicks < 2 {
+            self.dragging = true;
         }
         cx.notify();
     }
@@ -525,8 +562,10 @@ impl EditorView {
             return;
         }
         let offset = self.offset_at(event.position, window, cx);
-        let anchor = self.text.selection.anchor;
-        self.text.select(anchor, offset);
+        self.go(cx, |c, b| {
+            let anchor = c.selection.anchor;
+            c.select(b, anchor, offset);
+        });
         cx.notify();
     }
 
@@ -537,23 +576,26 @@ impl EditorView {
 
     fn scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let delta = event.delta.pixel_delta(self.line_height());
-        self.scroll_y = (self.scroll_y - delta.y).clamp(px(0.), self.max_scroll_y());
+        let max = self.max_scroll_y(cx);
+        self.scroll_y = (self.scroll_y - delta.y).clamp(px(0.), max);
         self.scroll_x = (self.scroll_x - delta.x).max(px(0.));
         cx.notify();
     }
 
     // ---- utf16 bridging for the platform's text input --------------------
 
-    fn char_to_utf16(&self, offset: usize) -> usize {
-        self.text
-            .buffer
-            .rope()
-            .char_to_utf16_cu(offset.min(self.text.buffer.len_chars()))
+    fn char_to_utf16(&self, offset: usize, cx: &App) -> usize {
+        let rope = self.document.read(cx).buffer.rope();
+        rope.char_to_utf16_cu(offset.min(rope.len_chars()))
     }
 
-    fn utf16_to_char(&self, utf16: usize) -> usize {
-        let rope = self.text.buffer.rope();
+    fn utf16_to_char(&self, utf16: usize, cx: &App) -> usize {
+        let rope = self.document.read(cx).buffer.rope();
         rope.utf16_cu_to_char(utf16.min(rope.len_utf16_cu()))
+    }
+
+    fn selection(&mut self, cx: &App) -> Selection {
+        self.with_buffer(cx, |c, _| c.selection)
     }
 }
 
@@ -563,35 +605,36 @@ impl EntityInputHandler for EditorView {
         range: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<String> {
-        let start = self.utf16_to_char(range.start);
-        let end = self.utf16_to_char(range.end);
-        *adjusted_range = Some(self.char_to_utf16(start)..self.char_to_utf16(end));
-        Some(self.text.buffer.slice(start..end))
+        let start = self.utf16_to_char(range.start, cx);
+        let end = self.utf16_to_char(range.end, cx);
+        *adjusted_range = Some(self.char_to_utf16(start, cx)..self.char_to_utf16(end, cx));
+        Some(self.document.read(cx).buffer.slice(start..end))
     }
 
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let range = self.text.selection.range();
+        let selection = self.selection(cx);
+        let range = selection.range();
         Some(UTF16Selection {
-            range: self.char_to_utf16(range.start)..self.char_to_utf16(range.end),
-            reversed: self.text.selection.head < self.text.selection.anchor,
+            range: self.char_to_utf16(range.start, cx)..self.char_to_utf16(range.end, cx),
+            reversed: selection.head < selection.anchor,
         })
     }
 
     fn marked_text_range(
         &self,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
         self.marked
             .clone()
-            .map(|r| self.char_to_utf16(r.start)..self.char_to_utf16(r.end))
+            .map(|r| self.char_to_utf16(r.start, cx)..self.char_to_utf16(r.end, cx))
     }
 
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -608,16 +651,18 @@ impl EntityInputHandler for EditorView {
         if let Some(range) = range.or_else(|| {
             self.marked
                 .clone()
-                .map(|r| self.char_to_utf16(r.start)..self.char_to_utf16(r.end))
+                .map(|r| self.char_to_utf16(r.start, cx)..self.char_to_utf16(r.end, cx))
         }) {
-            let start = self.utf16_to_char(range.start);
-            let end = self.utf16_to_char(range.end);
-            if (start..end) != self.text.selection.range() {
-                self.text.select(start, end);
-            }
+            let start = self.utf16_to_char(range.start, cx);
+            let end = self.utf16_to_char(range.end, cx);
+            self.go(cx, |c, b| {
+                if (start..end) != c.selection.range() {
+                    c.select(b, start, end);
+                }
+            });
         }
         self.marked = None;
-        self.text.insert(text);
+        self.edit(cx, |c, b| c.insert(b, text));
         self.after_edit(cx);
     }
 
@@ -632,23 +677,23 @@ impl EntityInputHandler for EditorView {
         let start = match range.or_else(|| {
             self.marked
                 .clone()
-                .map(|r| self.char_to_utf16(r.start)..self.char_to_utf16(r.end))
+                .map(|r| self.char_to_utf16(r.start, cx)..self.char_to_utf16(r.end, cx))
         }) {
             Some(range) => {
-                let start = self.utf16_to_char(range.start);
-                let end = self.utf16_to_char(range.end);
-                self.text.select(start, end);
+                let start = self.utf16_to_char(range.start, cx);
+                let end = self.utf16_to_char(range.end, cx);
+                self.go(cx, |c, b| c.select(b, start, end));
                 start
             }
-            None => self.text.selection.range().start,
+            None => self.selection(cx).range().start,
         };
-        self.text.insert(new_text);
+        self.edit(cx, |c, b| c.insert(b, new_text));
         let len = new_text.chars().count();
         self.marked = Some(start..start + len);
         if let Some(sel) = new_selected_range {
             let a = start + new_text[..new_text.len().min(sel.start)].chars().count();
-            let b = start + new_text[..new_text.len().min(sel.end)].chars().count();
-            self.text.select(a, b);
+            let e = start + new_text[..new_text.len().min(sel.end)].chars().count();
+            self.go(cx, |c, b| c.select(b, a, e));
         }
         self.after_edit(cx);
     }
@@ -660,10 +705,11 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let offset = self.utf16_to_char(range_utf16.start);
-        let at = self.text.buffer.offset_to_point(offset);
+        let offset = self.utf16_to_char(range_utf16.start, cx);
+        let doc = self.document.read(cx);
+        let at = doc.buffer.offset_to_point(offset);
         let theme = cx.global::<Theme>();
-        let line = DisplayLine::new(&self.text.buffer.line(at.row));
+        let line = DisplayLine::new(&doc.buffer.line(at.row));
         let shaped = shape_display_line(&line, &[], theme, self.tm.font_size, window);
         let x = shaped.x_for_index(line.display_byte_for_char(at.column));
         let lh = self.line_height();
@@ -683,7 +729,7 @@ impl EntityInputHandler for EditorView {
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         let offset = self.offset_at(point, window, cx);
-        Some(self.char_to_utf16(offset))
+        Some(self.char_to_utf16(offset, cx))
     }
 }
 
@@ -974,91 +1020,99 @@ impl Element for EditorElement {
         let tm = TextMetrics::current(cx);
         let lh = px(tm.line_height);
         let focused = self.editor.read(cx).focus_handle.is_focused(window);
-        self.editor.update(cx, |editor, _cx| {
-            // A zoom or font change keeps the same first line in view.
-            if editor.tm != tm {
-                let row = editor.scroll_y / px(editor.tm.line_height);
-                editor.tm = tm;
-                editor.scroll_y = px(tm.line_height) * row;
-            }
-            editor.last_bounds = bounds;
-            editor.ensure_highlights();
-            let max = editor.max_scroll_y();
-            if editor.scroll_y > max {
-                editor.scroll_y = max;
-            }
-        });
-        let editor = self.editor.read(cx);
-        let line_count = editor.text.buffer.line_count();
-        let first_row = (editor.scroll_y / lh).floor().max(0.) as usize;
-        let visible = (bounds.size.height / lh).ceil() as usize + 1;
-        let last_row = (first_row + visible).min(line_count);
-        let number_font = editor_font(FontWeight::NORMAL, false, &theme);
-        let cursor = editor.text.cursor_point();
-        let mut rows = Vec::with_capacity(last_row.saturating_sub(first_row));
-        // Spans are sorted by start; walk them once for the visible window.
-        let spans = &editor.spans;
-        let first_byte = editor
-            .text
-            .buffer
-            .line_to_byte(first_row.min(line_count - 1));
-        let mut span_ix = spans.partition_point(|s| s.range.end <= first_byte);
-        for row in first_row..last_row {
-            let source = editor.text.buffer.line(row);
-            let line_start = editor.text.buffer.line_to_byte(row);
-            let line_end = line_start + source.len();
-            let mut line_spans: Vec<(Range<usize>, &'static str)> = Vec::new();
-            let mut i = span_ix;
-            while i < spans.len() && spans[i].range.start < line_end {
-                let s = &spans[i];
-                if s.range.end > line_start {
-                    let a = s.range.start.max(line_start) - line_start;
-                    let b = s.range.end.min(line_end) - line_start;
-                    if b > a {
-                        line_spans.push((a..b, s.attribute));
-                    }
+        let (document, cursor, selection, scroll_y, scroll_x) =
+            self.editor.update(cx, |editor, cx| {
+                // A zoom or font change keeps the same first line in view.
+                if editor.tm != tm {
+                    let row = editor.scroll_y / px(editor.tm.line_height);
+                    editor.tm = tm;
+                    editor.scroll_y = px(tm.line_height) * row;
                 }
-                if s.range.end <= line_end {
-                    span_ix = i + 1;
+                editor.last_bounds = bounds;
+                let max = editor.max_scroll_y(cx);
+                if editor.scroll_y > max {
+                    editor.scroll_y = max;
                 }
-                i += 1;
-            }
-            let line = DisplayLine::new(&source);
-            let shaped = shape_display_line(&line, &line_spans, &theme, tm.font_size, window);
-            let color = if row == cursor.row {
-                theme.line_number_current
-            } else {
-                theme.line_number
-            };
-            let number_text = SharedString::from((row + 1).to_string());
-            let number = window.text_system().shape_line(
-                number_text.clone(),
-                px(tm.font_size),
-                &[TextRun {
-                    len: number_text.len(),
-                    font: number_font.clone(),
-                    color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }],
-                None,
-            );
-            rows.push(LaidOutRow {
-                row,
-                line,
-                shaped,
-                number,
+                let (cursor, selection) =
+                    editor.with_buffer(cx, |c, b| (c.cursor_point(b), c.selection.range()));
+                (
+                    editor.document.clone(),
+                    cursor,
+                    selection,
+                    editor.scroll_y,
+                    editor.scroll_x,
+                )
             });
-        }
+        let mut rows = Vec::new();
+        let (line_count, first_row) = document.update(cx, |doc, _| {
+            let line_count = doc.buffer.line_count();
+            let first_row = (scroll_y / lh).floor().max(0.) as usize;
+            let visible = (bounds.size.height / lh).ceil() as usize + 1;
+            let last_row = (first_row + visible).min(line_count);
+            let number_font = editor_font(FontWeight::NORMAL, false, &theme);
+            rows.reserve(last_row.saturating_sub(first_row));
+            // Spans are sorted by start; walk them once for the visible window.
+            let first_byte = doc.buffer.line_to_byte(first_row.min(line_count - 1));
+            let spans = doc.spans().to_vec();
+            let mut span_ix = spans.partition_point(|s| s.range.end <= first_byte);
+            for row in first_row..last_row {
+                let source = doc.buffer.line(row);
+                let line_start = doc.buffer.line_to_byte(row);
+                let line_end = line_start + source.len();
+                let mut line_spans: Vec<(Range<usize>, &'static str)> = Vec::new();
+                let mut i = span_ix;
+                while i < spans.len() && spans[i].range.start < line_end {
+                    let s = &spans[i];
+                    if s.range.end > line_start {
+                        let a = s.range.start.max(line_start) - line_start;
+                        let b = s.range.end.min(line_end) - line_start;
+                        if b > a {
+                            line_spans.push((a..b, s.attribute));
+                        }
+                    }
+                    if s.range.end <= line_end {
+                        span_ix = i + 1;
+                    }
+                    i += 1;
+                }
+                let line = DisplayLine::new(&source);
+                let shaped = shape_display_line(&line, &line_spans, &theme, tm.font_size, window);
+                let color = if row == cursor.row {
+                    theme.line_number_current
+                } else {
+                    theme.line_number
+                };
+                let number_text = SharedString::from((row + 1).to_string());
+                let number = window.text_system().shape_line(
+                    number_text.clone(),
+                    px(tm.font_size),
+                    &[TextRun {
+                        len: number_text.len(),
+                        font: number_font.clone(),
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                rows.push(LaidOutRow {
+                    row,
+                    line,
+                    shaped,
+                    number,
+                });
+            }
+            (line_count, first_row)
+        });
         Prepaint {
             hitbox,
             rows,
             first_row,
-            scroll_y: editor.scroll_y,
-            scroll_x: editor.scroll_x,
+            scroll_y,
+            scroll_x,
             cursor,
-            selection: editor.text.selection.range(),
+            selection,
             focused,
             line_count,
             tm,
@@ -1090,13 +1144,13 @@ impl Element for EditorElement {
         let number_right = bounds.origin.x + px(tm.gutter_number_right);
         let right = bounds.origin.x + bounds.size.width;
         let buffer_rows: Vec<(usize, usize)> = {
-            let editor = self.editor.read(cx);
+            let document = self.editor.read(cx).document.read(cx);
             prepaint
                 .rows
                 .iter()
                 .map(|r| {
-                    let start = editor.text.buffer.line_to_char(r.row);
-                    (start, start + editor.text.buffer.line_len(r.row))
+                    let start = document.buffer.line_to_char(r.row);
+                    (start, start + document.buffer.line_len(r.row))
                 })
                 .collect()
         };

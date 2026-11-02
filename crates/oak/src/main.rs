@@ -8,6 +8,7 @@
 
 mod actions;
 mod assets;
+mod document;
 mod editor;
 mod file_tree;
 mod keymap;

@@ -20,7 +20,7 @@ Native Rust/GPUI code editor in the shape of JetBrains Fleet.
 ## Layout
 
 ```
-crates/oak          GPUI app (bin): main, workspace (panels, splits, tabs, status bar), toolbar (with the Windows caption), file_tree, editor, theme (Metrics = sizes x zoom), settings (globals, live reload, zoom), layout, tooltip, scrollbar, keymap, assets
+crates/oak          GPUI app (bin): main, workspace (panels, splits, tabs, status bar), toolbar (with the Windows caption), file_tree, document (one per file, shared by its views), editor (a cursor on a document), theme (Metrics = sizes x zoom), settings (globals, live reload, zoom), layout, tooltip, scrollbar, keymap, assets
 crates/oak-text     Buffer (ropey) and TextEditor: selection, undo grouping, every edit command
 crates/oak-syntax   tree-sitter grammars (rust, json, toml, markdown) -> Fleet textAttributes keys
 crates/oak-theme    Fleet theme JSON: palette resolution, typed Color, cascading attribute lookup

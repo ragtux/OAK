@@ -69,39 +69,61 @@ fn continues_typing(tx: &Transaction, offset: usize, text: &str) -> bool {
         && last.offset + last.inserted.chars().count() == offset
 }
 
-/// A buffer with a cursor: everything the editor view asks the model to do.
+/// The per-view half of an editor: where the caret and selection are, and
+/// the typing group for undo. Every command takes the shared [`Buffer`].
+
 #[derive(Clone, Debug, Default)]
-pub struct TextEditor {
-    pub buffer: Buffer,
+pub struct Cursor {
     pub selection: Selection,
     /// The column the caret wants when moving vertically through shorter lines.
     goal_column: Option<usize>,
     /// Whether the next typed text may join the last undo step.
     grouping: bool,
+    /// The buffer version this cursor's offsets are valid for (`sync`).
+    seen_version: u64,
 }
 
-impl TextEditor {
-    pub fn new(text: &str) -> Self {
-        TextEditor {
-            buffer: Buffer::new(text),
+impl Cursor {
+    pub fn new(buffer: &Buffer) -> Self {
+        Cursor {
+            seen_version: buffer.version(),
             ..Default::default()
         }
-    }
-
-    pub fn text(&self) -> String {
-        self.buffer.text()
     }
 
     pub fn cursor(&self) -> usize {
         self.selection.head
     }
 
-    pub fn cursor_point(&self) -> Point {
-        self.buffer.offset_to_point(self.selection.head)
+    pub fn cursor_point(&self, buffer: &Buffer) -> Point {
+        buffer.offset_to_point(self.selection.head)
     }
 
-    pub fn selected_text(&self) -> String {
-        self.buffer.slice(self.selection.range())
+    pub fn selected_text(&self, buffer: &Buffer) -> String {
+        buffer.slice(self.selection.range())
+    }
+
+    /// Moves the selection past edits other cursors made to the buffer since
+    /// this one last looked, so it stays on the same text. Call before
+    /// reading or acting on the selection.
+    pub fn sync(&mut self, buffer: &Buffer) {
+        if self.seen_version == buffer.version() {
+            return;
+        }
+        if let Some(edits) = buffer.edits_since(self.seen_version) {
+            for edit in edits {
+                self.selection.anchor = edit.adjust(self.selection.anchor);
+                self.selection.head = edit.adjust(self.selection.head);
+            }
+        }
+        let len = buffer.len_chars();
+        self.selection.anchor = self.selection.anchor.min(len);
+        self.selection.head = self.selection.head.min(len);
+        self.seen_version = buffer.version();
+    }
+
+    fn settle(&mut self, buffer: &Buffer) {
+        self.seen_version = buffer.version();
     }
 
     /// Ends the current typing group: the next insert starts a new undo step.
@@ -111,8 +133,8 @@ impl TextEditor {
 
     // ---- movement -------------------------------------------------------
 
-    fn set_head(&mut self, head: usize, select: bool) {
-        let head = head.min(self.buffer.len_chars());
+    fn set_head(&mut self, buffer: &Buffer, head: usize, select: bool) {
+        let head = head.min(buffer.len_chars());
         self.selection.head = head;
         if !select {
             self.selection.anchor = head;
@@ -120,13 +142,13 @@ impl TextEditor {
         self.commit();
     }
 
-    pub fn set_cursor(&mut self, offset: usize) {
-        self.set_head(offset, false);
+    pub fn set_cursor(&mut self, buffer: &Buffer, offset: usize) {
+        self.set_head(buffer, offset, false);
         self.goal_column = None;
     }
 
-    pub fn select(&mut self, anchor: usize, head: usize) {
-        let len = self.buffer.len_chars();
+    pub fn select(&mut self, buffer: &Buffer, anchor: usize, head: usize) {
+        let len = buffer.len_chars();
         self.selection = Selection {
             anchor: anchor.min(len),
             head: head.min(len),
@@ -135,98 +157,98 @@ impl TextEditor {
         self.commit();
     }
 
-    pub fn select_all(&mut self) {
-        self.select(0, self.buffer.len_chars());
+    pub fn select_all(&mut self, buffer: &Buffer) {
+        self.select(buffer, 0, buffer.len_chars());
     }
 
-    pub fn move_left(&mut self, select: bool) {
+    pub fn move_left(&mut self, buffer: &Buffer, select: bool) {
         let range = self.selection.range();
         let head = if !select && !self.selection.is_empty() {
             range.start
         } else {
             self.selection.head.saturating_sub(1)
         };
-        self.set_head(head, select);
+        self.set_head(buffer, head, select);
         self.goal_column = None;
     }
 
-    pub fn move_right(&mut self, select: bool) {
+    pub fn move_right(&mut self, buffer: &Buffer, select: bool) {
         let range = self.selection.range();
         let head = if !select && !self.selection.is_empty() {
             range.end
         } else {
             self.selection.head + 1
         };
-        self.set_head(head, select);
+        self.set_head(buffer, head, select);
         self.goal_column = None;
     }
 
-    fn move_rows(&mut self, delta: isize, select: bool) {
-        let point = self.buffer.offset_to_point(self.selection.head);
+    fn move_rows(&mut self, buffer: &Buffer, delta: isize, select: bool) {
+        let point = buffer.offset_to_point(self.selection.head);
         let column = self.goal_column.unwrap_or(point.column);
-        let last = self.buffer.line_count().saturating_sub(1) as isize;
+        let last = buffer.line_count().saturating_sub(1) as isize;
         let row = (point.row as isize + delta).clamp(0, last) as usize;
         let head = if row == point.row {
             // Top or bottom of the text: go to its very start or end.
             if delta < 0 {
                 0
             } else {
-                self.buffer.len_chars()
+                buffer.len_chars()
             }
         } else {
-            self.buffer.point_to_offset(Point::new(row, column))
+            buffer.point_to_offset(Point::new(row, column))
         };
-        self.set_head(head, select);
+        self.set_head(buffer, head, select);
         self.goal_column = Some(column);
     }
 
-    pub fn move_up(&mut self, select: bool) {
-        self.move_rows(-1, select);
+    pub fn move_up(&mut self, buffer: &Buffer, select: bool) {
+        self.move_rows(buffer, -1, select);
     }
 
-    pub fn move_down(&mut self, select: bool) {
-        self.move_rows(1, select);
+    pub fn move_down(&mut self, buffer: &Buffer, select: bool) {
+        self.move_rows(buffer, 1, select);
     }
 
-    pub fn move_page(&mut self, rows: usize, up: bool, select: bool) {
+    pub fn move_page(&mut self, buffer: &Buffer, rows: usize, up: bool, select: bool) {
         let delta = rows.max(1) as isize;
-        self.move_rows(if up { -delta } else { delta }, select);
+        self.move_rows(buffer, if up { -delta } else { delta }, select);
     }
 
     /// Home the way Fleet does it: to the first non-blank character, and from
     /// there to column zero.
-    pub fn move_line_start(&mut self, select: bool) {
-        let point = self.buffer.offset_to_point(self.selection.head);
-        let line = self.buffer.line(point.row);
+    pub fn move_line_start(&mut self, buffer: &Buffer, select: bool) {
+        let point = buffer.offset_to_point(self.selection.head);
+        let line = buffer.line(point.row);
         let indent = line.chars().take_while(|c| c.is_whitespace()).count();
         let column = if point.column == indent { 0 } else { indent };
-        let head = self.buffer.point_to_offset(Point::new(point.row, column));
-        self.set_head(head, select);
+        let head = buffer.point_to_offset(Point::new(point.row, column));
+        self.set_head(buffer, head, select);
         self.goal_column = None;
     }
 
-    pub fn move_line_end(&mut self, select: bool) {
-        let point = self.buffer.offset_to_point(self.selection.head);
-        let head = self.buffer.line_to_char(point.row) + self.buffer.line_len(point.row);
-        self.set_head(head, select);
+    pub fn move_line_end(&mut self, buffer: &Buffer, select: bool) {
+        let point = buffer.offset_to_point(self.selection.head);
+        let head = buffer.line_to_char(point.row) + buffer.line_len(point.row);
+        self.set_head(buffer, head, select);
         self.goal_column = None;
     }
 
-    pub fn move_doc_start(&mut self, select: bool) {
-        self.set_head(0, select);
+    pub fn move_doc_start(&mut self, buffer: &Buffer, select: bool) {
+        self.set_head(buffer, 0, select);
         self.goal_column = None;
     }
 
-    pub fn move_doc_end(&mut self, select: bool) {
-        self.set_head(self.buffer.len_chars(), select);
+    pub fn move_doc_end(&mut self, buffer: &Buffer, select: bool) {
+        self.set_head(buffer, buffer.len_chars(), select);
         self.goal_column = None;
     }
 
     /// The offset of the previous word boundary before `from`.
-    pub fn word_left_from(&self, from: usize) -> usize {
+    pub fn word_left_from(&self, buffer: &Buffer, from: usize) -> usize {
         let mut i = from;
-        while i > 0 && class(self.buffer.char_at(i - 1).unwrap()) == CharClass::Space {
-            if self.buffer.char_at(i - 1) == Some('\n') && i != from {
+        while i > 0 && class(buffer.char_at(i - 1).unwrap()) == CharClass::Space {
+            if buffer.char_at(i - 1) == Some('\n') && i != from {
                 return i;
             }
             i -= 1;
@@ -234,28 +256,28 @@ impl TextEditor {
         if i == 0 {
             return 0;
         }
-        let kind = class(self.buffer.char_at(i - 1).unwrap());
-        while i > 0 && class(self.buffer.char_at(i - 1).unwrap()) == kind {
+        let kind = class(buffer.char_at(i - 1).unwrap());
+        while i > 0 && class(buffer.char_at(i - 1).unwrap()) == kind {
             i -= 1;
         }
         i
     }
 
     /// The offset of the next word boundary after `from`.
-    pub fn word_right_from(&self, from: usize) -> usize {
-        let len = self.buffer.len_chars();
+    pub fn word_right_from(&self, buffer: &Buffer, from: usize) -> usize {
+        let len = buffer.len_chars();
         let mut i = from;
         if i >= len {
             return len;
         }
-        let kind = class(self.buffer.char_at(i).unwrap());
+        let kind = class(buffer.char_at(i).unwrap());
         if kind != CharClass::Space {
-            while i < len && class(self.buffer.char_at(i).unwrap()) == kind {
+            while i < len && class(buffer.char_at(i).unwrap()) == kind {
                 i += 1;
             }
         }
-        while i < len && class(self.buffer.char_at(i).unwrap()) == CharClass::Space {
-            if self.buffer.char_at(i) == Some('\n') && i != from {
+        while i < len && class(buffer.char_at(i).unwrap()) == CharClass::Space {
+            if buffer.char_at(i) == Some('\n') && i != from {
                 return i;
             }
             i += 1;
@@ -263,43 +285,43 @@ impl TextEditor {
         i
     }
 
-    pub fn move_word_left(&mut self, select: bool) {
-        let head = self.word_left_from(self.selection.head);
-        self.set_head(head, select);
+    pub fn move_word_left(&mut self, buffer: &Buffer, select: bool) {
+        let head = self.word_left_from(buffer, self.selection.head);
+        self.set_head(buffer, head, select);
         self.goal_column = None;
     }
 
-    pub fn move_word_right(&mut self, select: bool) {
-        let head = self.word_right_from(self.selection.head);
-        self.set_head(head, select);
+    pub fn move_word_right(&mut self, buffer: &Buffer, select: bool) {
+        let head = self.word_right_from(buffer, self.selection.head);
+        self.set_head(buffer, head, select);
         self.goal_column = None;
     }
 
     /// The word around `offset`, for double-click selection.
-    pub fn word_range_at(&self, offset: usize) -> Range<usize> {
-        let len = self.buffer.len_chars();
+    pub fn word_range_at(&self, buffer: &Buffer, offset: usize) -> Range<usize> {
+        let len = buffer.len_chars();
         if len == 0 {
             return 0..0;
         }
         let at = offset.min(len - 1);
-        let kind = class(self.buffer.char_at(at).unwrap());
+        let kind = class(buffer.char_at(at).unwrap());
         let mut start = at;
-        while start > 0 && class(self.buffer.char_at(start - 1).unwrap()) == kind {
+        while start > 0 && class(buffer.char_at(start - 1).unwrap()) == kind {
             start -= 1;
         }
         let mut end = at + 1;
-        while end < len && class(self.buffer.char_at(end).unwrap()) == kind {
+        while end < len && class(buffer.char_at(end).unwrap()) == kind {
             end += 1;
         }
         start..end
     }
 
-    pub fn line_range(&self, row: usize) -> Range<usize> {
-        let start = self.buffer.line_to_char(row);
-        let end = if row + 1 < self.buffer.line_count() {
-            self.buffer.line_to_char(row + 1)
+    pub fn line_range(&self, buffer: &Buffer, row: usize) -> Range<usize> {
+        let start = buffer.line_to_char(row);
+        let end = if row + 1 < buffer.line_count() {
+            buffer.line_to_char(row + 1)
         } else {
-            self.buffer.len_chars()
+            buffer.len_chars()
         };
         start..end
     }
@@ -309,39 +331,41 @@ impl TextEditor {
     /// Runs `edit` as one undo step, with the selection before and after.
     fn transact(
         &mut self,
+        buffer: &mut Buffer,
         edit: impl FnOnce(&mut Buffer, &mut Transaction, Selection) -> Selection,
     ) {
         let mut tx = Transaction {
             before: self.selection.pair(),
             ..Default::default()
         };
-        let after = edit(&mut self.buffer, &mut tx, self.selection);
+        let after = edit(buffer, &mut tx, self.selection);
         tx.after = after.pair();
         self.selection = after;
         self.goal_column = None;
-        self.buffer.push_transaction(tx);
+        buffer.push_transaction(tx);
         self.grouping = false;
+        self.settle(buffer);
     }
 
     /// Types `text` over the selection. Consecutive typing joins one undo step.
-    pub fn insert(&mut self, text: &str) {
+    pub fn insert(&mut self, buffer: &mut Buffer, text: &str) {
         let range = self.selection.range();
         let joined = self.grouping
             && range.is_empty()
-            && self
-                .buffer
+            && buffer
                 .last_transaction_mut()
                 .is_some_and(|tx| continues_typing(tx, range.start, text));
         let after = Selection::caret(range.start + text.chars().count());
         if joined {
-            let mut tx = std::mem::take(self.buffer.last_transaction_mut().unwrap());
-            self.buffer.replace_in(&mut tx, range, text);
+            let mut tx = std::mem::take(buffer.last_transaction_mut().unwrap());
+            buffer.replace_in(&mut tx, range, text);
             tx.after = after.pair();
-            *self.buffer.last_transaction_mut().unwrap() = tx;
+            *buffer.last_transaction_mut().unwrap() = tx;
             self.selection = after;
             self.goal_column = None;
+            self.settle(buffer);
         } else {
-            self.transact(|buffer, tx, _| {
+            self.transact(buffer, |buffer, tx, _| {
                 buffer.replace_in(tx, range, text);
                 after
             });
@@ -350,23 +374,23 @@ impl TextEditor {
     }
 
     /// Replaces `range` (char offsets) with `text`, leaving the caret after it.
-    pub fn replace_range(&mut self, range: Range<usize>, text: &str) {
+    pub fn replace_range(&mut self, buffer: &mut Buffer, range: Range<usize>, text: &str) {
         let after = Selection::caret(range.start + text.chars().count());
-        self.transact(|buffer, tx, _| {
+        self.transact(buffer, |buffer, tx, _| {
             buffer.replace_in(tx, range, text);
             after
         });
     }
 
-    pub fn backspace(&mut self) {
+    pub fn backspace(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
         if range.is_empty() {
             if range.start == 0 {
                 return;
             }
-            let point = self.buffer.offset_to_point(range.start);
+            let point = buffer.offset_to_point(range.start);
             // Inside leading whitespace, back up to the previous tab stop.
-            let line = self.buffer.line(point.row);
+            let line = buffer.line(point.row);
             let indent = line.chars().take_while(|c| *c == ' ').count();
             let width = if point.column > 0 && point.column <= indent {
                 let back = point.column % TAB_WIDTH;
@@ -378,81 +402,81 @@ impl TextEditor {
             } else {
                 1
             };
-            self.replace_range(range.start - width..range.start, "");
+            self.replace_range(buffer, range.start - width..range.start, "");
         } else {
-            self.replace_range(range, "");
+            self.replace_range(buffer, range, "");
         }
     }
 
-    pub fn delete(&mut self) {
+    pub fn delete(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
         if range.is_empty() {
-            if range.start >= self.buffer.len_chars() {
+            if range.start >= buffer.len_chars() {
                 return;
             }
-            self.replace_range(range.start..range.start + 1, "");
+            self.replace_range(buffer, range.start..range.start + 1, "");
         } else {
-            self.replace_range(range, "");
+            self.replace_range(buffer, range, "");
         }
     }
 
-    pub fn delete_word_backward(&mut self) {
+    pub fn delete_word_backward(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
         if !range.is_empty() {
-            return self.replace_range(range, "");
+            return self.replace_range(buffer, range, "");
         }
-        let start = self.word_left_from(range.start);
+        let start = self.word_left_from(buffer, range.start);
         if start < range.start {
-            self.replace_range(start..range.start, "");
+            self.replace_range(buffer, start..range.start, "");
         }
     }
 
-    pub fn delete_word_forward(&mut self) {
+    pub fn delete_word_forward(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
         if !range.is_empty() {
-            return self.replace_range(range, "");
+            return self.replace_range(buffer, range, "");
         }
-        let end = self.word_right_from(range.start);
+        let end = self.word_right_from(buffer, range.start);
         if end > range.start {
-            self.replace_range(range.start..end, "");
+            self.replace_range(buffer, range.start..end, "");
         }
     }
 
     /// A line break that keeps the current line's indentation.
-    pub fn newline(&mut self) {
+    pub fn newline(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
-        let point = self.buffer.offset_to_point(range.start);
-        let line = self.buffer.line(point.row);
+        let point = buffer.offset_to_point(range.start);
+        let line = buffer.line(point.row);
         let indent: String = line
             .chars()
             .take_while(|c| *c == ' ' || *c == '\t')
             .collect();
         let indent = indent.chars().take(point.column).collect::<String>();
         let text = format!("\n{indent}");
-        self.replace_range(range, &text);
+        self.replace_range(buffer, range, &text);
     }
 
     /// Tab: spaces to the next tab stop, or an indent of every selected line.
-    pub fn tab(&mut self) {
+    pub fn tab(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
-        let start = self.buffer.offset_to_point(range.start);
-        let end = self.buffer.offset_to_point(range.end);
+        let start = buffer.offset_to_point(range.start);
+        let end = buffer.offset_to_point(range.end);
         if start.row != end.row {
-            return self.indent_lines(start.row, end.row, true);
+            return self.indent_lines(buffer, start.row, end.row, true);
         }
         let width = TAB_WIDTH - start.column % TAB_WIDTH;
-        self.replace_range(range, &" ".repeat(width));
+        self.replace_range(buffer, range, &" ".repeat(width));
     }
 
-    pub fn outdent(&mut self) {
+    pub fn outdent(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
-        let start = self.buffer.offset_to_point(range.start).row;
-        let end = self.buffer.offset_to_point(range.end).row;
-        self.indent_lines(start, end, false);
+        let start = buffer.offset_to_point(range.start).row;
+        let end = buffer.offset_to_point(range.end).row;
+        self.indent_lines(buffer, start, end, false);
     }
 
-    fn indent_lines(&mut self, first: usize, last: usize, indent: bool) {
-        self.transact(|buffer, tx, selection| {
+    fn indent_lines(&mut self, buffer: &mut Buffer, first: usize, last: usize, indent: bool) {
+        self.transact(buffer, |buffer, tx, selection| {
             let mut anchor = selection.anchor;
             let mut head = selection.head;
             for row in first..=last {
@@ -480,32 +504,32 @@ impl TextEditor {
         });
     }
 
-    pub fn delete_line(&mut self) {
+    pub fn delete_line(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
-        let first = self.buffer.offset_to_point(range.start).row;
-        let last = self.buffer.offset_to_point(range.end).row;
-        let start = self.line_range(first).start;
-        let end = self.line_range(last).end;
-        let column = self.buffer.offset_to_point(range.start).column;
-        self.transact(|buffer, tx, _| {
+        let first = buffer.offset_to_point(range.start).row;
+        let last = buffer.offset_to_point(range.end).row;
+        let start = self.line_range(buffer, first).start;
+        let end = self.line_range(buffer, last).end;
+        let column = buffer.offset_to_point(range.start).column;
+        self.transact(buffer, |buffer, tx, _| {
             buffer.replace_in(tx, start..end, "");
             let row = first.min(buffer.line_count().saturating_sub(1));
             Selection::caret(buffer.point_to_offset(Point::new(row, column)))
         });
     }
 
-    pub fn duplicate_line(&mut self) {
+    pub fn duplicate_line(&mut self, buffer: &mut Buffer) {
         let range = self.selection.range();
-        let first = self.buffer.offset_to_point(range.start).row;
-        let last = self.buffer.offset_to_point(range.end).row;
-        let start = self.line_range(first).start;
-        let end = self.line_range(last).end;
-        let mut text = self.buffer.slice(start..end);
+        let first = buffer.offset_to_point(range.start).row;
+        let last = buffer.offset_to_point(range.end).row;
+        let start = self.line_range(buffer, first).start;
+        let end = self.line_range(buffer, last).end;
+        let mut text = buffer.slice(start..end);
         if !text.ends_with('\n') {
             text.insert(0, '\n');
         }
         let len = text.chars().count();
-        self.transact(|buffer, tx, selection| {
+        self.transact(buffer, |buffer, tx, selection| {
             buffer.replace_in(tx, end..end, &text);
             Selection {
                 anchor: selection.anchor + len,
@@ -514,19 +538,19 @@ impl TextEditor {
         });
     }
 
-    pub fn move_line(&mut self, up: bool) {
+    pub fn move_line(&mut self, buffer: &mut Buffer, up: bool) {
         let range = self.selection.range();
-        let first = self.buffer.offset_to_point(range.start).row;
-        let last = self.buffer.offset_to_point(range.end).row;
-        let line_count = self.buffer.line_count();
+        let first = buffer.offset_to_point(range.start).row;
+        let last = buffer.offset_to_point(range.end).row;
+        let line_count = buffer.line_count();
         if (up && first == 0) || (!up && last + 1 >= line_count) {
             return;
         }
-        let block = self.line_range(first).start..self.line_range(last).end;
+        let block = self.line_range(buffer, first).start..self.line_range(buffer, last).end;
         let other_row = if up { first - 1 } else { last + 1 };
-        let other = self.line_range(other_row);
-        let mut block_text = self.buffer.slice(block.clone());
-        let mut other_text = self.buffer.slice(other.clone());
+        let other = self.line_range(buffer, other_row);
+        let mut block_text = buffer.slice(block.clone());
+        let mut other_text = buffer.slice(other.clone());
         // Keep every line terminated while swapping, then restore the end.
         let block_had_nl = block_text.ends_with('\n');
         let other_had_nl = other_text.ends_with('\n');
@@ -550,7 +574,7 @@ impl TextEditor {
             swapped.pop();
         }
         let shift = other_text.chars().count() as isize * if up { -1 } else { 1 };
-        self.transact(|buffer, tx, selection| {
+        self.transact(buffer, |buffer, tx, selection| {
             buffer.replace_in(tx, start..end, &swapped);
             Selection {
                 anchor: (selection.anchor as isize + shift) as usize,
@@ -561,14 +585,14 @@ impl TextEditor {
 
     /// Toggles `prefix` (for example `// `) on every line of the selection:
     /// off when all of them carry it, on otherwise, at the shallowest indent.
-    pub fn toggle_line_comment(&mut self, prefix: &str) {
+    pub fn toggle_line_comment(&mut self, buffer: &mut Buffer, prefix: &str) {
         let range = self.selection.range();
-        let first = self.buffer.offset_to_point(range.start).row;
-        let mut last = self.buffer.offset_to_point(range.end).row;
-        if last > first && self.buffer.offset_to_point(range.end).column == 0 {
+        let first = buffer.offset_to_point(range.start).row;
+        let mut last = buffer.offset_to_point(range.end).row;
+        if last > first && buffer.offset_to_point(range.end).column == 0 {
             last -= 1;
         }
-        let lines: Vec<String> = (first..=last).map(|r| self.buffer.line(r)).collect();
+        let lines: Vec<String> = (first..=last).map(|r| buffer.line(r)).collect();
         let all_commented = lines
             .iter()
             .filter(|l| !l.trim().is_empty())
@@ -579,7 +603,7 @@ impl TextEditor {
             .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
             .min()
             .unwrap_or(0);
-        self.transact(|buffer, tx, selection| {
+        self.transact(buffer, |buffer, tx, selection| {
             let mut anchor = selection.anchor;
             let mut head = selection.head;
             for (i, line) in lines.iter().enumerate() {
@@ -620,32 +644,145 @@ impl TextEditor {
         });
     }
 
-    pub fn undo(&mut self) {
-        if let Some(selection) = self.buffer.undo() {
+    pub fn undo(&mut self, buffer: &mut Buffer) {
+        if let Some(selection) = buffer.undo() {
             self.selection = Selection::from_pair(selection);
-            self.clamp_selection();
+            self.clamp_selection(buffer);
         }
+        self.settle(buffer);
         self.commit();
     }
 
-    pub fn redo(&mut self) {
-        if let Some(selection) = self.buffer.redo() {
+    pub fn redo(&mut self, buffer: &mut Buffer) {
+        if let Some(selection) = buffer.redo() {
             self.selection = Selection::from_pair(selection);
-            self.clamp_selection();
+            self.clamp_selection(buffer);
         }
+        self.settle(buffer);
         self.commit();
     }
 
-    fn clamp_selection(&mut self) {
-        let len = self.buffer.len_chars();
+    fn clamp_selection(&mut self, buffer: &mut Buffer) {
+        let len = buffer.len_chars();
         self.selection.anchor = self.selection.anchor.min(len);
         self.selection.head = self.selection.head.min(len);
+    }
+}
+
+/// One buffer with one cursor: the single-view editor, and what the tests
+/// drive. Every command forwards to the cursor with the buffer.
+#[derive(Clone, Debug, Default)]
+pub struct TextEditor {
+    pub buffer: Buffer,
+    pub cursor: Cursor,
+}
+
+macro_rules! forward {
+    ($( $name:ident ( $($arg:ident : $ty:ty),* ) ;)*) => {
+        $( pub fn $name(&mut self $(, $arg: $ty)*) {
+            self.cursor.$name(&mut self.buffer $(, $arg)*)
+        } )*
+    };
+}
+
+impl TextEditor {
+    pub fn new(text: &str) -> Self {
+        let buffer = Buffer::new(text);
+        let cursor = Cursor::new(&buffer);
+        TextEditor { buffer, cursor }
+    }
+
+    pub fn text(&self) -> String {
+        self.buffer.text()
+    }
+
+    pub fn selection(&self) -> Selection {
+        self.cursor.selection
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor.cursor()
+    }
+
+    pub fn cursor_point(&self) -> Point {
+        self.cursor.cursor_point(&self.buffer)
+    }
+
+    pub fn selected_text(&self) -> String {
+        self.cursor.selected_text(&self.buffer)
+    }
+
+    pub fn commit(&mut self) {
+        self.cursor.commit();
+    }
+
+    pub fn word_range_at(&self, offset: usize) -> Range<usize> {
+        self.cursor.word_range_at(&self.buffer, offset)
+    }
+
+    pub fn line_range(&self, row: usize) -> Range<usize> {
+        self.cursor.line_range(&self.buffer, row)
+    }
+
+    forward! {
+        set_cursor(offset: usize);
+        select(anchor: usize, head: usize);
+        select_all();
+        move_left(select: bool);
+        move_right(select: bool);
+        move_up(select: bool);
+        move_down(select: bool);
+        move_page(rows: usize, up: bool, select: bool);
+        move_line_start(select: bool);
+        move_line_end(select: bool);
+        move_doc_start(select: bool);
+        move_doc_end(select: bool);
+        move_word_left(select: bool);
+        move_word_right(select: bool);
+        insert(text: &str);
+        replace_range(range: Range<usize>, text: &str);
+        backspace();
+        delete();
+        delete_word_backward();
+        delete_word_forward();
+        newline();
+        tab();
+        outdent();
+        delete_line();
+        duplicate_line();
+        move_line(up: bool);
+        toggle_line_comment(prefix: &str);
+        undo();
+        redo();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_cursors_on_one_buffer_follow_each_others_edits() {
+        let mut buffer = Buffer::new("hello world");
+        let mut a = Cursor::new(&buffer);
+        let mut b = Cursor::new(&buffer);
+        b.select(&buffer, 6, 11); // "world"
+        a.set_cursor(&buffer, 0);
+        a.insert(&mut buffer, "well, ");
+        assert_eq!(buffer.text(), "well, hello world");
+        b.sync(&buffer);
+        assert_eq!(b.selection.range(), 12..17);
+        assert_eq!(b.selected_text(&buffer), "world");
+        // An edit that shortens text inside b's selection shrinks it to match.
+        a.replace_range(&mut buffer, 12..15, "W");
+        b.sync(&buffer);
+        assert_eq!(b.selected_text(&buffer), "Wld");
+        // b undoes a's last step; the restored caret is a's, clamped to the text.
+        b.undo(&mut buffer);
+        assert_eq!(buffer.text(), "well, hello world");
+        a.sync(&buffer);
+        assert!(a.selection.head <= buffer.len_chars());
+    }
 
     fn ed(text: &str, cursor: usize) -> TextEditor {
         let mut e = TextEditor::new(text);
@@ -779,6 +916,6 @@ mod tests {
         assert_eq!(e.text(), "bye world");
         e.undo();
         assert_eq!(e.text(), "hello world");
-        assert_eq!(e.selection, Selection { anchor: 0, head: 5 });
+        assert_eq!(e.selection(), Selection { anchor: 0, head: 5 });
     }
 }

@@ -1,6 +1,7 @@
 //! A rope-backed text buffer with a linear undo history.
 
 use ropey::Rope;
+use std::collections::VecDeque;
 use std::ops::Range;
 
 /// A row and a column, both zero-based; the column counts chars, not bytes.
@@ -33,8 +34,37 @@ pub(crate) struct Transaction {
     pub after: (usize, usize),
 }
 
+/// One applied change as positions only, for a view that holds offsets into
+/// the buffer (its selection) and must move them after someone else's edit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Edit {
+    /// The buffer's version once this edit was applied.
+    pub version: u64,
+    pub offset: usize,
+    pub old_len: usize,
+    pub new_len: usize,
+}
+
+impl Edit {
+    /// Where `pos` lands after this edit: shifted when it lay after the
+    /// replaced range, pulled to the replacement's end when it lay inside.
+    pub fn adjust(&self, pos: usize) -> usize {
+        if pos <= self.offset {
+            pos
+        } else if pos >= self.offset + self.old_len {
+            pos - self.old_len + self.new_len
+        } else {
+            self.offset + self.new_len
+        }
+    }
+}
+
+/// How many recent edits a buffer remembers for views that catch up late.
+const EDIT_LOG: usize = 512;
+
 /// The text, its undo and redo stacks, and whether it differs from what was
-/// last saved.
+/// last saved. One buffer may be shown by several views (the splits), each
+/// with its own cursor, so nothing here belongs to a view.
 #[derive(Clone, Debug)]
 pub struct Buffer {
     rope: Rope,
@@ -43,6 +73,8 @@ pub struct Buffer {
     /// Bumped on every change; `saved_version` is where the file on disk is.
     version: u64,
     saved_version: u64,
+    /// The last `EDIT_LOG` changes, oldest first, for `edits_since`.
+    edits: VecDeque<Edit>,
     /// The line ending the file came with, written back on save.
     crlf: bool,
 }
@@ -71,8 +103,21 @@ impl Buffer {
             redo: Vec::new(),
             version: 0,
             saved_version: 0,
+            edits: VecDeque::new(),
             crlf,
         }
+    }
+
+    /// Replaces the whole text (a reload from disk), as one undo step.
+    pub fn set_text(&mut self, text: &str) {
+        let len = self.rope.len_chars();
+        let mut tx = Transaction {
+            before: (0, 0),
+            after: (0, 0),
+            ..Default::default()
+        };
+        self.replace_in(&mut tx, 0..len, text);
+        self.push_transaction(tx);
     }
 
     pub fn rope(&self) -> &Rope {
@@ -174,16 +219,44 @@ impl Buffer {
         self.version
     }
 
+    /// The edits applied after `version`, oldest first, or `None` when
+    /// `version` is older than the log remembers (the caller then clamps).
+    pub fn edits_since(&self, version: u64) -> Option<Vec<Edit>> {
+        if version >= self.version {
+            return Some(Vec::new());
+        }
+        let first = self.edits.front()?;
+        if first.version > version + 1 {
+            return None;
+        }
+        Some(
+            self.edits
+                .iter()
+                .filter(|e| e.version > version)
+                .copied()
+                .collect(),
+        )
+    }
+
     /// Applies one change to the rope, without touching history.
     fn apply(&mut self, change: &Change) {
+        let old_len = change.removed.chars().count();
         if !change.removed.is_empty() {
-            let end = change.offset + change.removed.chars().count();
-            self.rope.remove(change.offset..end);
+            self.rope.remove(change.offset..change.offset + old_len);
         }
         if !change.inserted.is_empty() {
             self.rope.insert(change.offset, &change.inserted);
         }
         self.version += 1;
+        if self.edits.len() == EDIT_LOG {
+            self.edits.pop_front();
+        }
+        self.edits.push_back(Edit {
+            version: self.version,
+            offset: change.offset,
+            old_len,
+            new_len: change.inserted.chars().count(),
+        });
     }
 
     /// Replaces `range` with `text`, recording the change into `tx`.
@@ -261,6 +334,35 @@ mod tests {
         assert_eq!(b.offset_to_point(4), Point::new(1, 1));
         assert_eq!(b.point_to_offset(Point::new(1, 99)), 6);
         assert_eq!(b.point_to_offset(Point::new(99, 0)), 7);
+    }
+
+    #[test]
+    fn edits_since_reports_each_change_once() {
+        let mut b = Buffer::new("abc");
+        let v0 = b.version();
+        let mut tx = Transaction::default();
+        b.replace_in(&mut tx, 1..2, "XY");
+        b.replace_in(&mut tx, 0..0, "-");
+        b.push_transaction(tx);
+        let edits = b.edits_since(v0).unwrap();
+        assert_eq!(edits.len(), 2);
+        assert_eq!(
+            (edits[0].offset, edits[0].old_len, edits[0].new_len),
+            (1, 1, 2)
+        );
+        assert_eq!(
+            (edits[1].offset, edits[1].old_len, edits[1].new_len),
+            (0, 0, 1)
+        );
+        assert!(b.edits_since(b.version()).unwrap().is_empty());
+        // A position after the replaced range shifts, one inside lands after it.
+        assert_eq!(edits[0].adjust(3), 4);
+        assert_eq!(edits[0].adjust(2), 3);
+        assert_eq!(edits[0].adjust(1), 1);
+        // Undo logs the inverse, so a view catching up sees both.
+        b.undo();
+        assert_eq!(b.edits_since(v0).unwrap().len(), 4);
+        assert_eq!(b.text(), "abc");
     }
 
     #[test]

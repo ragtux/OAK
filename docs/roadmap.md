@@ -108,9 +108,15 @@ does not draw (the `shadow.*` keys are the popups').
 Theme groups: `tab`, `tooltip`, `scrollbar`, `focusOutline`, `island`,
 `layout`, `separator`, `shadow`, `border`, `background`, `text`, `icon`.
 
-### M2 Editor core (L)
+### M2 Editor core (L, in progress)
 
 Everything Fleet's editor does to a plain text file.
+
+- Done 2026-11-02: one document per open file (`crates/oak/src/document.rs`),
+  shared by every tab and split that shows it; each view keeps its own
+  cursor, which follows the other views' edits through the buffer's edit
+  log (`oak-text`'s `Cursor::sync`). Undo and the dirty state are the
+  document's. The `splits` scene (Oak only) shows it.
 
 - Multiple carets (`editor/add-caret-above|below`,
   `editor/add-carets-to-ends-of-selected-lines`, `select-next-occurrence`,
