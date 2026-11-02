@@ -369,6 +369,28 @@ impl Workspace {
         }
     }
 
+    /// `git.autoFetch`: a `git fetch` every `git.fetchInterval` minutes, off
+    /// the main thread, counted on the disk poll's seconds.
+    fn auto_fetch(&mut self, cx: &mut Context<Self>) {
+        let settings = Self::settings(cx);
+        if !settings.git_auto_fetch() {
+            return;
+        }
+        let every = (settings.git_fetch_interval_min() * 60.).round().max(1.) as u32;
+        if self.disk_ticks % every != 0 {
+            return;
+        }
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        cx.background_spawn(async move {
+            if let Err(e) = repo.fetch() {
+                eprintln!("oak: {e:#}");
+            }
+        })
+        .detach();
+    }
+
     /// Starts the once-a-second look at the open files' modification times.
     pub(super) fn watch_disk(&mut self, cx: &mut Context<Self>) {
         self.disk_poll = Some(cx.spawn(async move |this, cx| loop {
@@ -388,6 +410,7 @@ impl Workspace {
         if self.disk_ticks % 5 == 0 {
             self.refresh_git(cx);
         }
+        self.auto_fetch(cx);
         let mut changed = false;
         for doc in self.documents.clone() {
             if doc.read(cx).disk_changed() {

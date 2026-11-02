@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 mod editorconfig;
+mod git;
 mod workbench;
 pub use editorconfig::{EditorConfig, EndOfLine};
 pub use workbench::KeyboardNavigation;

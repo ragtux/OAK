@@ -241,6 +241,39 @@ impl Repo {
     }
 }
 
+/// Commits ahead of and behind the upstream branch (`git.autoFetch` feeds
+/// this: "incoming/outgoing commits in the Git panel").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AheadBehind {
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+impl Repo {
+    /// `git fetch` from every remote, quietly; the work of `git.autoFetch`.
+    pub fn fetch(&self) -> Result<()> {
+        git(&self.root, &["fetch", "--all", "--quiet"]).map(|_| ())
+    }
+
+    /// How far HEAD is from its upstream; None without an upstream.
+    pub fn ahead_behind(&self) -> Option<AheadBehind> {
+        let out = git(
+            &self.root,
+            &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+        )
+        .ok()?;
+        parse_ahead_behind(&String::from_utf8_lossy(&out))
+    }
+}
+
+/// Parses `git rev-list --left-right --count HEAD...@{upstream}`: `ahead\tbehind`.
+pub fn parse_ahead_behind(out: &str) -> Option<AheadBehind> {
+    let mut parts = out.split_whitespace();
+    let ahead = parts.next()?.parse().ok()?;
+    let behind = parts.next()?.parse().ok()?;
+    Some(AheadBehind { ahead, behind })
+}
+
 /// Parses `git log` printed with [`LOG_FORMAT`]: five NUL-ended fields per commit.
 pub fn parse_log(out: &str) -> Vec<Commit> {
     let mut fields = out.split('\0').map(|s| s.trim_start_matches('\n'));
@@ -411,6 +444,18 @@ mod tests {
         assert!(lines[1].uncommitted);
     }
 
+    #[test]
+    fn parses_ahead_behind() {
+        assert_eq!(
+            parse_ahead_behind("2\t5\n"),
+            Some(AheadBehind {
+                ahead: 2,
+                behind: 5
+            })
+        );
+        assert_eq!(parse_ahead_behind(""), None);
+    }
+
     /// Against the real git, when there is one.
     #[test]
     fn reads_a_repository() {
@@ -471,6 +516,34 @@ mod tests {
         assert!(
             blame[0].uncommitted,
             "the work tree's line is not committed"
+        );
+        assert_eq!(repo.ahead_behind(), None, "no upstream yet");
+
+        // A clone has an upstream: one commit behind after the origin moves on.
+        let clone_dir = tempfile::tempdir().unwrap();
+        let clone_path = clone_dir.path().join("clone");
+        let ok = Command::new("git")
+            .args([
+                "clone",
+                "-q",
+                &dir.path().to_string_lossy(),
+                &clone_path.to_string_lossy(),
+            ])
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git clone");
+        std::fs::write(dir.path().join("kept.txt"), "c\n").unwrap();
+        run(&["commit", "-q", "-am", "two"]);
+        let clone = Repo::discover(&clone_path).unwrap();
+        clone.fetch().unwrap();
+        assert_eq!(
+            clone.ahead_behind(),
+            Some(AheadBehind {
+                ahead: 0,
+                behind: 1
+            })
         );
     }
 }
