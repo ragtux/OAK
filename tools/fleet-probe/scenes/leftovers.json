@@ -1,0 +1,47 @@
+{
+  "name": "leftovers",
+  "about": "What M3 still needs from Fleet, in one run. With showShortcuts on and editor.tabSize set to 2 for the run: the Settings tool's Code page (the modified-value mark on Tab size), the Auto save dropdown opened on the General page (its values), the shortcut overlay after Ctrl+Shift+F, the History tool in the left panel (its tab at 189, 55), and the delete confirmation reached through the tree menu by keyboard. Oak runs the same steps.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "fleet_settings": {"showShortcuts": true, "editor.tabSize": 2},
+  "manual": [
+    "Fleet: run with `winprobe.py attach`; the settings are written before the steps and Fleet reloads them within a second."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 2500], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+comma"], ["wait", 2500], ["shot", "settings-general"],
+      ["move", 984, 414], ["click"], ["wait", 1200], ["shot", "autosave-options"], ["key", "escape"], ["wait", 600],
+      ["move", 533, 381], ["click"], ["wait", 1200], ["shot", "settings-code-modified"],
+      ["key", "ctrl+f4"], ["wait", 800],
+      ["key", "ctrl+shift+f"], ["wait", 400], ["shot", "shortcut-overlay"], ["wait", 1500], ["key", "escape"], ["wait", 500],
+      ["move", 189, 55], ["click"], ["wait", 1500], ["shot", "history-tool"],
+      ["move", 34, 55], ["click"], ["wait", 800],
+      ["move", 100, 530], ["click"], ["wait", 400], ["click", "right"], ["wait", 1000],
+      ["key", "down", "down", "down", "down", "down", "down", "down"], ["wait", 300], ["key", "enter"], ["wait", 1200], ["shot", "delete-dialog"],
+      ["key", "escape"], ["wait", 500]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["key", "ctrl+comma"], ["wait", 1500], ["shot", "settings-general"],
+      ["move", 984, 414], ["click"], ["wait", 800], ["shot", "autosave-options"], ["key", "escape"], ["wait", 400],
+      ["move", 533, 381], ["click"], ["wait", 800], ["shot", "settings-code-modified"],
+      ["key", "ctrl+f4"], ["wait", 500],
+      ["key", "ctrl+shift+f"], ["wait", 400], ["shot", "shortcut-overlay"], ["key", "escape"], ["wait", 400],
+      ["move", 189, 55], ["click"], ["wait", 800], ["shot", "history-tool"],
+      ["move", 34, 55], ["click"], ["wait", 400],
+      ["move", 100, 478], ["click"], ["wait", 400], ["click", "right"], ["wait", 600],
+      ["key", "down", "down", "down", "down", "down", "down"], ["wait", 300], ["key", "enter"], ["wait", 800], ["shot", "delete-dialog"],
+      ["key", "escape"], ["wait", 400]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "settings Code page, Tab size row (y=312)", "axis": "x", "at": 312, "from": 690, "to": 1200, "edges": ["card left", "mark left", "mark right", "label left"]},
+    {"name": "delete dialog column (x=640)", "axis": "y", "at": 640, "from": 100, "to": 700, "edges": ["dialog top", "dialog bottom"]}
+  ],
+  "samples": [
+    {"name": "modified mark", "at": [712, 312], "key": "settings.modified.indicator"}
+  ]
+}

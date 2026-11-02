@@ -1,6 +1,7 @@
 //! Git for Oak, M4's first piece: the branch the toolbar shows and the
 //! per-file status the Files tree colours (`editor.gitDiff.text.*`,
-//! `icon.background.*`, `docs/fleet-probe.md`, eighth pass). Everything
+//! `icon.background.*`, `docs/fleet-probe.md`, eighth pass), and a file's
+//! changed lines for the gutter (painted once batch 10 shows them). Everything
 //! shells out to the `git` on the path, as Fleet does
 //! (`git.discoverGitManually`); when there is no git, there is no repository
 //! and nothing is coloured.
@@ -107,6 +108,83 @@ impl Repo {
     }
 }
 
+/// One changed run of lines in a file against HEAD, for the gutter's line
+/// status (`editor.showLineStatus`). Rows are zero-based in the current
+/// text; a deletion is the row the removed lines sat before, with no rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hunk {
+    pub row: usize,
+    pub rows: usize,
+    pub kind: HunkKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HunkKind {
+    Added,
+    Modified,
+    Deleted,
+}
+
+impl Repo {
+    /// The file's changed lines against HEAD (index and work tree together,
+    /// as Fleet's gutter marks them); an untracked file has none.
+    pub fn line_status(&self, path: &Path) -> Result<Vec<Hunk>> {
+        let rel = path
+            .strip_prefix(&self.root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let out = git(
+            &self.root,
+            &[
+                "diff",
+                "-U0",
+                "--no-color",
+                "--no-ext-diff",
+                "HEAD",
+                "--",
+                &rel,
+            ],
+        )?;
+        Ok(parse_hunks(&String::from_utf8_lossy(&out)))
+    }
+}
+
+/// Parses the `@@ -a,b +c,d @@` lines of a unified diff with no context.
+pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
+    let mut hunks = Vec::new();
+    for line in diff.lines() {
+        let Some(rest) = line.strip_prefix("@@ -") else {
+            continue;
+        };
+        let Some((old, rest)) = rest.split_once(" +") else {
+            continue;
+        };
+        let Some((new, _)) = rest.split_once(" @@") else {
+            continue;
+        };
+        let range = |s: &str| -> Option<(usize, usize)> {
+            match s.split_once(',') {
+                Some((start, len)) => Some((start.parse().ok()?, len.parse().ok()?)),
+                None => Some((s.parse().ok()?, 1)),
+            }
+        };
+        let (Some((_, old_len)), Some((new_start, new_len))) = (range(old), range(new)) else {
+            continue;
+        };
+        let (kind, row, rows) = if new_len == 0 {
+            // `+c,0`: the lines were removed after line c (c is 0 at the top).
+            (HunkKind::Deleted, new_start, 0)
+        } else if old_len == 0 {
+            (HunkKind::Added, new_start - 1, new_len)
+        } else {
+            (HunkKind::Modified, new_start - 1, new_len)
+        };
+        hunks.push(Hunk { row, rows, kind });
+    }
+    hunks
+}
+
 /// Parses `git status --porcelain=v1 -z`: `XY path\0`, and for a rename or
 /// copy `XY new\0old\0`.
 pub fn parse_status(out: &[u8], root: &Path) -> HashMap<PathBuf, Status> {
@@ -158,6 +236,38 @@ mod tests {
         assert_eq!(Status::from_xy(b' ', b' '), None);
     }
 
+    #[test]
+    fn parses_hunk_headers() {
+        let diff = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+b\n@@ -3,0 +4,2 @@\n+x\n+y\n@@ -8,2 +10,0 @@\n-p\n-q\n@@ -12,3 +12,4 @@\n";
+        let hunks = parse_hunks(diff);
+        assert_eq!(
+            hunks,
+            vec![
+                Hunk {
+                    row: 0,
+                    rows: 1,
+                    kind: HunkKind::Modified
+                },
+                Hunk {
+                    row: 3,
+                    rows: 2,
+                    kind: HunkKind::Added
+                },
+                Hunk {
+                    row: 10,
+                    rows: 0,
+                    kind: HunkKind::Deleted
+                },
+                Hunk {
+                    row: 11,
+                    rows: 4,
+                    kind: HunkKind::Modified
+                },
+            ]
+        );
+        assert!(parse_hunks("").is_empty());
+    }
+
     /// Against the real git, when there is one.
     #[test]
     fn reads_a_repository() {
@@ -194,5 +304,18 @@ mod tests {
         let s = repo.status().unwrap();
         assert_eq!(s[&repo.root.join("kept.txt")], Status::Modified);
         assert_eq!(s[&repo.root.join("new.txt")], Status::Untracked);
+        let hunks = repo.line_status(&repo.root.join("kept.txt")).unwrap();
+        assert_eq!(
+            hunks,
+            vec![Hunk {
+                row: 0,
+                rows: 1,
+                kind: HunkKind::Modified
+            }]
+        );
+        assert!(repo
+            .line_status(&repo.root.join("new.txt"))
+            .unwrap()
+            .is_empty());
     }
 }

@@ -1,0 +1,49 @@
+{
+  "name": "git",
+  "about": "Batch 10: git in Fleet. README.md (modified against HEAD) opened through Goto for the gutter's line-status marks; the Git tool in the left panel (its tab at 138, 55); blame (Ctrl+Shift+G, Ctrl+Shift+A) on the same file; the file history (Ctrl+Shift+G, Ctrl+Shift+H); then the toolbar's branch tag hovered. Oak opens README.md from the command line and shoots the same states it has. The scans read the gutter column through a changed line and the Git tool's first rows.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "manual": [
+    "Fleet: run with `winprobe.py attach` against the open window; keep hands off until the last shot.",
+    "The fixture's README.md must still be modified (git status shows ` M README.md`); if a run saved it, `git checkout -- README.md` then edit its first line again."
+  ],
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "README.md"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["shot", "line-status"],
+      ["move", 404, 139], ["wait", 600], ["shot", "line-status-hover"],
+      ["click"], ["wait", 1200], ["shot", "line-status-popup"], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+shift+g", "ctrl+shift+a"], ["wait", 2500], ["shot", "blame"],
+      ["key", "ctrl+shift+g", "ctrl+shift+a"], ["wait", 1000],
+      ["move", 138, 55], ["click"], ["wait", 1500], ["shot", "git-tool"],
+      ["move", 100, 139], ["wait", 800], ["shot", "git-tool-hover"],
+      ["click", "double"], ["wait", 2500], ["shot", "diff"],
+      ["key", "ctrl+f4"], ["wait", 800],
+      ["key", "ctrl+shift+g", "ctrl+shift+h"], ["wait", 2500], ["shot", "file-history"],
+      ["key", "ctrl+f4"], ["wait", 800],
+      ["move", 1180, 18], ["wait", 1200], ["shot", "branch-hover"],
+      ["click"], ["wait", 1200], ["shot", "branch-popup"], ["key", "escape"], ["wait", 500],
+      ["move", 34, 55], ["click"], ["wait", 800]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["shot", "line-status"],
+      ["move", 404, 139], ["wait", 400], ["shot", "line-status-hover"],
+      ["move", 138, 55], ["click"], ["wait", 800], ["shot", "git-tool"],
+      ["move", 1180, 18], ["wait", 800], ["shot", "branch-hover"],
+      ["move", 34, 55], ["click"], ["wait", 400]
+    ]
+  },
+  "oak_args": ["{workspace}/README.md"],
+  "scans": [
+    {"name": "gutter through line 1 (y=139)", "axis": "x", "at": 139, "from": 376, "to": 460, "edges": ["island left", "mark left", "mark right", "text left"]},
+    {"name": "gutter column (x=380)", "axis": "y", "at": 380, "from": 76, "to": 400, "edges": ["first mark top", "first mark bottom"]},
+    {"name": "git tool first rows (x=100)", "axis": "y", "at": 100, "from": 76, "to": 400, "edges": ["header bottom", "first row top", "first row bottom"]}
+  ],
+  "samples": [
+    {"name": "modified mark", "at": [381, 139], "key": "editor.gitDiff.background.modified"},
+    {"name": "branch text", "at": [1190, 18], "key": "gitBranchTag.local.text"}
+  ]
+}
