@@ -7,9 +7,10 @@
 //! actions.
 
 use super::*;
-use crate::actions::{OpenInSplit, SplitRight};
+use crate::actions::{GitCommitJumpToTool, GitFileHistory, OpenInSplit, SplitRight};
 use crate::dialog::{ConfirmDialog, DialogButton, DialogEvent};
 use crate::editor::EditorView;
+use crate::git_tool::GitToolEvent;
 use crate::goto::{GotoEvent, GotoMode, GotoPanel, GotoSources, GotoTarget};
 use crate::keymap::{action_for, hint_for, is_editor_action};
 use crate::menu::{ContextMenu, MenuEntry, MenuEvent};
@@ -82,6 +83,15 @@ impl Workspace {
         let search_tool = self.search_tool.clone();
         cx.subscribe_in(&search_tool, window, Self::on_search_tool_event)
             .detach();
+        let git_tool = self.git_tool.clone();
+        cx.subscribe(&git_tool, |this, _, event: &GitToolEvent, cx| match event {
+            GitToolEvent::Changed => {
+                this.refresh_git(cx);
+                this.files_changed(cx);
+            }
+            GitToolEvent::Open(path) => this.open_path(path.clone(), false, cx),
+        })
+        .detach();
         let notifications = self.notifications.clone();
         cx.observe(&notifications, |_, _, cx| cx.notify()).detach();
         self.reindex(cx);
@@ -439,6 +449,8 @@ impl Workspace {
                 .update(cx, |tree, cx| tree.set_statuses(statuses, cx)),
             Err(e) => eprintln!("oak: {e:#}"),
         }
+        self.git_tool.update(cx, |t, cx| t.refresh(cx));
+        self.history_tool.update(cx, |t, cx| t.refresh(cx));
         // The open files' line status (`editor.showLineStatus`).
         let show = Self::settings(cx).editor_show_line_status();
         for doc in self.documents.clone() {
@@ -452,6 +464,30 @@ impl Workspace {
             };
             doc.update(cx, |d, cx| d.set_hunks(hunks, cx));
         }
+    }
+
+    /// `git/commit/jump-to-tool`: the Git tool with its message field focused.
+    pub(super) fn git_commit_jump_to_tool(
+        &mut self,
+        _: &GitCommitJumpToTool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_tool(tool_side(Tool::Git), Tool::Git, window, cx);
+        let handle = self.git_tool.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
+    }
+
+    /// `git/file-history`: the History tool filtered to the active file.
+    pub(super) fn git_file_history(
+        &mut self,
+        _: &GitFileHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let file = self.target_file(window, cx);
+        self.history_tool.update(cx, |t, cx| t.set_file(file, cx));
+        self.choose_tool(tool_side(Tool::History), Tool::History, window, cx);
     }
 
     /// The branch tag's menu (ninth pass): "Create New Branch..." (later),

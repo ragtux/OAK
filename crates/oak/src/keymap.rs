@@ -73,6 +73,8 @@ action_table! {
     "split-right" => SplitRight, WORKSPACE;
     // Oak's own id for Fleet's tree-menu row, which has none.
     "open-in-split" => OpenInSplit, WORKSPACE;
+    "git/commit/jump-to-tool" => GitCommitJumpToTool, WORKSPACE;
+    "git/file-history" => GitFileHistory, WORKSPACE;
     "unsplit" => Unsplit, WORKSPACE;
     "focus-next-split" | "focus-right-split" => FocusNextSplit, WORKSPACE;
     "focus-previous-split" | "focus-left-split" => FocusPreviousSplit, WORKSPACE;

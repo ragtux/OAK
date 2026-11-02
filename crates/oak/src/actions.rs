@@ -50,6 +50,8 @@ actions!(
         GotoLine,
         RenameFile,
         OpenInSplit,
+        GitCommitJumpToTool,
+        GitFileHistory,
         DeleteFile,
         ChangeLineEndings,
         PasteFromHistory,

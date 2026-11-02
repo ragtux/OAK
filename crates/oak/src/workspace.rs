@@ -14,6 +14,7 @@ use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
 mod workbench;
 use crate::dialog::{ConfirmDialog, DialogButton};
+use crate::git_tool::{GitTool, HistoryTool};
 use crate::goto::GotoPanel;
 use crate::menu::ContextMenu;
 use crate::notifications::Notifications;
@@ -437,6 +438,8 @@ pub struct Workspace {
     dragging_tab: Option<(usize, usize)>,
     /// M3: the Search tool, the notifications, the popups and their state.
     search_tool: Entity<SearchTool>,
+    git_tool: Entity<GitTool>,
+    history_tool: Entity<HistoryTool>,
     notifications: Entity<Notifications>,
     goto: Option<Entity<GotoPanel>>,
     menu: Option<Entity<ContextMenu>>,
@@ -514,9 +517,12 @@ impl Workspace {
             Panel::new(layout.right, Vec::new(), cx),
         ];
         let search_tool = Self::make_search_tool(root.clone(), cx);
+        let repo = oak_git::Repo::discover(&root);
+        let git_tool = cx.new(|cx| GitTool::new(repo.clone(), cx));
+        let history_tool = cx.new(|cx| HistoryTool::new(repo.clone(), cx));
         let mut this = Workspace {
             branch: git_branch(&root).map(Into::into),
-            repo: oak_git::Repo::discover(&root),
+            repo,
             shortcut_hint: None,
             shortcut_generation: 0,
             disk_ticks: 0,
@@ -534,6 +540,8 @@ impl Workspace {
             autosave_generation: 0,
             dragging_tab: None,
             search_tool,
+            git_tool,
+            history_tool,
             notifications: cx.new(|_| Notifications::new()),
             goto: None,
             menu: None,
@@ -2385,6 +2393,8 @@ impl Workspace {
             let body: gpui::AnyElement = match tool {
                 Tool::Files => self.file_tree.clone().into_any_element(),
                 Tool::Search => self.search_tool.clone().into_any_element(),
+                Tool::Git => self.git_tool.clone().into_any_element(),
+                Tool::History => self.history_tool.clone().into_any_element(),
                 Tool::Notifications => self.notifications_view().into_any_element(),
                 other => div()
                     .size_full()
@@ -2761,6 +2771,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_file))
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::open_in_split))
+            .on_action(cx.listener(Self::git_commit_jump_to_tool))
+            .on_action(cx.listener(Self::git_file_history))
             .on_action(cx.listener(Self::unsplit))
             .on_action(cx.listener(Self::focus_next_split))
             .on_action(cx.listener(Self::focus_previous_split))

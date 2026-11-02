@@ -47,6 +47,16 @@ impl Status {
     }
 }
 
+/// One changed file as the Git tool lists it: its status, whether the index
+/// holds it (the row's checkbox) and, for a rename, the old path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusEntry {
+    pub path: PathBuf,
+    pub status: Status,
+    pub staged: bool,
+    pub old_path: Option<PathBuf>,
+}
+
 /// A repository found above a workspace folder.
 #[derive(Clone, Debug)]
 pub struct Repo {
@@ -411,7 +421,15 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
 /// Parses `git status --porcelain=v1 -z`: `XY path\0`, and for a rename or
 /// copy `XY new\0old\0`.
 pub fn parse_status(out: &[u8], root: &Path) -> HashMap<PathBuf, Status> {
-    let mut statuses = HashMap::new();
+    parse_status_entries(out, root)
+        .into_iter()
+        .map(|e| (e.path, e.status))
+        .collect()
+}
+
+/// The same, keeping the index column and a rename's old path.
+pub fn parse_status_entries(out: &[u8], root: &Path) -> Vec<StatusEntry> {
+    let mut entries = Vec::new();
     let mut fields = out.split(|&b| b == 0);
     while let Some(entry) = fields.next() {
         if entry.len() < 4 {
@@ -419,15 +437,65 @@ pub fn parse_status(out: &[u8], root: &Path) -> HashMap<PathBuf, Status> {
         }
         let (x, y) = (entry[0], entry[1]);
         let path = String::from_utf8_lossy(&entry[3..]).to_string();
-        if matches!(x, b'R' | b'C') {
-            // The old name follows; nothing to show for it.
-            fields.next();
-        }
+        let old_path = if matches!(x, b'R' | b'C') {
+            fields
+                .next()
+                .map(|old| root.join(String::from_utf8_lossy(old).to_string()))
+        } else {
+            None
+        };
         if let Some(status) = Status::from_xy(x, y) {
-            statuses.insert(root.join(path), status);
+            // Staged: the index column holds a change (not `?` or `!`).
+            let staged = !matches!(x, b' ' | b'?' | b'!');
+            entries.push(StatusEntry {
+                path: root.join(path),
+                status,
+                staged,
+                old_path,
+            });
         }
     }
-    statuses
+    entries
+}
+
+impl Repo {
+    /// Every changed file with its index state, for the Git tool.
+    pub fn status_entries(&self) -> Result<Vec<StatusEntry>> {
+        let out = git(
+            &self.root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?;
+        Ok(parse_status_entries(&out, &self.root))
+    }
+
+    /// `git add` on the paths (the Git tool's checkboxes).
+    pub fn stage(&self, paths: &[PathBuf]) -> Result<()> {
+        let rels: Vec<String> = paths.iter().map(|p| self.relative(p)).collect();
+        let mut args = vec!["add", "--"];
+        args.extend(rels.iter().map(String::as_str));
+        git(&self.root, &args).map(|_| ())
+    }
+
+    /// `git reset` on the paths.
+    pub fn unstage(&self, paths: &[PathBuf]) -> Result<()> {
+        let rels: Vec<String> = paths.iter().map(|p| self.relative(p)).collect();
+        let mut args = vec!["reset", "--quiet", "--"];
+        args.extend(rels.iter().map(String::as_str));
+        git(&self.root, &args).map(|_| ())
+    }
+
+    /// `git commit -m` with what the index holds.
+    pub fn commit(&self, message: &str) -> Result<()> {
+        git(&self.root, &["commit", "--quiet", "-m", message]).map(|_| ())
+    }
+
+    /// How many commits HEAD has (the "unsynced" count without an upstream).
+    pub fn commit_count(&self) -> usize {
+        git(&self.root, &["rev-list", "--count", "HEAD"])
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o).trim().parse().ok())
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
@@ -447,6 +515,29 @@ mod tests {
         assert_eq!(s[&root.join("both.rs")], Status::Conflict);
         assert_eq!(s[&root.join("gone.rs")], Status::Deleted);
         assert_eq!(s.len(), 6);
+        let entries = parse_status_entries(out, root);
+        let readme = entries
+            .iter()
+            .find(|e| e.path == root.join("README.md"))
+            .unwrap();
+        assert!(!readme.staged);
+        let added = entries
+            .iter()
+            .find(|e| e.path == root.join("src/added.rs"))
+            .unwrap();
+        assert!(added.staged);
+        let renamed = entries
+            .iter()
+            .find(|e| e.path == root.join("src/renamed.rs"))
+            .unwrap();
+        assert_eq!(renamed.old_path, Some(root.join("src/old.rs")));
+        assert!(
+            !entries
+                .iter()
+                .find(|e| e.path == root.join("notes.txt"))
+                .unwrap()
+                .staged
+        );
     }
 
     #[test]
@@ -564,6 +655,17 @@ mod tests {
         let s = repo.status().unwrap();
         assert_eq!(s[&repo.root.join("kept.txt")], Status::Modified);
         assert_eq!(s[&repo.root.join("new.txt")], Status::Untracked);
+        assert_eq!(repo.commit_count(), 1);
+        repo.stage(&[repo.root.join("new.txt")]).unwrap();
+        let entries = repo.status_entries().unwrap();
+        assert!(entries
+            .iter()
+            .any(|e| e.path.ends_with("new.txt") && e.staged));
+        repo.unstage(&[repo.root.join("new.txt")]).unwrap();
+        let entries = repo.status_entries().unwrap();
+        assert!(entries
+            .iter()
+            .any(|e| e.path.ends_with("new.txt") && !e.staged));
         let hunks = repo.line_status(&repo.root.join("kept.txt")).unwrap();
         assert_eq!(
             hunks,

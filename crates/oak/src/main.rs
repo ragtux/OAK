@@ -13,6 +13,7 @@ mod document;
 mod editor;
 mod file_tree;
 mod find;
+mod git_tool;
 mod goto;
 mod input;
 mod keymap;

@@ -171,6 +171,52 @@ pub mod metrics {
     /// about 20 left of the click (the tag's icon, estimate).
     pub const BRANCH_MENU_GAP: f32 = 0.67;
     pub const BRANCH_MENU_OFFSET_X: f32 = 20.;
+    /// The Git and History tools (ninth pass). The field's top is at y 76,
+    /// 1 under where Oak's panel body begins; 24 tall. The island splits in
+    /// two equal blocks; the lower one's texts and buttons start 22 in.
+    /// Then 8.67 to the 24 px Commit button, 12 to the 24 px "Changed files"
+    /// header, 2 to the first 26 px row; in a row the glyph ends 16.67 in,
+    /// the icon is centred 34 in, the name starts 46.67 in, the 14.67 px
+    /// checkbox ends 12.67 before the island's edge. A 2 px gap splits the
+    /// island; under it "Unsynced commits" on a 24 line 8 down, the 24.67 px
+    /// Push button 13.33 lower, the branch chip (21.33 tall, 40–81) 24 lower,
+    /// commits 22.67 lower as 40 px blocks (a 6.67 dot 12 in, text 30.67 in,
+    /// two 19 px lines). The History tool: the field, a filter row of chips
+    /// 18 under it, rows 20 under that.
+    pub const GIT_FIELD_TOP: f32 = 1.;
+    pub const GIT_LOWER_X: f32 = 16.;
+    pub const GIT_FIELD_HEIGHT: f32 = 24.;
+    pub const GIT_BUTTON_GAP: f32 = 8.67;
+    pub const GIT_HEADER_GAP: f32 = 12.;
+    pub const GIT_HEADER_HEIGHT: f32 = 24.;
+    pub const GIT_HEADER_PAD_X: f32 = 6.67;
+    pub const GIT_COUNT_GAP: f32 = 8.;
+    pub const GIT_ROWS_GAP: f32 = 2.;
+    pub const GIT_ROW: f32 = 26.;
+    pub const GIT_GLYPH_X: f32 = 16.67;
+    pub const GIT_ICON_X: f32 = 34.;
+    pub const GIT_NAME_X: f32 = 46.67;
+    pub const GIT_OLD_NAME_GAP: f32 = 6.67;
+    pub const GIT_CHECKBOX: f32 = 14.67;
+    pub const GIT_CHECKBOX_RIGHT: f32 = 6.67;
+    pub const GIT_SPLIT_GAP: f32 = 2.;
+    pub const GIT_UNSYNCED_TOP: f32 = 8.;
+    pub const GIT_PUSH_GAP: f32 = 13.33;
+    pub const GIT_PUSH_HEIGHT: f32 = 24.67;
+    pub const GIT_CHIP_GAP: f32 = 24.;
+    pub const GIT_CHIP_X: f32 = 26.67;
+    pub const GIT_CHIP_HEIGHT: f32 = 21.33;
+    pub const GIT_CHIP_PAD_X: f32 = 6.67;
+    pub const GIT_COMMITS_GAP: f32 = 22.67;
+    pub const GIT_COMMIT_ROW: f32 = 40.;
+    pub const GIT_COMMIT_LINE: f32 = 19.;
+    pub const GIT_COMMIT_DOT: f32 = 6.67;
+    pub const GIT_COMMIT_DOT_X: f32 = 12.;
+    pub const GIT_COMMIT_TEXT_X: f32 = 30.67;
+    pub const HISTORY_FILTER_GAP: f32 = 6.;
+    pub const HISTORY_CHIP_GAP: f32 = 13.33;
+    pub const HISTORY_SCOPE_MAX_WIDTH: f32 = 192.;
+    pub const HISTORY_ROWS_GAP: f32 = 8.67;
     pub const TREE_BADGE_BOX: f32 = 16.;
     pub const TREE_BADGE_DOT: f32 = 6.67;
     pub const TREE_BADGE_FONT: f32 = 13.;
@@ -573,6 +619,40 @@ scaled_metrics!(
     line_status_popup_height = LINE_STATUS_POPUP_HEIGHT,
     branch_menu_gap = BRANCH_MENU_GAP,
     branch_menu_offset_x = BRANCH_MENU_OFFSET_X,
+    git_field_top = GIT_FIELD_TOP,
+    git_lower_x = GIT_LOWER_X,
+    git_field_height = GIT_FIELD_HEIGHT,
+    git_button_gap = GIT_BUTTON_GAP,
+    git_header_gap = GIT_HEADER_GAP,
+    git_header_height = GIT_HEADER_HEIGHT,
+    git_header_pad_x = GIT_HEADER_PAD_X,
+    git_count_gap = GIT_COUNT_GAP,
+    git_rows_gap = GIT_ROWS_GAP,
+    git_row = GIT_ROW,
+    git_glyph_x = GIT_GLYPH_X,
+    git_icon_x = GIT_ICON_X,
+    git_name_x = GIT_NAME_X,
+    git_old_name_gap = GIT_OLD_NAME_GAP,
+    git_checkbox = GIT_CHECKBOX,
+    git_checkbox_right = GIT_CHECKBOX_RIGHT,
+    git_split_gap = GIT_SPLIT_GAP,
+    git_unsynced_top = GIT_UNSYNCED_TOP,
+    git_push_gap = GIT_PUSH_GAP,
+    git_push_height = GIT_PUSH_HEIGHT,
+    git_chip_gap = GIT_CHIP_GAP,
+    git_chip_x = GIT_CHIP_X,
+    git_chip_height = GIT_CHIP_HEIGHT,
+    git_chip_pad_x = GIT_CHIP_PAD_X,
+    git_commits_gap = GIT_COMMITS_GAP,
+    git_commit_row = GIT_COMMIT_ROW,
+    git_commit_line = GIT_COMMIT_LINE,
+    git_commit_dot = GIT_COMMIT_DOT,
+    git_commit_dot_x = GIT_COMMIT_DOT_X,
+    git_commit_text_x = GIT_COMMIT_TEXT_X,
+    history_filter_gap = HISTORY_FILTER_GAP,
+    history_chip_gap = HISTORY_CHIP_GAP,
+    history_scope_max_width = HISTORY_SCOPE_MAX_WIDTH,
+    history_rows_gap = HISTORY_ROWS_GAP,
     tree_badge_box = TREE_BADGE_BOX,
     tree_badge_dot = TREE_BADGE_DOT,
     tree_badge_font = TREE_BADGE_FONT,
@@ -870,6 +950,9 @@ pub struct Theme {
     pub git_deleted_bg: Hsla,
     pub git_blame_bg: Hsla,
     pub git_hunk_wash: Hsla,
+    // gitBranchTag.local.*: the Git tool's branch chip.
+    pub git_branch_tag_border: Hsla,
+    pub git_branch_tag_text: Hsla,
     pub icon_green: Hsla,
     pub icon_blue: Hsla,
     pub icon_red: Hsla,
@@ -1219,6 +1302,8 @@ impl Theme {
                 Color::rgb(0x14, 0x83, 0x5E),
             )
             .opacity(0.2),
+            git_branch_tag_border: c("gitBranchTag.local.border", Color::rgb(0x4B, 0x8D, 0xEC)),
+            git_branch_tag_text: c("gitBranchTag.local.text", Color::rgb(0x4B, 0x8D, 0xEC)),
             icon_green: c("icon.background.green", Color::rgb(0x16, 0x90, 0x68)),
             icon_blue: c("icon.background.blue", Color::rgb(0x2A, 0x7D, 0xEB)),
             icon_red: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)),

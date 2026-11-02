@@ -669,6 +669,21 @@ island clips the 1.33 Fleet draws outside it), the popup pill 382.67–580 ×
 branch menu 773.33–932.67 × 34.67–105.33 to Fleet's 772.67–952.67 ×
 36.67–103.33 (Fleet's rows carry a + and a dot icon; Oak's are text).
 
+Second part: the Git tool (`git_tool.rs`: the commit field, Commit, the
+"Changed files" header with its tri-state checkbox, 26 px rows with the
+status glyph, icon, name, a rename's old name struck through and the index
+checkbox; the island halved; "Unsynced commits", the Push button, the
+branch chip and the commit rows) and the History tool (the "Search commits"
+field filtering the summaries, the three filter chips, the commit rows;
+`git/file-history` scopes it to the active file). Against Fleet: the
+Commit button 108–132 to Fleet's 108.67–132, the header 144–168 to
+144–168, the row checkbox 175.33–190 to 175.33–189.33, the split 422 to
+423.33, the Push button 30–298.67 × 469.33–494 to 30–300 × 470–494.67, the
+History field 75.33–99.33 to 76–100 and its rows within 2 px; the branch
+chip is 58.67 wide to Fleet's 41.33 (its chevron, estimate). Not built:
+the filter button's menu, Push itself, the AI icon in the commit field,
+the filter chips' menus, the Changed Files tab, blame.
+
 ### Batch 10: git
 
 Read off `README.md` (modified against HEAD: lines 23–24 added), the Git
