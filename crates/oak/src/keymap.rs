@@ -71,6 +71,8 @@ action_table! {
     "focus-editor" => FocusEditor, WORKSPACE;
     "new-file" => NewFile, WORKSPACE;
     "split-right" => SplitRight, WORKSPACE;
+    // Oak's own id for Fleet's tree-menu row, which has none.
+    "open-in-split" => OpenInSplit, WORKSPACE;
     "unsplit" => Unsplit, WORKSPACE;
     "focus-next-split" | "focus-right-split" => FocusNextSplit, WORKSPACE;
     "focus-previous-split" | "focus-left-split" => FocusPreviousSplit, WORKSPACE;

@@ -49,6 +49,7 @@ actions!(
         PrevOccurrence,
         GotoLine,
         RenameFile,
+        OpenInSplit,
         DeleteFile,
         ChangeLineEndings,
         PasteFromHistory,

@@ -65,6 +65,8 @@ pub struct TextMetrics {
     pub scrollbar_mark_width: f32,
     pub scrollbar_mark_height: f32,
     pub fold_chevron_x: f32,
+    pub breakpoint_hint_x: f32,
+    pub breakpoint_hint_size: f32,
     pub icon_size: f32,
     pub folded_mark_cells: f32,
     pub folded_mark_radius: f32,
@@ -166,6 +168,8 @@ impl TextMetrics {
             scrollbar_mark_width: m.scrollbar_mark_width,
             scrollbar_mark_height: m.scrollbar_mark_height,
             fold_chevron_x: m.fold_chevron_x,
+            breakpoint_hint_x: m.breakpoint_hint_x,
+            breakpoint_hint_size: m.breakpoint_hint_size,
             icon_size: m.icon_size,
             folded_mark_cells: m.folded_mark_cells,
             folded_mark_radius: m.folded_mark_radius,
@@ -2868,7 +2872,19 @@ impl Element for EditorElement {
                         cx,
                     );
                 }
-                // The fold chevron in its 16 px box (batch 5), and the hover wash.
+                // The hovered row shows the breakpoint hint: a filled circle at
+                // 21.3 (batch 5; the `fold` scene showed no wash under the chevron).
+                if prepaint.hovered_row == Some(laid.row) {
+                    let d = px(tm.breakpoint_hint_size);
+                    let hint = Bounds::new(
+                        point(origin_x + px(tm.breakpoint_hint_x), y + (lh - d) / 2.),
+                        size(d, d),
+                    );
+                    window.paint_quad(
+                        fill(hint, theme.breakpoint_hint).corner_radii(Corners::all(d / 2.)),
+                    );
+                }
+                // The fold chevron in its 16 px box (batch 5).
                 if let Some(folded) = laid.chevron {
                     let box_origin = point(
                         origin_x + px(tm.fold_chevron_x),
@@ -2876,12 +2892,6 @@ impl Element for EditorElement {
                     );
                     let chevron_bounds =
                         Bounds::new(box_origin, size(px(tm.icon_size), px(tm.icon_size)));
-                    if prepaint.hovered_row == Some(laid.row) {
-                        window.paint_quad(
-                            fill(chevron_bounds, theme.fold_bg_hovered)
-                                .corner_radii(Corners::all(px(3.))),
-                        );
-                    }
                     let path: SharedString = if folded {
                         "icons/expui/general/chevronRight.svg".into()
                     } else {

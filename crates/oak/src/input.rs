@@ -172,6 +172,14 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Selects a byte range of the text (the tree's rename selects the stem).
+    pub fn select_range(&mut self, range: std::ops::Range<usize>, cx: &mut Context<Self>) {
+        let len = self.content.len();
+        self.selected_range = range.start.min(len)..range.end.min(len);
+        self.selection_reversed = false;
+        cx.notify();
+    }
+
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
         self.selected_range = 0..self.content.len();
         self.selection_reversed = false;

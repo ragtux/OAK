@@ -38,6 +38,15 @@ pub struct Document {
     folds: Vec<Fold>,
     folds_version: Option<u64>,
     indent_source: Option<IndentSource>,
+    /// The file's modification time when it was read or written.
+    disk_modified: Option<std::time::SystemTime>,
+    /// The file changed on disk while this text had unsaved edits: the editor
+    /// shows Fleet's banner until Overwrite or Reload.
+    pub conflict: bool,
+}
+
+fn modified_time(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 impl EventEmitter<DocumentEvent> for Document {}
@@ -62,9 +71,48 @@ impl Document {
             folds: Vec::new(),
             folds_version: None,
             indent_source: None,
+            disk_modified: None,
+            conflict: false,
         };
+        doc.disk_modified = doc.path.as_deref().and_then(modified_time);
         doc.refresh_indent(settings);
         doc
+    }
+
+    /// The file on disk is newer (or older) than what was read or written.
+    pub fn disk_changed(&self) -> bool {
+        match (&self.path, self.disk_modified) {
+            (Some(path), Some(then)) => modified_time(path).is_some_and(|now| now != then),
+            (Some(path), None) => modified_time(path).is_some(),
+            (None, _) => false,
+        }
+    }
+
+    /// The file changed under the document: a clean one follows the disk, an
+    /// edited one raises the banner.
+    pub fn note_disk_change(&mut self, cx: &mut Context<Self>) {
+        if self.is_dirty() {
+            self.conflict = true;
+            self.disk_modified = self.path.as_deref().and_then(modified_time);
+            cx.notify();
+        } else if let Err(e) = self.reload_from_disk(cx) {
+            eprintln!("oak: cannot reload {}: {e:#}", self.title());
+        }
+    }
+
+    /// Replaces the text with the file's (Reload).
+    pub fn reload_from_disk(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        let text = std::fs::read_to_string(&path)?;
+        self.edit(cx, |buffer| buffer.set_text(&text));
+        self.buffer.mark_saved();
+        self.disk_modified = modified_time(&path);
+        self.conflict = false;
+        cx.emit(DocumentEvent::Saved);
+        cx.notify();
+        Ok(())
     }
 
     pub fn title(&self) -> String {
@@ -86,6 +134,7 @@ impl Document {
             .as_deref()
             .map(EditorConfig::for_path)
             .unwrap_or_default();
+        self.disk_modified = path.as_deref().and_then(modified_time);
         self.path = path;
         self.spans_version = None;
         self.tree = None;
@@ -180,6 +229,8 @@ impl Document {
         });
         std::fs::write(&path, self.buffer.text_for_file())?;
         self.buffer.mark_saved();
+        self.disk_modified = modified_time(&path);
+        self.conflict = false;
         cx.emit(DocumentEvent::Saved);
         cx.notify();
         Ok(())

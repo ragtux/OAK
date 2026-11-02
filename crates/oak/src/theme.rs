@@ -183,6 +183,21 @@ pub mod metrics {
     pub const INPUT_RADIUS: f32 = 4.;
     pub const INPUT_FOCUS_BORDER: f32 = 4. / 3.;
     pub const FIND_BAR_SEPARATOR_HEIGHT: f32 = 16.;
+    /// With a query typed, Fleet's find bar pushes the text down by its own
+    /// band: 12 above, 28, 12 below (the `find` scene: line 1 from 87 to 139).
+    pub const FIND_BAR_PUSH: f32 = 52.;
+    /// "File has been changed on disk" (the `dialogs` scene): a popup-coloured
+    /// pill centred over the editor, 34.67 tall, its top 4.67 under the tab
+    /// strip; the text 12 in, 12 to the 24 px primary buttons (Overwrite,
+    /// Reload, 12.67 apart, 8.67 side padding), 11.33 after the last.
+    pub const BANNER_TOP: f32 = 4.67;
+    pub const BANNER_HEIGHT: f32 = 34.67;
+    pub const BANNER_PAD_LEFT: f32 = 12.;
+    pub const BANNER_PAD_RIGHT: f32 = 11.33;
+    pub const BANNER_GAP: f32 = 12.;
+    pub const BANNER_BUTTON_GAP: f32 = 12.67;
+    pub const BANNER_BUTTON_HEIGHT: f32 = 24.;
+    pub const BANNER_BUTTON_PAD_X: f32 = 8.67;
     pub const TEXT_BUTTON_PAD_X: f32 = 8.;
     /// Soft-wrapped continuation rows start at the text origin (estimate: not
     /// probed; batch 5 left soft wrap, whitespace and the guides for a scene each).
@@ -502,6 +517,15 @@ scaled_metrics!(
     folded_mark_radius = FOLDED_MARK_RADIUS,
     find_bar_width = FIND_BAR_WIDTH,
     find_bar_height = FIND_BAR_HEIGHT,
+    find_bar_push = FIND_BAR_PUSH,
+    banner_top = BANNER_TOP,
+    banner_height = BANNER_HEIGHT,
+    banner_pad_left = BANNER_PAD_LEFT,
+    banner_pad_right = BANNER_PAD_RIGHT,
+    banner_gap = BANNER_GAP,
+    banner_button_gap = BANNER_BUTTON_GAP,
+    banner_button_height = BANNER_BUTTON_HEIGHT,
+    banner_button_pad_x = BANNER_BUTTON_PAD_X,
     find_bar_right = FIND_BAR_RIGHT,
     find_bar_top = FIND_BAR_TOP,
     find_bar_row_gap = FIND_BAR_ROW_GAP,
@@ -752,6 +776,10 @@ pub struct Theme {
     pub fold_icon: Hsla,
     pub fold_icon_hovered: Hsla,
     pub fold_bg_hovered: Hsla,
+    /// The breakpoint hint on the hovered gutter row: Fleet's red at 28 %
+    /// (read off the `fold` scene's hover shot; no theme key names it, so
+    /// `icon.background.red` with the opacity is an estimate).
+    pub breakpoint_hint: Hsla,
     /// `editor.foldedMark.*`: the `{…}` box on a folded line.
     pub folded_mark_bg: Hsla,
     pub folded_mark_text: Hsla,
@@ -1054,6 +1082,7 @@ impl Theme {
                 "editor.foldIndicator.icon.hovered",
                 Color::rgb(0x7A, 0x7F, 0x86),
             ),
+            breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.28),
             fold_bg_hovered: c(
                 "editor.foldIndicator.background.hovered",
                 text_primary.with_alpha(0x16),

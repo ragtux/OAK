@@ -7,7 +7,9 @@
 //! actions.
 
 use super::*;
+use crate::actions::{OpenInSplit, SplitRight};
 use crate::dialog::{ConfirmDialog, DialogButton, DialogEvent};
+use crate::editor::EditorView;
 use crate::goto::{GotoEvent, GotoMode, GotoPanel, GotoSources, GotoTarget};
 use crate::keymap::{action_for, hint_for, is_editor_action};
 use crate::menu::{ContextMenu, MenuEntry, MenuEvent};
@@ -298,36 +300,159 @@ impl Workspace {
     /// Files..., Open In ›, Rename..., Delete..., Copy Path, Copy Relative
     /// Path. Fleet's Cut, Copy, Paste and Git › rows wait for the file
     /// clipboard and M4.
-    fn file_menu(&self, _is_dir: bool, cx: &App) -> Vec<MenuEntry> {
-        let hidden_label = if self.file_tree.read(cx).show_hidden() {
-            "Hide Hidden Files"
-        } else {
-            "Show Hidden Files"
-        };
+    fn file_menu(&self, is_dir: bool, cx: &App) -> Vec<MenuEntry> {
         let mut entries = Self::entries(
             &[
                 "New File...=new-file",
                 "New Folder...=files/new-folder",
                 "-",
-                "Find in Files...=find-in-path",
             ],
             cx,
         );
+        if is_dir {
+            entries.extend(Self::entries(&["Find in Files...=find-in-path"], cx));
+        }
+        entries.extend(MenuEntry::labelled("Open in Split", "open-in-split", cx));
         entries.push(Self::open_in_submenu(cx));
         entries.extend(Self::entries(
-            &[
-                "-",
-                "Rename...=files/rename",
-                "Delete...=files/delete",
-                "-",
-                "copy-path",
-                "copy-relative-path",
-                "-",
-            ],
+            &["-", "Rename...=files/rename", "Delete...=files/delete", "-"],
             cx,
         ));
-        entries.extend(MenuEntry::labelled(hidden_label, "toggle-hidden-files", cx));
+        // Fleet's file clipboard rows (Cut, Copy, Paste) and Git arrive with M4.
+        entries.push(MenuEntry::disabled("Cut"));
+        entries.push(MenuEntry::disabled("Copy"));
+        entries.extend(Self::entries(&["copy-path", "copy-relative-path"], cx));
+        entries.push(MenuEntry::disabled("Paste"));
+        entries.push(MenuEntry::Separator);
+        entries.push(MenuEntry::submenu(
+            "Git",
+            vec![MenuEntry::disabled("Git arrives with M4")],
+        ));
         entries
+    }
+
+    /// The tree menu's "Open in Split" (a row without an action id of its
+    /// own in Fleet): a split to the right showing the file.
+    pub(super) fn open_in_split(
+        &mut self,
+        _: &OpenInSplit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.target_file(window, cx) else {
+            return;
+        };
+        if path.is_dir() {
+            return;
+        }
+        self.split_right(&SplitRight, window, cx);
+        self.open_path(path, false, cx);
+    }
+
+    /// Starts the once-a-second look at the open files' modification times.
+    pub(super) fn watch_disk(&mut self, cx: &mut Context<Self>) {
+        self.disk_poll = Some(cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(1))
+                .await;
+            if this.update(cx, |ws, cx| ws.check_disk(cx)).is_err() {
+                break;
+            }
+        }));
+    }
+
+    /// A file changed under an open document: reloaded when the document is
+    /// clean, else the editor shows Fleet's banner with Overwrite and Reload.
+    fn check_disk(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for doc in self.documents.clone() {
+            if doc.read(cx).disk_changed() {
+                doc.update(cx, |d, cx| d.note_disk_change(cx));
+                changed = true;
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// "File has been changed on disk": the pill over the editor, Overwrite
+    /// saving the document's text, Reload taking the disk's.
+    pub(super) fn render_banner(
+        &self,
+        editor: Entity<EditorView>,
+        theme: &Theme,
+        m: &Metrics,
+    ) -> impl IntoElement {
+        let overwrite = editor.clone();
+        let reload = editor;
+        let button = |id: &'static str, label: &'static str| {
+            crate::dialog::button(
+                id,
+                label.into(),
+                crate::dialog::ButtonKind::Primary,
+                false,
+                theme,
+                m,
+            )
+            .h(px(m.banner_button_height))
+            .border_0()
+            .px(px(m.banner_button_pad_x))
+        };
+        div()
+            .absolute()
+            .top(px(m.banner_top))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .h(px(m.banner_height))
+                    .pl(px(m.banner_pad_left))
+                    .pr(px(m.banner_pad_right))
+                    .flex()
+                    .items_center()
+                    .gap(px(m.banner_gap))
+                    .rounded(px(m.popup_radius))
+                    .border_1()
+                    .border_color(theme.popup_border)
+                    .bg(theme.popup_bg)
+                    .font_family(theme.ui_font.clone())
+                    .text_size(px(m.ui_font_size))
+                    .text_color(theme.text_primary)
+                    .shadow(vec![BoxShadow {
+                        color: theme.shadow_medium,
+                        offset: point(px(0.), px(m.popup_shadow_offset_y)),
+                        blur_radius: px(m.popup_shadow_blur),
+                        spread_radius: px(0.),
+                    }])
+                    .child("File has been changed on disk")
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(m.banner_button_gap))
+                            .child(button("banner-overwrite", "Overwrite").on_click(
+                                move |_, _, cx| {
+                                    overwrite.update(cx, |e, cx| {
+                                        if let Err(err) = e.save(cx) {
+                                            eprintln!("oak: cannot save: {err:#}");
+                                        }
+                                    });
+                                },
+                            ))
+                            .child(button("banner-reload", "Reload").on_click(move |_, _, cx| {
+                                reload.update(cx, |e, cx| {
+                                    e.document.update(cx, |d, cx| {
+                                        if let Err(err) = d.reload_from_disk(cx) {
+                                            eprintln!("oak: cannot reload: {err:#}");
+                                        }
+                                    });
+                                });
+                            })),
+                    ),
+            )
     }
 
     /// A tab's menu (batch 7): Close, Close Other Tabs, Close All Tabs, Close
@@ -521,6 +646,11 @@ impl Workspace {
                 self.open_menu(entries, *position, Some(focus), cx);
             }
             FileTreeEvent::Moved { from, to } => self.path_renamed(from, to.clone(), cx),
+            FileTreeEvent::Renamed { from, to } => {
+                self.path_renamed(from, to.clone(), cx);
+                let handle = self.file_tree.read(cx).focus_handle(cx);
+                self.focus_later(handle, cx);
+            }
             FileTreeEvent::Open { .. } => {}
         }
     }

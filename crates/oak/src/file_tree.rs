@@ -17,12 +17,15 @@ use crate::actions::{
     TreeDown, TreeExtendDown, TreeExtendUp, TreeLeft, TreeOpen, TreeRight, TreeSelect, TreeUp,
 };
 use crate::assets::{file_icon, icon};
+use crate::input::{InputEvent, TextInput};
 use crate::scrollbar::scrollbar;
 use crate::settings::AppSettings;
 use crate::theme::{Metrics, Theme};
+use gpui::Entity;
 use gpui::{
     div, prelude::*, px, uniform_list, App, Context, ElementId, EventEmitter, FocusHandle,
-    Focusable, MouseButton, Pixels, Point, SharedString, UniformListScrollHandle, Window,
+    Focusable, MouseButton, Pixels, Point, SharedString, Subscription, UniformListScrollHandle,
+    Window,
 };
 use oak_settings::{ClickMode, KeyboardNavigation};
 use std::path::{Path, PathBuf};
@@ -39,6 +42,16 @@ pub enum FileTreeEvent {
     },
     /// A row was dropped on a folder and moved on disk.
     Moved { from: PathBuf, to: PathBuf },
+    /// The inline rename (`files/rename`) finished on disk.
+    Renamed { from: PathBuf, to: PathBuf },
+}
+
+/// A row being renamed in place (Fleet turns the row into a text field with
+/// the name selected up to its extension).
+struct Renaming {
+    path: PathBuf,
+    input: Entity<TextInput>,
+    _subscription: Subscription,
 }
 
 /// What a dragged row carries: every selected path.
@@ -209,6 +222,7 @@ pub struct FileTree {
     /// the selection.
     highlight: Option<usize>,
     options: Options,
+    renaming: Option<Renaming>,
     focus_handle: FocusHandle,
     scroll: UniformListScrollHandle,
 }
@@ -258,6 +272,7 @@ impl FileTree {
             anchor: None,
             highlight: None,
             options,
+            renaming: None,
             focus_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
         };
@@ -300,10 +315,6 @@ impl FileTree {
         } else {
             row.path.parent().map(Path::to_path_buf)
         }
-    }
-
-    pub fn show_hidden(&self) -> bool {
-        self.options.show_hidden
     }
 
     /// `toggle-hidden-files`: dotfiles in or out of the tree.
@@ -652,6 +663,11 @@ impl FileTree {
         if !self.options.select_opened {
             return false;
         }
+        self.reveal_path(path)
+    }
+
+    /// Expands to the path and selects its row whatever `files.selectOpenedFile` says.
+    pub fn reveal_path(&mut self, path: &Path) -> bool {
         let Ok(rel) = path.strip_prefix(&self.root.path) else {
             return false;
         };
@@ -775,6 +791,80 @@ impl FileTree {
         }
     }
 
+    // ---- inline rename ------------------------------------------------------------
+
+    /// `files/rename` on a row: the row becomes a text field holding the name
+    /// with its stem selected. False when the path is not in this tree.
+    pub fn start_rename(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.reveal_path(path) {
+            return false;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let stem = if path.is_dir() {
+            name.len()
+        } else {
+            name.rfind('.').filter(|&i| i > 0).unwrap_or(name.len())
+        };
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("", cx);
+            input.set_text(&name, cx);
+            input.select_range(0..stem, cx);
+            input
+        });
+        let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
+            InputEvent::Submit { .. } => this.finish_rename(cx),
+            InputEvent::Cancel => this.cancel_rename(cx),
+            _ => {}
+        });
+        input.read(cx).focus_handle(cx).focus(window, cx);
+        self.renaming = Some(Renaming {
+            path: path.to_path_buf(),
+            input,
+            _subscription: subscription,
+        });
+        cx.notify();
+        true
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        if self.renaming.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn finish_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(renaming) = self.renaming.take() else {
+            return;
+        };
+        let name = renaming.input.read(cx).text().trim().to_string();
+        let from = renaming.path;
+        if name.is_empty() || name.contains(['/', '\\']) {
+            cx.notify();
+            return;
+        }
+        let to = from.with_file_name(&name);
+        if to != from {
+            match std::fs::rename(&from, &to) {
+                Ok(()) => {
+                    self.reload(cx);
+                    self.reveal_path(&to);
+                    self.rebuild_rows();
+                    cx.emit(FileTreeEvent::Renamed { from, to });
+                }
+                Err(e) => eprintln!("oak: cannot rename {}: {e}", from.display()),
+            }
+        }
+        cx.notify();
+    }
+
     // ---- drag and drop ------------------------------------------------------------
 
     /// Moves the dragged paths into the folder at `row_ix` (a file row's
@@ -864,6 +954,11 @@ impl FileTree {
         };
         let drag_bg = theme.drag_bg;
         let drag_border = theme.drag_border_highlight;
+        let renaming = self
+            .renaming
+            .as_ref()
+            .filter(|r| r.path == row.path)
+            .map(|r| r.input.clone());
         // The row keeps the 26 px pitch; the background inside it is 24 tall
         // (Windows probe), so the hover and selection washes sit 1 px in.
         div()
@@ -872,17 +967,20 @@ impl FileTree {
             .py(px(m.tree_row_inset))
             .w_full()
             .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, {
-                let entity = entity.clone();
-                move |event, window, cx| {
-                    let count = event.click_count;
-                    let ctrl = event.modifiers.control || event.modifiers.platform;
-                    let shift = event.modifiers.shift;
-                    entity.update(cx, |this, cx| {
-                        this.focus_handle.focus(window, cx);
-                        this.click(ix, count, ctrl, shift, cx);
-                    });
-                }
+            .when(renaming.is_none(), |d| {
+                d.on_mouse_down(MouseButton::Left, {
+                    let entity = entity.clone();
+                    move |event, window, cx| {
+                        let count = event.click_count;
+                        let ctrl = event.modifiers.control || event.modifiers.platform;
+                        let shift = event.modifiers.shift;
+                        entity.update(cx, |this, cx| {
+                            this.cancel_rename(cx);
+                            this.focus_handle.focus(window, cx);
+                            this.click(ix, count, ctrl, shift, cx);
+                        });
+                    }
+                })
             })
             .on_mouse_down(MouseButton::Right, {
                 let entity = entity.clone();
@@ -928,6 +1026,11 @@ impl FileTree {
                         d.border(px(m.tree_highlight_border))
                             .border_color(theme.tree_focus_border)
                     })
+                    // The renamed row: Fleet's focus ring around icon and field.
+                    .when(renaming.is_some(), |d| {
+                        d.border(px(m.input_focus_border))
+                            .border_color(theme.input_focus_border)
+                    })
                     .when(!is_root, |d| {
                         d.child(
                             div()
@@ -955,32 +1058,35 @@ impl FileTree {
                                 }),
                         )
                     })
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .min_w_0()
-                            // The root row's label runs to the island's edge and is clipped
-                            // there, without an ellipsis (Windows probe).
-                            .map(|d| {
-                                if is_root {
-                                    d.whitespace_nowrap()
-                                } else {
-                                    d.truncate()
-                                }
-                            })
-                            .text_color(text_color)
-                            .child(first)
-                            .children(rest.into_iter().flat_map(|name| {
-                                [
-                                    div()
-                                        .px(px(5. * m.zoom))
-                                        .text_color(theme.text_tertiary)
-                                        .child("/"),
-                                    div().child(name),
-                                ]
-                            })),
-                    ),
+                    .map(|d| match renaming {
+                        Some(input) => d.child(div().flex_1().min_w_0().h_full().child(input)),
+                        None => d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .min_w_0()
+                                // The root row's label runs to the island's edge and is clipped
+                                // there, without an ellipsis (Windows probe).
+                                .map(|d| {
+                                    if is_root {
+                                        d.whitespace_nowrap()
+                                    } else {
+                                        d.truncate()
+                                    }
+                                })
+                                .text_color(text_color)
+                                .child(first)
+                                .children(rest.into_iter().flat_map(|name| {
+                                    [
+                                        div()
+                                            .px(px(5. * m.zoom))
+                                            .text_color(theme.text_tertiary)
+                                            .child("/"),
+                                        div().child(name),
+                                    ]
+                                })),
+                        ),
+                    }),
             )
     }
 }

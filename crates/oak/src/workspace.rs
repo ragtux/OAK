@@ -284,6 +284,7 @@ impl Pane {
         let find = cx.new(FindBar::new);
         cx.subscribe(&find, |this, _, event: &FindBarEvent, cx| match event {
             FindBarEvent::Closed => this.focus_active_editor(cx),
+            FindBarEvent::Changed => cx.notify(),
         })
         .detach();
         Pane {
@@ -413,6 +414,9 @@ pub struct Workspace {
     closed: Vec<PathBuf>,
     /// One document per open file, shared by every tab and split showing it.
     documents: Vec<Entity<Document>>,
+    /// Polls the open files' modification times once a second (Fleet's
+    /// "File has been changed on disk").
+    disk_poll: Option<gpui::Task<()>>,
     chooser: Option<Chooser>,
     /// The prompt popup under the toolbar, when one is open.
     prompt: Option<Entity<Prompt>>,
@@ -510,6 +514,7 @@ impl Workspace {
             panels,
             closed: Vec::new(),
             documents: Vec::new(),
+            disk_poll: None,
             chooser: None,
             prompt: None,
             clipboard_history: Vec::new(),
@@ -530,6 +535,7 @@ impl Workspace {
             last_title: String::new(),
         };
         this.init_workbench(window, cx);
+        this.watch_disk(cx);
         for path in open {
             this.open_path(path, false, cx);
         }
@@ -1317,6 +1323,12 @@ impl Workspace {
         let Some(path) = self.target_file(window, cx) else {
             return;
         };
+        if self
+            .file_tree
+            .update(cx, |tree, cx| tree.start_rename(&path, window, cx))
+        {
+            return;
+        }
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -2109,12 +2121,25 @@ impl Workspace {
         let pane = &self.panes[p];
         let body = match pane.active_tab() {
             Some(tab) => match &tab.view {
-                TabView::Editor(editor) => div()
-                    .flex_1()
-                    .min_h_0()
-                    .relative()
-                    .child(editor.clone())
-                    .child(pane.find.clone()),
+                TabView::Editor(editor) => {
+                    let find = pane.find.read(cx);
+                    let pushed = find.open && !find.query(cx).is_empty();
+                    let conflict = editor.read(cx).document.read(cx).conflict;
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .relative()
+                        .child(
+                            div()
+                                .size_full()
+                                .when(pushed, |d| d.pt(px(m.find_bar_push)))
+                                .child(editor.clone()),
+                        )
+                        .child(pane.find.clone())
+                        .when(conflict, |d| {
+                            d.child(self.render_banner(editor.clone(), theme, m))
+                        })
+                }
                 TabView::Settings(settings) => {
                     div().flex_1().min_h_0().relative().child(settings.clone())
                 }
@@ -2736,6 +2761,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::new_file))
             .on_action(cx.listener(Self::split_right))
+            .on_action(cx.listener(Self::open_in_split))
             .on_action(cx.listener(Self::unsplit))
             .on_action(cx.listener(Self::focus_next_split))
             .on_action(cx.listener(Self::focus_previous_split))

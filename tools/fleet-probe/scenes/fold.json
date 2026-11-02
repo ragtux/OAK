@@ -29,9 +29,7 @@
   },
   "oak_args": ["{workspace}/src/main.rs"],
   "scans": [
-    {"name": "chevron row (y=219)", "axis": "x", "at": 219, "from": 376, "to": 480, "edges": ["island left", "chevron box left", "chevron box right"]}
+    {"name": "chevron row (y=219)", "axis": "x", "at": 219, "from": 376, "to": 480, "edges": ["island left", "breakpoint hint left", "breakpoint hint right"]}
   ],
-  "samples": [
-    {"name": "chevron hover wash", "at": [424, 219], "key": "editor.foldIndicator.background.hovered"}
-  ]
+  "samples": []
 }

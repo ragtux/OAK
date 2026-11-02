@@ -202,13 +202,16 @@ estimates (Fleet's help site was retired in December 2025, so its pages are
 no longer a source). The Settings tool followed from batch 8 the same day
 (`docs/fleet-probe.md`, seventh pass): Fleet's pages as an editor tab, every
 row bound to its key with the default read off the page, and the
-Notifications popup under the bell replaced the panel tool. Left for later:
+Notifications popup under the bell replaced the panel tool; the same pass
+added the inline rename, "Open in Split", the changed-on-disk pill, the
+find bar's push-down and the gutter's breakpoint hint. Left for later:
 the Settings tool's Plugins and AI pages, the modified-value mark and the
 workspace scope, the snapshots tool (snapshots are
 written by `local-history/make-snapshot`, not yet listed), the `showShortcuts`
 overlay and `inputSequenceTimeoutMilliseconds` (gpui owns chord timing),
 `restoreWorkspacesOnStartup` and the empty state, a notification's actions
-and banners (`banner.*`), the Search tool's path scope (Fleet's query has a
+and the `banner.*` bands (the on-disk change is a popup-coloured pill, built),
+the Search tool's path scope (Fleet's query has a
 `path`; Oak searches the whole workspace), and Goto's typed mode prefixes,
 which no source shows.
 

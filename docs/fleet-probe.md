@@ -446,7 +446,7 @@ its Text Search tab, not the Search tool in the panel.
 | Rows | 28 tall; labels 14.67 in (6 px popup padding, 8 px row padding); shortcuts in `text.secondary` right-aligned 14.67 from the edge; a `›` in `text.secondary` on a submenu row | `MENU_ROW_HEIGHT` 28, `MENU_ROW_PAD_X` 8, `POPUP_PAD` 6 |
 | Separator | a 12 px block: the 1 px `popup.separator` with 5.5 above and below | `MENU_SEPARATOR_PAD` 5.5 |
 | Width | the longest row: the tree's menu 230.67, the editor's 232, a tab's 170.67, the main menu 139 | measured from the labels at render; `MENU_MIN_WIDTH` 140 |
-| Tree menu | New File..., New Folder..., sep, Find in Files..., Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › | Oak: the same without Cut, Copy, Paste and Git (the file clipboard and M4) |
+| Tree menu | New File..., New Folder..., sep, Find in Files..., Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › | Oak: the same, with Cut, Copy, Paste and Git greyed (the file clipboard and M4); the seventh pass added Open in Split and dropped Find in Files from a file's menu |
 | Tab menu | Close Ctrl+F4, Close Other Tabs, Close All Tabs, Close Saved Tabs, sep, Split Right Ctrl+\, Split Down, Pin, sep, Open In › | Oak: without Split Down and Pin |
 | Editor menu | Quick Fixes... Alt+Enter, sep, AI Actions ›, Refactor ›, Go To ›, Reformat Code Alt+Shift+F, sep, Git ›, sep, Cut, Copy, Paste, sep, Plugins › (greyed) | Oak: Go To ›, sep, Cut, Copy, Paste (the rest are M4 and M7) |
 | Main menu | File, Edit, View, Goto, Code, Run, Git, Window, Help, every row a submenu | Oak: the nine, Run and Git holding a greyed row |
@@ -553,20 +553,45 @@ global file only).
   notifications". Oak's `notifications/toggle` now opens this popup;
   the panel's Notifications tool is gone from the right island.
 - **Rename** is inline in the tree: the row turns into a text field with
-  the name selected up to the extension; no dialog.
+  the name selected up to the extension, the focus ring (`inputField.focusBorder`)
+  around icon and field; no dialog. Oak now does the same
+  (`FileTree::start_rename`; the prompt stays for a file the tree cannot show).
 - **The confirm dialog** (Delete) was not captured: the Delete row in the
   tree's context menu did not open it under the driver. The scene now
   walks the menu with the keyboard; it needs another run.
-- **The banner** "File has been changed on disk" (Overwrite / Reload)
-  appeared when the fixture was restored under Fleet; `banner.*` colours
-  are the follow-up.
+- **"File has been changed on disk"** appeared when the fixture was
+  restored under Fleet with `main.rs` edited: not a `banner.*` band but a
+  pill in the popup colours (`#252629`, border, shadow) centred over the
+  editor, 374.67 × 34.67 with its top 4.67 under the tab strip; the text 12
+  in, 12 to the 24 px `button.primary` buttons Overwrite (77.33 wide) and
+  Reload (59.33), 12.67 apart, 11.33 of padding after. Oak polls its open
+  files once a second: a clean document follows the disk, an edited one
+  shows this pill (`Workspace::render_banner`). Driven by hand (edit, append
+  to the file on disk, wait a poll): Oak's pill lands at 638–1011.3 × 81.3–114.7
+  against Fleet's 638–1012 × 80.7–115.3, the buttons at 86–110 as Fleet's,
+  12.67 apart (the 1 px transparent border of Oak's shared button had made
+  each 2.67 wider; the pill drops it).
+- **`autoSave`** reads "On focus change" on Fleet's General page, so its
+  values are not only true and false; Oak keeps `autoSave: true` as a save
+  `autoSave.delay` ms after the last edit until the other values are read
+  (the probe writes `autoSave: false` into its config folder when a test
+  needs a dirty document to stay dirty).
+- **The tree menu** for a file: New File..., New Folder..., sep, Open in
+  Split, Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut,
+  Copy, Copy Path, Copy Relative Path, Paste, sep, Git ›. No "Find in
+  Files..." (that is the folder menu's) and no hidden-files toggle. Oak's
+  menu now matches, with Cut, Copy, Paste and Git greyed until M4 and
+  "Open in Split" as Oak's own `open-in-split` (Fleet gives the row no id).
 
 ### M2 follow-ups seen in this pass
 
 - Fleet's find bar pushes the text down 52 px only once a query is typed;
-  an empty field and the replace form do not move it.
+  an empty field and the replace form do not move it. Oak now does the
+  same (`FIND_BAR_PUSH`, the pane pads the editor while the query is set).
 - Fold hover: Fleet draws a plain chevron (no wash box) and fills the
-  breakpoint hint as a red circle; Oak's chevron sits in a wash box.
+  breakpoint hint as a red circle (`#50252D` over the island, Fleet's red
+  at about 28 %; no theme key names it). Oak now draws the circle and no
+  wash.
 - The editor island's right margin is 6, the other three 8; Oak now uses
   `ISLAND_MARGIN_RIGHT` for the column (the status bar still spans the
   full 8).

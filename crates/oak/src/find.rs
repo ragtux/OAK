@@ -23,6 +23,9 @@ use std::ops::Range;
 pub enum FindBarEvent {
     /// The bar closed; the editor takes the focus back.
     Closed,
+    /// Opened, closed or the query changed: the pane lays the editor out
+    /// again (a typed query pushes the text down).
+    Changed,
 }
 
 pub struct FindBar {
@@ -121,6 +124,7 @@ impl FindBar {
             (text.clone(), e.caret(cx), text.contains('\n'))
         });
         self.open = true;
+        cx.emit(FindBarEvent::Changed);
         self.replace_shown = self.replace_shown || with_replace;
         self.origin = caret;
         let use_selection = cx
@@ -154,6 +158,7 @@ impl FindBar {
             return;
         }
         self.open = false;
+        cx.emit(FindBarEvent::Changed);
         self.in_selection = None;
         if let Some(editor) = &self.editor {
             editor.update(cx, |e, cx| e.set_search(None, cx));
@@ -347,7 +352,10 @@ impl FindBar {
 
     fn on_find_input(&mut self, _: Entity<TextInput>, event: &InputEvent, cx: &mut Context<Self>) {
         match event {
-            InputEvent::Changed => self.search(true, cx),
+            InputEvent::Changed => {
+                self.search(true, cx);
+                cx.emit(FindBarEvent::Changed);
+            }
             InputEvent::Submit { shift } => self.step(!shift, cx),
             InputEvent::Cancel => self.close(cx),
             InputEvent::Tab { shift: false } if self.replace_shown => {
