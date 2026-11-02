@@ -154,6 +154,15 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Replaces the text with the caret at its end and nothing selected.
+    pub fn set_text_at_end(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.content = text.to_string();
+        self.selected_range = self.content.len()..self.content.len();
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.notify();
+    }
+
     pub fn set_placeholder(
         &mut self,
         placeholder: impl Into<SharedString>,

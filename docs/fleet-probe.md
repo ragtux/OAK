@@ -484,6 +484,95 @@ tool in the panel, which no chord opens. The Fleet shots carried over to Oak
 with no change to the bundled themes: every colour read off them resolved to
 a key already in use.
 
+## Seventh pass: batch 8, the Settings tool, and the dialogs scene (2026-11-02)
+
+The `settings` and `dialogs` scenes were played into the running Fleet
+(`winprobe.py attach`, which now applies a scene's `fleet_settings`) with
+the fixture open. Device px ÷ 1.5, read with run-length scans; colours are
+the shots' pixels resolved against the dark theme.
+
+### The Settings tool
+
+Fleet opens Settings as an editor tab ("Settings", the gear icon) in the
+active split, not as a dialog. Inside the tab a 720 px column is centred in
+the island (464.7–1184.7 in a 1280 window with the left panel open), and
+everything below lives in it:
+
+| element | measured |
+|---|---|
+| search field | 28 high (ring rows 114–116 and 144–146, `#224271` = `textField.focusOutline`), top 32 under the tab row, full column width; the magnifier at the left, "Search" placeholder |
+| scope row | 18 under the field: a 28 px "Global" chip (57.33 wide, 8.67 padding, white semibold text, filled `#0870E440` = `tab.background.selectedFocused` with the tab's focused border), the workspace name 16 after it in secondary text, "Plugins" as a `link.text` at the column's right |
+| separator | 1 px `separator.default`, 8.67 under the scope row |
+| section tree | 200 wide at the column's left; first row 30 under the separator; rows 34 with a 32 px `listItem.background.selected` wash (`#363739` in the shot); labels 35.33 in, a chevron at 15.33 for sections with groups; children 16.67 further in. Sections: General, Editor (Font, Appearance, Code, Tabs, Caret, New File), Tools (Gradle, Files, Run and Debug, Git, Terminal, Docker), Application (Appearance, Status Bar, Window), then AI |
+| content column | 26 right of the tree, 494.67 wide (690.67–1185.33); the section title 20 px semibold (glyph box 14.67 against Oak's 17.33 at 24) on a 32 line, 24 under the separator; 12 to the card; a 6 px scrollbar at 1179.33–1185.33 once scrolled |
+| card | `background.secondary` (`#252629`, `#242528` at the shot's gradient edge), radius 8 (estimate), 9.33 px top padding (first control 17.33 under the card's top; the bottom padding is taken as the same, estimate), 494.67 wide; the next section's title 20.67 under the card |
+| row | 40 pitch; the label 26.67 in (`#E0E1E4`); the control 24 high ending at 1145.33 (40 before the card's right edge) and starting 108 after the label column or 10 after a longer label ("Show whitespace" ends 826.67, its dropdown starts 836.67); dropdowns are `dropdown.background`/`dropdown.border` (`#38393B` fill in the shot) ending in a chevron, text and number fields `inputField.*` (transparent, 1 px border); the keymap row has a pencil (`edit-keymap-file`) 10 from the card's right edge |
+| group title | 15 px semibold (F stem 10.67 against Oak's 11.33 at 16) on a 32 line, 8.67 under the card's padding or a 16 px spacer after the previous group's last row, 1.33 above its first row (page 3: card top to first control centre 71.33, row centre to title centre 60.67, title centre to next row centre 37.33) |
+| checkbox | 16 × 16, `checkbox.on.background` (`#0870E4`) with a white tick or `checkbox.off.*`; the label 8 after; rows 40 pitch plus 17 per description line (page 2: 40, 57.33, 74 for none, one, two lines) |
+| modified value | `settings.modified.indicator` (`#CDA261` seen as a 6.67 px mark at the row's left when a value differs from Fleet's default) |
+| search | typing filters every page: the tree shows a count badge per section, the Global button shows the total, matches are highlighted with `search.match.*` |
+
+The defaults read off the pages, now in `settings_schema.rs` (one row per
+page item, with the key `documentation.yaml` gives it) and corrected in
+`oak-settings`: `autoSave` is "On focus change" (true), `trimTrailingSpacesOnSave`
+true, `createScratchOnNewFile` true, `editor.caretSmoothAnimation` true,
+`editor.honorCamelHumps` false, `files.toggleFolderMode` "Double click",
+`editor.lineSpacing` 1.7, `editor.tabLimit` 10, `editor.hoverTooltipDelayMs`
+500, `git.fetchInterval` 15, the terminal font JetBrains Mono 13 at 1.7
+with the caret "Same as in the editor", `terminal.profile.default` `pwsh`.
+Rows whose key the documentation does not name (the AI page, inlay hints,
+the scrollbar toggles, shell integration, the collaboration username) are
+not in the schema.
+
+The first Oak shot against Fleet's (`compare.py` on the `settings` pair):
+the card's controls land within 0.7 px; Oak's column was 8 px high (its
+pane body starts under a shorter tab strip, so the field's offset is 40 in
+Oak for Fleet's 32), its card padding 16 for Fleet's 9.33, its titles 24
+and 16 for Fleet's 20 and 15, and Page Down did not scroll. After the fixes
+the field bottom, scope row, separator, tree selection, card edges and the
+Editor card's controls pair within 0.7 px; the General card's controls sit
+1.3–2 px low (the 9.33 px card padding rounds up at 1.5 device px per px).
+
+Oak's Settings tool (`settings_view.rs`) is the same tab: the column, field,
+scope row, tree and cards at these values, dropdowns as a popup list,
+checkboxes and number/text fields writing the key to Oak's `settings.json`
+at once through `settings::set_value`, "Edit in settings.json" links for the
+list-valued keys, and the search with per-section counts and highlights.
+Not built: the Plugins page, the modified-value mark (Oak has no record of
+which value the user set), the AI page, the workspace scope (Oak writes the
+global file only).
+
+### The dialogs scene
+
+- **Notifications** is a popup under the bell, not a panel tool: 318.67
+  wide, right edge 6.67 from the window's, top 0.67 under the toolbar
+  (y 36.67–173.33 for the empty state), `popup.background` with the
+  popup's border and shadow; a 32 px header ("Notifications" 10.67 in,
+  two 24 px icon buttons at the right: settings and clear), a 1 px
+  separator, then the rows or a 105.33 px "You don't have any unread
+  notifications". Oak's `notifications/toggle` now opens this popup;
+  the panel's Notifications tool is gone from the right island.
+- **Rename** is inline in the tree: the row turns into a text field with
+  the name selected up to the extension; no dialog.
+- **The confirm dialog** (Delete) was not captured: the Delete row in the
+  tree's context menu did not open it under the driver. The scene now
+  walks the menu with the keyboard; it needs another run.
+- **The banner** "File has been changed on disk" (Overwrite / Reload)
+  appeared when the fixture was restored under Fleet; `banner.*` colours
+  are the follow-up.
+
+### M2 follow-ups seen in this pass
+
+- Fleet's find bar pushes the text down 52 px only once a query is typed;
+  an empty field and the replace form do not move it.
+- Fold hover: Fleet draws a plain chevron (no wash box) and fills the
+  breakpoint hint as a red circle; Oak's chevron sits in a wash box.
+- The editor island's right margin is 6, the other three 8; Oak now uses
+  `ISLAND_MARGIN_RIGHT` for the column (the status bar still spans the
+  full 8).
+- Wrap: `WRAP_INDENT` 0 confirmed; the ruler at column 80 is at x 1061.3
+  in Fleet and 1062.7 in Oak.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

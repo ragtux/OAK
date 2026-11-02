@@ -43,6 +43,10 @@ pub mod metrics {
     /// The margin between the window edge and an island, and between two islands;
     /// the gap is also the splitter's hit zone (batch 2).
     pub const ISLAND_MARGIN: f32 = 8.;
+    /// The window's right margin is 6, not 8: the islands and the scrollbar end
+    /// at 1274 in a 1280 window (batches 1 and 3, confirmed by the find and
+    /// wrap scenes: Fleet's find field and ruler sit 2 px right of Oak's).
+    pub const ISLAND_MARGIN_RIGHT: f32 = 6.;
     pub const ISLAND_RADIUS: f32 = 8.;
     /// Fleet's Files island in a fresh 1280 × 800 window (Windows probe, batch 1).
     pub const LEFT_PANEL_WIDTH: f32 = 360.;
@@ -319,6 +323,79 @@ pub mod metrics {
     pub const SEARCH_GAP: f32 = 6.;
     pub const SEARCH_ROW_HEIGHT: f32 = 24.;
     pub const SEARCH_INDENT: f32 = 16.;
+    /// The Settings tool (batch 8, `docs/fleet-probe.md` seventh pass): a tab in
+    /// the editor island holding a 720 px column centred in it. The search field
+    /// (28, with the 2 px ring) has its top at y 116 in the 1280×800 window, 40
+    /// under the top of Oak's pane body (Fleet's tab row ends 8 lower than
+    /// Oak's strip, so this is 32 under Fleet's); 18 under it the scope row (a
+    /// 28 px "Global" chip in the `tab.*.selectedFocused` colours, the workspace
+    /// name 16 after it, "Plugins" at the right); 8.67 under that a 1 px
+    /// separator. Below: a 200 px section tree of 34 px rows (32 px wash, labels
+    /// 35.33 in, children 16.67 further) starting 30 under the separator, and
+    /// 26 to its right the content: a 20 px section title 24 under the separator
+    /// on a 32 line, 12 to a card (`background.secondary`, 494.67 wide, 9.33 px
+    /// top and bottom padding) of 40 px rows whose labels start 26.67 in; the
+    /// 24 px controls end 40 before the card's right edge and start 108 after
+    /// the label column or 10 after a longer label; a 15 px group title on a
+    /// 32 line, 8.67 under the card's padding or a 16 px spacer after the
+    /// previous group, 1.33 above its first row (the three read off page 3:
+    /// card top to first control centre 71.33, row centre to title centre
+    /// 60.67, title centre to row centre 37.33); 16 px checkboxes with the
+    /// label 8 after, a description line of 17 under it; cards 20.67 apart
+    /// before the next title; the content scrolls under the fixed tree with a
+    /// 6 px scrollbar at the card's right edge.
+    pub const SETTINGS_COLUMN_WIDTH: f32 = 720.;
+    pub const SETTINGS_FIELD_TOP: f32 = 40.;
+    pub const SETTINGS_FIELD_HEIGHT: f32 = 28.;
+    pub const SETTINGS_SCOPE_GAP: f32 = 18.;
+    pub const SETTINGS_SCOPE_HEIGHT: f32 = 28.;
+    pub const SETTINGS_SCOPE_NAME_GAP: f32 = 16.;
+    pub const SETTINGS_SEPARATOR_GAP: f32 = 8.67;
+    pub const SETTINGS_TREE_WIDTH: f32 = 200.;
+    pub const SETTINGS_TREE_TOP: f32 = 30.;
+    pub const SETTINGS_TREE_ROW: f32 = 34.;
+    pub const SETTINGS_TREE_WASH: f32 = 32.;
+    pub const SETTINGS_TREE_PAD_X: f32 = 35.33;
+    pub const SETTINGS_TREE_CHEVRON_X: f32 = 15.33;
+    pub const SETTINGS_TREE_INDENT: f32 = 16.67;
+    pub const SETTINGS_CONTENT_GAP: f32 = 26.;
+    pub const SETTINGS_TITLE_TOP: f32 = 24.;
+    pub const SETTINGS_TITLE_SIZE: f32 = 20.;
+    pub const SETTINGS_TITLE_LINE: f32 = 32.;
+    pub const SETTINGS_TITLE_GAP: f32 = 12.;
+    pub const SETTINGS_TITLE_PAD_X: f32 = 4.;
+    pub const SETTINGS_CARD_PAD: f32 = 9.33;
+    pub const SETTINGS_CARD_PAD_RIGHT: f32 = 40.;
+    pub const SETTINGS_CARD_PAD_X: f32 = 26.67;
+    pub const SETTINGS_CARD_RADIUS: f32 = 8.;
+    pub const SETTINGS_ROW: f32 = 40.;
+    pub const SETTINGS_LABEL_WIDTH: f32 = 108.;
+    pub const SETTINGS_LABEL_GAP: f32 = 10.;
+    pub const SETTINGS_CONTROL_WIDTH: f32 = 320.;
+    pub const SETTINGS_CONTROL_HEIGHT: f32 = 24.;
+    pub const SETTINGS_CONTROL_PAD_X: f32 = 6.;
+    pub const SETTINGS_GROUP_TITLE_SIZE: f32 = 15.;
+    pub const SETTINGS_GROUP_TITLE_LINE: f32 = 32.;
+    pub const SETTINGS_GROUP_GAP: f32 = 1.33;
+    pub const SETTINGS_GROUP_TOP: f32 = 8.67;
+    pub const SETTINGS_GROUP_SPACER: f32 = 16.;
+    pub const SETTINGS_SCROLLBAR: f32 = 6.;
+    pub const SETTINGS_SCOPE_PAD_X: f32 = 8.67;
+    pub const SETTINGS_CHECKBOX: f32 = 16.;
+    pub const SETTINGS_CHECKBOX_GAP: f32 = 8.;
+    pub const SETTINGS_DESCRIPTION_LINE: f32 = 17.;
+    pub const SETTINGS_CARD_GAP: f32 = 20.67;
+    /// The Notifications popup (batch 7): under the bell at the toolbar's
+    /// right end, 318.67 wide with its right edge 6.67 from the window's, a
+    /// 32 px header (the title 10.67 in, three 24 px icon buttons at the right)
+    /// over a 1 px `popup.separator`, then the rows or a 105.33 px empty state.
+    pub const NOTIFICATIONS_WIDTH: f32 = 318.67;
+    pub const NOTIFICATIONS_TOP_GAP: f32 = 0.67;
+    pub const NOTIFICATIONS_RIGHT: f32 = 6.67;
+    pub const NOTIFICATIONS_HEADER: f32 = 32.;
+    pub const NOTIFICATIONS_PAD_X: f32 = 10.67;
+    pub const NOTIFICATIONS_EMPTY_HEIGHT: f32 = 105.33;
+    pub const NOTIFICATIONS_ICON_GAP: f32 = 5.33;
     /// The Files tree's keyboard-highlight rectangle (`files.keyboardNavigation`
     /// highlight): 1 px of `tree.focusBorder` (estimate).
     pub const TREE_HIGHLIGHT_BORDER: f32 = 1.;
@@ -357,6 +434,7 @@ scaled_metrics!(
     title_branch_gap = TITLE_BRANCH_GAP,
     title_branch_icon_gap = TITLE_BRANCH_ICON_GAP,
     island_margin = ISLAND_MARGIN,
+    island_margin_right = ISLAND_MARGIN_RIGHT,
     island_radius = ISLAND_RADIUS,
     left_panel_width = LEFT_PANEL_WIDTH,
     right_panel_width = RIGHT_PANEL_WIDTH,
@@ -527,6 +605,54 @@ scaled_metrics!(
     search_row_height = SEARCH_ROW_HEIGHT,
     search_indent = SEARCH_INDENT,
     tree_highlight_border = TREE_HIGHLIGHT_BORDER,
+    settings_column_width = SETTINGS_COLUMN_WIDTH,
+    settings_field_top = SETTINGS_FIELD_TOP,
+    settings_field_height = SETTINGS_FIELD_HEIGHT,
+    settings_scope_gap = SETTINGS_SCOPE_GAP,
+    settings_scope_height = SETTINGS_SCOPE_HEIGHT,
+    settings_scope_name_gap = SETTINGS_SCOPE_NAME_GAP,
+    settings_separator_gap = SETTINGS_SEPARATOR_GAP,
+    settings_tree_width = SETTINGS_TREE_WIDTH,
+    settings_tree_top = SETTINGS_TREE_TOP,
+    settings_tree_row = SETTINGS_TREE_ROW,
+    settings_tree_wash = SETTINGS_TREE_WASH,
+    settings_tree_pad_x = SETTINGS_TREE_PAD_X,
+    settings_tree_chevron_x = SETTINGS_TREE_CHEVRON_X,
+    settings_tree_indent = SETTINGS_TREE_INDENT,
+    settings_content_gap = SETTINGS_CONTENT_GAP,
+    settings_title_top = SETTINGS_TITLE_TOP,
+    settings_title_size = SETTINGS_TITLE_SIZE,
+    settings_title_line = SETTINGS_TITLE_LINE,
+    settings_title_gap = SETTINGS_TITLE_GAP,
+    settings_title_pad_x = SETTINGS_TITLE_PAD_X,
+    settings_card_pad = SETTINGS_CARD_PAD,
+    settings_card_pad_right = SETTINGS_CARD_PAD_RIGHT,
+    settings_card_pad_x = SETTINGS_CARD_PAD_X,
+    settings_card_radius = SETTINGS_CARD_RADIUS,
+    settings_row = SETTINGS_ROW,
+    settings_label_width = SETTINGS_LABEL_WIDTH,
+    settings_label_gap = SETTINGS_LABEL_GAP,
+    settings_control_width = SETTINGS_CONTROL_WIDTH,
+    settings_control_height = SETTINGS_CONTROL_HEIGHT,
+    settings_control_pad_x = SETTINGS_CONTROL_PAD_X,
+    settings_group_title_size = SETTINGS_GROUP_TITLE_SIZE,
+    settings_group_title_line = SETTINGS_GROUP_TITLE_LINE,
+    settings_group_gap = SETTINGS_GROUP_GAP,
+    settings_group_top = SETTINGS_GROUP_TOP,
+    settings_group_spacer = SETTINGS_GROUP_SPACER,
+    settings_scrollbar = SETTINGS_SCROLLBAR,
+    settings_scope_pad_x = SETTINGS_SCOPE_PAD_X,
+    settings_checkbox = SETTINGS_CHECKBOX,
+    settings_checkbox_gap = SETTINGS_CHECKBOX_GAP,
+    settings_description_line = SETTINGS_DESCRIPTION_LINE,
+    settings_card_gap = SETTINGS_CARD_GAP,
+    notifications_width = NOTIFICATIONS_WIDTH,
+    notifications_top_gap = NOTIFICATIONS_TOP_GAP,
+    notifications_right = NOTIFICATIONS_RIGHT,
+    notifications_header = NOTIFICATIONS_HEADER,
+    notifications_pad_x = NOTIFICATIONS_PAD_X,
+    notifications_empty_height = NOTIFICATIONS_EMPTY_HEIGHT,
+    notifications_icon_gap = NOTIFICATIONS_ICON_GAP,
 );
 
 impl Global for Metrics {}
@@ -722,6 +848,14 @@ pub struct Theme {
     pub button_dangerous_bg: Hsla,
     pub button_dangerous_bg_hovered: Hsla,
     pub button_dangerous_text: Hsla,
+    // dropdown.*, checkbox.* (the Settings tool's controls)
+    pub dropdown_bg: Hsla,
+    pub dropdown_border: Hsla,
+    pub dropdown_text: Hsla,
+    pub checkbox_on_bg: Hsla,
+    pub checkbox_off_bg: Hsla,
+    pub checkbox_off_border: Hsla,
+    pub checkbox_icon: Hsla,
     // popup.goto.background, popup.footer.*
     pub popup_goto_bg: Hsla,
     pub popup_footer_bg: Hsla,
@@ -1077,6 +1211,19 @@ impl Theme {
                 "button.dangerous.text.default",
                 Color::rgb(0xFF, 0xFF, 0xFF),
             ),
+            dropdown_bg: c("dropdown.background.default", text_primary.with_alpha(0x16)),
+            dropdown_border: c("dropdown.border.default", Color::rgb(0x3E, 0x41, 0x47)),
+            dropdown_text: c("dropdown.text.default", text_primary),
+            checkbox_on_bg: c(
+                "checkbox.on.background.default",
+                Color::rgb(0x08, 0x70, 0xE4),
+            ),
+            checkbox_off_bg: c(
+                "checkbox.off.background.default",
+                text_primary.with_alpha(0x12),
+            ),
+            checkbox_off_border: c("checkbox.off.border.default", text_primary.with_alpha(0x59)),
+            checkbox_icon: c("checkbox.icon.default", Color::rgb(0xFF, 0xFF, 0xFF)),
             popup_goto_bg: first(&["popup.goto.background", "popup.background"], bg_secondary),
             popup_footer_bg: first(
                 &["popup.footer.background", "popup.background"],

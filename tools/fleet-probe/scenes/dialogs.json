@@ -1,0 +1,37 @@
+{
+  "name": "dialogs",
+  "about": "Batch 7, second half: the confirm dialog reached through the tree's menu (right click on notes.txt, then its Delete... row), the Notifications popup from the toolbar's bell, and the Rename prompt (F2 on a tree row after its menu gave the tree the focus). The tree rows are at the positions after the `long` and `src` folders were expanded by the other scenes: notes.txt is the row at y 530; a fresh tree has it at 478. Escape leaves every dialog without acting.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["move", 100, 530], ["click", "right"], ["wait", 1000], ["shot", "tree-menu-notes"],
+      ["key", "down", "down", "down", "down", "down", "down", "down"], ["wait", 300], ["key", "enter"], ["wait", 1200], ["shot", "delete-dialog"],
+      ["key", "escape"], ["wait", 800],
+      ["move", 1081, 18], ["wait", 300], ["click"], ["wait", 1200], ["shot", "notifications"],
+      ["key", "escape"], ["wait", 800],
+      ["move", 100, 530], ["click", "right"], ["wait", 800], ["key", "escape"], ["wait", 400],
+      ["key", "f2"], ["wait", 1200], ["shot", "rename"],
+      ["key", "escape"], ["wait", 500]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["move", 100, 478], ["click", "right"], ["wait", 600], ["shot", "tree-menu-notes"],
+      ["key", "down", "down", "down", "down", "down", "down"], ["wait", 300], ["key", "enter"], ["wait", 800], ["shot", "delete-dialog"],
+      ["key", "escape"], ["wait", 500],
+      ["move", 1081, 18], ["wait", 300], ["click"], ["wait", 800], ["shot", "notifications"],
+      ["key", "escape"], ["wait", 500],
+      ["move", 100, 478], ["click"], ["wait", 400],
+      ["key", "f2"], ["wait", 800], ["shot", "rename"],
+      ["key", "escape"], ["wait", 500]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "dialog column (x=640)", "axis": "y", "at": 640, "from": 200, "to": 600, "edges": ["dialog top", "dialog bottom"]},
+    {"name": "dialog row (y=400)", "axis": "x", "at": 400, "from": 300, "to": 1000, "edges": ["dialog left", "dialog right"]}
+  ],
+  "samples": []
+}

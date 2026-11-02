@@ -134,6 +134,29 @@ pub fn watch(cx: &mut App) {
     .detach();
 }
 
+/// The Settings tool wrote a value: into Oak's file, then applied.
+pub fn set_value(key: &str, value: serde_json::Value, cx: &mut App) {
+    {
+        let app = cx.global_mut::<AppSettings>();
+        if key == "zoomLevel" {
+            app.overrides.zoom = None;
+        }
+        if key == "theme" {
+            app.overrides.theme = None;
+        }
+        app.settings.set(key, value);
+        if let Some(paths) = &app.paths {
+            if let Err(e) = app.settings.save(&paths.oak) {
+                eprintln!("oak: cannot save {}: {e:#}", paths.oak.display());
+            }
+        }
+        if let Some(w) = app.watcher.as_mut() {
+            w.settle();
+        }
+    }
+    apply(cx);
+}
+
 /// `zoom-in`, `zoom-out`, `reset-zoom`: one step of `zoomLevel`, written to
 /// Oak's settings file as Fleet writes it to its own.
 pub fn set_zoom(zoom: f32, cx: &mut App) {

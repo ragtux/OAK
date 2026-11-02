@@ -8,7 +8,7 @@ Reads the name lists inventory.py wrote and greps Oak for the same strings:
     actions   Fleet action ids matched in crates/oak/src/keymap.rs (the match arms)
     colors    theme `colors` keys quoted anywhere in crates/oak/src
     attrs     theme `textAttributes` keys quoted anywhere in crates/oak/src and crates/oak-syntax/src
-    settings  settings keys quoted in crates/oak-settings/src and crates/oak/src/settings.rs
+    settings  settings keys quoted in crates/oak-settings/src, crates/oak/src/settings.rs and settings_schema.rs
 
 Prints a one-line summary per table and, with -v, the missing names, so a milestone can be checked
 off against Fleet's own lists rather than from memory.
@@ -59,7 +59,7 @@ def main():
     report("attrs", read_list(os.path.join(inv, "theme-text-attributes.txt")),
            quoted_strings([app, os.path.join(repo, "crates", "oak-syntax", "src")]), verbose)
     report("settings", read_list(os.path.join(inv, "settings.txt")),
-           quoted_strings([os.path.join(repo, "crates", "oak-settings", "src"), os.path.join(app, "settings.rs")]),
+           quoted_strings([os.path.join(repo, "crates", "oak-settings", "src"), os.path.join(app, "settings.rs"), os.path.join(app, "settings_schema.rs")]),
            verbose)
 
 

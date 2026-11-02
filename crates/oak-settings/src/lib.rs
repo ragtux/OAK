@@ -281,7 +281,7 @@ impl Settings {
     /// `files.toggleFolderMode`: "expand folders in the Files tree with a
     /// single- or double-click". Default single (estimate: matches openFileMode).
     pub fn files_toggle_folder_mode(&self) -> ClickMode {
-        click_mode(self.str("files.toggleFolderMode"), ClickMode::Single)
+        click_mode(self.str("files.toggleFolderMode"), ClickMode::Double)
     }
 
     /// `files.exclude`: "Listed files will be hidden from the Files tree", as
@@ -347,12 +347,12 @@ impl Settings {
     /// when the file is saved. The lines that currently have carets on them are
     /// not trimmed." Default false (estimate).
     pub fn trim_trailing_spaces_on_save(&self) -> bool {
-        self.bool("trimTrailingSpacesOnSave").unwrap_or(false)
+        self.bool("trimTrailingSpacesOnSave").unwrap_or(true)
     }
 
     /// `autoSave`: "Automatically save the edited file". Default false (estimate).
     pub fn auto_save(&self) -> bool {
-        self.bool("autoSave").unwrap_or(false)
+        self.bool("autoSave").unwrap_or(true)
     }
 
     /// `autoSave.delay`: "Automatically save the edited file after a specified
@@ -367,7 +367,7 @@ impl Settings {
     /// `createScratchOnNewFile`: "Always create a temporary file on invoking
     /// the New File action". Fleet's default is false.
     pub fn create_scratch_on_new_file(&self) -> bool {
-        self.bool("createScratchOnNewFile").unwrap_or(false)
+        self.bool("createScratchOnNewFile").unwrap_or(true)
     }
 
     /// `localBigFileMinimumThreshold`: "Open local files of this size (in MB)
@@ -486,7 +486,7 @@ impl Settings {
     /// `editor.caretSmoothAnimation`: "Enable cursor smooth caret animation".
     /// Default false (estimate).
     pub fn editor_caret_smooth_animation(&self) -> bool {
-        self.bool("editor.caretSmoothAnimation").unwrap_or(false)
+        self.bool("editor.caretSmoothAnimation").unwrap_or(true)
     }
 
     /// `editor.activeLineHighlightEnabled`: "Highlight active line". Fleet's
@@ -558,7 +558,7 @@ impl Settings {
     /// literals respecting words written in camel or snake case". Default true
     /// (estimate).
     pub fn editor_honor_camel_humps(&self) -> bool {
-        self.bool("editor.honorCamelHumps").unwrap_or(true)
+        self.bool("editor.honorCamelHumps").unwrap_or(false)
     }
 
     /// `editor.useSelectionForSearch`: "Use selected text as initial query for
@@ -722,15 +722,17 @@ mod tests {
         assert!(!s.tab_close_button_on_the_left());
         assert!(s.files_compact_directories());
         assert_eq!(s.files_open_file_mode(), ClickMode::Single);
+        assert_eq!(s.files_toggle_folder_mode(), ClickMode::Double);
         assert_eq!(s.files_exclude(), vec![".git".to_string()]);
         assert_eq!(s.editor_tab_size(), 4);
         assert_eq!(s.editor_indent_style(), IndentStyle::Spaces);
         assert!(s.editor_auto_detect_indentation());
         assert!(s.enable_indenter());
-        assert!(!s.trim_trailing_spaces_on_save());
-        assert!(!s.auto_save());
+        // Batch 8 read these off Fleet's Settings pages (2026-11-02).
+        assert!(s.trim_trailing_spaces_on_save());
+        assert!(s.auto_save());
         assert_eq!(s.auto_save_delay_ms(), 1000);
-        assert!(!s.create_scratch_on_new_file());
+        assert!(s.create_scratch_on_new_file());
         assert_eq!(s.local_big_file_minimum_threshold_mb(), 20.0);
         assert!(!s.editor_soft_wrap_enabled());
         assert!(!s.editor_guide_to_soft_wrap_by());
@@ -745,14 +747,14 @@ mod tests {
         assert_eq!(s.editor_line_numbers(), LineNumbers::On);
         assert_eq!(s.editor_caret_shape(), CaretShape::Line);
         assert!(s.editor_caret_blinking_enabled());
-        assert!(!s.editor_caret_smooth_animation());
+        assert!(s.editor_caret_smooth_animation());
         assert!(s.editor_active_line_highlight_enabled());
         assert!(!s.editor_distraction_free_mode());
         assert!(!s.editor_center_editor_horizontally());
         assert_eq!(s.editor_font_weight(), 400.0);
         assert!(s.editor_font_features().is_empty());
         assert!(s.editor_ligatures());
-        assert!(s.editor_honor_camel_humps());
+        assert!(!s.editor_honor_camel_humps());
         assert!(s.editor_use_selection_for_search());
         assert!(s.editor_show_file_details());
     }

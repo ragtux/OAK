@@ -20,6 +20,7 @@ use crate::notifications::Notifications;
 use crate::scrollbar::{scrollbar, EmptyView};
 use crate::search_tool::SearchTool;
 use crate::settings::{self, AppSettings};
+use crate::settings_view::SettingsView;
 use crate::theme::{metrics::EMPTY_PANEL_INSET, Metrics, Theme};
 use crate::toolbar;
 use crate::tooltip::Tooltip;
@@ -218,11 +219,55 @@ struct SplitterDrag {
 
 // ---- editor splits --------------------------------------------------------------
 
+/// What a tab shows: a file in an editor, or the Settings tool.
+enum TabView {
+    Editor(Entity<EditorView>),
+    Settings(Entity<SettingsView>),
+}
+
 struct Tab {
-    editor: Entity<EditorView>,
+    view: TabView,
     /// A preview tab (`editor.previewTab`): italic title, replaced by the next
     /// single-click file, promoted by an edit or a double click.
     preview: bool,
+}
+
+impl Tab {
+    fn editor(&self) -> Option<&Entity<EditorView>> {
+        match &self.view {
+            TabView::Editor(e) => Some(e),
+            TabView::Settings(_) => None,
+        }
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match &self.view {
+            TabView::Editor(e) => e.read(cx).focus_handle(cx),
+            TabView::Settings(s) => s.read(cx).focus_handle(cx),
+        }
+    }
+
+    fn title(&self, cx: &App) -> String {
+        match &self.view {
+            TabView::Editor(e) => e.read(cx).title(cx),
+            TabView::Settings(_) => "Settings".into(),
+        }
+    }
+
+    fn icon(&self, cx: &App) -> &'static str {
+        match &self.view {
+            TabView::Editor(e) => file_icon(&e.read(cx).title(cx)),
+            TabView::Settings(_) => "expui/general/settings",
+        }
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.editor().is_some_and(|e| e.read(cx).is_dirty(cx))
+    }
+
+    fn path(&self, cx: &App) -> Option<PathBuf> {
+        self.editor().and_then(|e| e.read(cx).path(cx))
+    }
 }
 
 struct Pane {
@@ -389,6 +434,8 @@ pub struct Workspace {
     goto_preview_hidden: bool,
     /// The workspace's files for `goto/file`, rebuilt when the disk changes.
     file_index: Arc<FileIndex>,
+    /// The Notifications popup under the toolbar's bell is open.
+    notifications_open: bool,
     /// This workspace's window, for deferred focus changes.
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
@@ -477,6 +524,7 @@ impl Workspace {
             recent: layout.recent.clone(),
             goto_preview_hidden: layout.goto_preview_hidden,
             file_index: Arc::new(FileIndex::default()),
+            notifications_open: false,
             window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
@@ -529,7 +577,7 @@ impl Workspace {
         self.panes.iter().enumerate().find_map(|(p, pane)| {
             pane.tabs
                 .iter()
-                .position(|t| t.editor.read(cx).path(cx).as_deref() == Some(path))
+                .position(|t| t.path(cx).as_deref() == Some(path))
                 .map(|ix| (p, ix))
         })
     }
@@ -574,7 +622,8 @@ impl Workspace {
         let shown: Vec<Entity<Document>> = self
             .panes
             .iter()
-            .flat_map(|p| p.tabs.iter().map(|t| t.editor.read(cx).document.clone()))
+            .flat_map(|p| p.tabs.iter().filter_map(|t| t.editor()))
+            .map(|e| e.read(cx).document.clone())
             .collect();
         self.documents.retain(|d| shown.contains(d));
     }
@@ -591,7 +640,7 @@ impl Workspace {
                     // An edit promotes a preview tab to a real one.
                     for pane in &mut this.panes {
                         for tab in &mut pane.tabs {
-                            if tab.editor == editor {
+                            if tab.editor() == Some(&editor) {
                                 tab.preview = false;
                             }
                         }
@@ -635,7 +684,7 @@ impl Workspace {
         let editors: Vec<_> = self
             .panes
             .iter()
-            .flat_map(|p| p.tabs.iter().map(|t| t.editor.clone()))
+            .flat_map(|p| p.tabs.iter().filter_map(|t| t.editor().cloned()))
             .filter(|e| e.read(cx).is_dirty(cx))
             .collect();
         for editor in editors {
@@ -711,17 +760,17 @@ impl Workspace {
         let editor = self.new_editor(document, cx);
         let p = self.active_pane;
         let pane = &mut self.panes[p];
-        let existing_preview = pane
-            .tabs
-            .iter()
-            .position(|t| t.preview && !t.editor.read(cx).is_dirty(cx));
+        let existing_preview = pane.tabs.iter().position(|t| t.preview && !t.is_dirty(cx));
         match (preview, existing_preview) {
             (true, Some(ix)) => {
-                pane.tabs[ix].editor = editor;
+                pane.tabs[ix].view = TabView::Editor(editor);
                 pane.active = Some(ix);
             }
             _ => {
-                pane.tabs.push(Tab { editor, preview });
+                pane.tabs.push(Tab {
+                    view: TabView::Editor(editor),
+                    preview,
+                });
                 pane.active = Some(pane.tabs.len() - 1);
             }
         }
@@ -764,7 +813,7 @@ impl Workspace {
         self.panes
             .get(self.active_pane)
             .and_then(Pane::active_tab)
-            .map(|t| &t.editor)
+            .and_then(Tab::editor)
     }
 
     fn focus_active_editor(&self, cx: &mut Context<Self>) {
@@ -775,8 +824,8 @@ impl Workspace {
     }
 
     fn focus_editor_now(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.active_editor() {
-            editor.read(cx).focus_handle(cx).focus(window, cx);
+        if let Some(tab) = self.panes.get(self.active_pane).and_then(Pane::active_tab) {
+            tab.focus_handle(cx).focus(window, cx);
         } else {
             self.file_tree.read(cx).focus_handle(cx).focus(window, cx);
         }
@@ -804,7 +853,7 @@ impl Workspace {
             return;
         }
         let tab = self.panes[p].tabs.remove(ix);
-        if let Some(path) = tab.editor.read(cx).path(cx) {
+        if let Some(path) = tab.path(cx) {
             self.closed.push(path);
         }
         drop(tab);
@@ -905,7 +954,7 @@ impl Workspace {
         let editors: Vec<_> = self
             .panes
             .iter()
-            .flat_map(|p| p.tabs.iter().map(|t| t.editor.clone()))
+            .flat_map(|p| p.tabs.iter().filter_map(|t| t.editor().cloned()))
             .collect();
         for editor in editors {
             if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
@@ -961,7 +1010,7 @@ impl Workspace {
     ) {
         let p = self.active_pane;
         for ix in (0..self.panes[p].tabs.len()).rev() {
-            if !self.panes[p].tabs[ix].editor.read(cx).is_dirty(cx) {
+            if !self.panes[p].tabs[ix].is_dirty(cx) {
                 self.close_tab_at(p, ix, window, cx);
             }
         }
@@ -1322,8 +1371,6 @@ impl Workspace {
         for p in 0..self.panes.len() {
             for ix in (0..self.panes[p].tabs.len()).rev() {
                 let under = self.panes[p].tabs[ix]
-                    .editor
-                    .read(cx)
                     .path(cx)
                     .is_some_and(|f| f == path || f.starts_with(path));
                 if under {
@@ -1423,12 +1470,13 @@ impl Workspace {
         let p = self.active_pane;
         let source = self.panes[p]
             .active_tab()
-            .map(|t| t.editor.read(cx).document.clone());
+            .and_then(Tab::editor)
+            .map(|e| e.read(cx).document.clone());
         let mut pane = Pane::new(cx);
         if let Some(document) = source {
             let editor = self.new_editor(document, cx);
             pane.tabs.push(Tab {
-                editor,
+                view: TabView::Editor(editor),
                 preview: false,
             });
             pane.active = Some(0);
@@ -1759,18 +1807,17 @@ impl Workspace {
     ) -> Stateful<Div> {
         let pane = &self.panes[p];
         let tab = &pane.tabs[ix];
-        let e = tab.editor.read(cx);
         let selected = pane.active == Some(ix);
-        let focused = selected && e.focus_handle(cx).is_focused(window);
-        let title: SharedString = e.title(cx).into();
-        let dirty = e.is_dirty(cx);
+        let focused = selected && tab.focus_handle(cx).is_focused(window);
+        let title: SharedString = tab.title(cx).into();
+        let dirty = tab.is_dirty(cx);
         let preview = tab.preview;
-        let icon_path = file_icon(&e.title(cx));
-        let path_text: SharedString = e
+        let icon_path = tab.icon(cx);
+        let path_text: SharedString = tab
             .path(cx)
             .as_deref()
             .map(display_path)
-            .unwrap_or_else(|| "Untitled".into())
+            .unwrap_or_else(|| tab.title(cx))
             .into();
         let close_left = Self::settings(cx).tab_close_button_on_the_left();
         let entity = cx.entity();
@@ -2061,12 +2108,17 @@ impl Workspace {
     ) -> impl IntoElement {
         let pane = &self.panes[p];
         let body = match pane.active_tab() {
-            Some(tab) => div()
-                .flex_1()
-                .min_h_0()
-                .relative()
-                .child(tab.editor.clone())
-                .child(pane.find.clone()),
+            Some(tab) => match &tab.view {
+                TabView::Editor(editor) => div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(editor.clone())
+                    .child(pane.find.clone()),
+                TabView::Settings(settings) => {
+                    div().flex_1().min_h_0().relative().child(settings.clone())
+                }
+            },
             None => div()
                 .flex_1()
                 .min_h_0()
@@ -2589,7 +2641,7 @@ impl Render for Workspace {
         }
         // Each split's find bar searches the split's active editor.
         for pane in &self.panes {
-            let editor = pane.active_tab().map(|t| t.editor.clone());
+            let editor = pane.active_tab().and_then(|t| t.editor().cloned());
             pane.find.update(cx, |bar, cx| bar.set_editor(editor, cx));
         }
         let root_name = self.file_tree.read(cx).root_name();
@@ -2768,7 +2820,8 @@ impl Render for Workspace {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .px(px(m.island_margin))
+                    .pl(px(m.island_margin))
+                    .pr(px(m.island_margin_right))
                     .child(middle),
             )
             .when(Self::settings(cx).editor_show_status_bar(), |d| {

@@ -23,6 +23,8 @@ mod popup;
 mod scrollbar;
 mod search_tool;
 mod settings;
+mod settings_schema;
+mod settings_view;
 mod theme;
 mod toolbar;
 mod tooltip;
@@ -149,6 +151,8 @@ fn main() {
                 KeyBinding::new("right", actions::PopupRight, Some("Popup")),
                 KeyBinding::new("pageup", actions::PopupPageUp, Some("Popup")),
                 KeyBinding::new("pagedown", actions::PopupPageDown, Some("Popup")),
+                KeyBinding::new("pageup", actions::PopupPageUp, Some("SettingsTool")),
+                KeyBinding::new("pagedown", actions::PopupPageDown, Some("SettingsTool")),
                 KeyBinding::new("tab", actions::PopupTab, Some("Popup")),
                 KeyBinding::new("shift-tab", actions::PopupBackTab, Some("Popup")),
                 KeyBinding::new("enter", actions::PopupConfirm, Some("Popup")),

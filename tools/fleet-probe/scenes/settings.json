@@ -1,0 +1,49 @@
+{
+  "name": "settings",
+  "about": "Batch 8: the Settings tool (Ctrl+Comma) as it opens, then page by page (Page Down in the settings list), then with 'font' typed in its search field. Both editors run the same steps; the scans read the tool's column, its first card and the scope row.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+comma"], ["wait", 2500], ["shot", "settings"],
+      ["move", 900, 400], ["wait", 300], ["click"], ["wait", 500],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page2"],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page3"],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page4"],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page5"],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page6"],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page7"],
+      ["key", "pagedown"], ["wait", 1000], ["shot", "page8"],
+      ["key", "ctrl+home"], ["wait", 800],
+      ["key", "ctrl+comma"], ["wait", 1200], ["type", "font"], ["wait", 1500], ["shot", "search-font"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+f4"], ["wait", 800]
+    ],
+    "oak": [
+      ["wait", 1000], ["key", "escape"], ["wait", 300],
+      ["key", "ctrl+comma"], ["wait", 1500], ["shot", "settings"],
+      ["move", 900, 400], ["wait", 300], ["click"], ["wait", 500],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page2"],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page3"],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page4"],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page5"],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page6"],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page7"],
+      ["key", "pagedown"], ["wait", 600], ["shot", "page8"],
+      ["key", "ctrl+home"], ["wait", 500],
+      ["key", "ctrl+comma"], ["wait", 800], ["type", "font"], ["wait", 800], ["shot", "search-font"],
+      ["key", "escape"], ["wait", 300],
+      ["key", "ctrl+f4"], ["wait", 500]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "settings column through the field and tree (x=640)", "axis": "y", "at": 640, "from": 40, "to": 790, "edges": ["field ring top", "field ring bottom", "tree selection top", "tree selection bottom"]},
+    {"name": "settings column through the controls (x=1100)", "axis": "y", "at": 1100, "from": 40, "to": 790, "edges": ["card top", "first control top", "first control bottom", "card bottom"]},
+    {"name": "first card row (y=369)", "axis": "x", "at": 369, "from": 376, "to": 1280, "edges": ["card left", "control left", "control right", "card right"]},
+    {"name": "card below the title (y=442)", "axis": "x", "at": 442, "from": 376, "to": 1280, "edges": ["card left", "card right"]}
+  ],
+  "samples": []
+}

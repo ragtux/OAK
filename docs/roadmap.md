@@ -27,8 +27,8 @@ gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 | --- | --- | --- |
 | Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 114 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 58 |
-| Theme `colors` keys | 684 | 118 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 89 |
+| Theme `colors` keys | 684 | 125 |
 | Theme `textAttributes` keys | 157 | 32 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
@@ -187,7 +187,7 @@ it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
 Theme groups: `editor` (43), `highlight`, `inputField`, `toggleButton`,
 `ghostButton`, most `textAttributes`.
 
-### M3 Workbench tools (built 2026-11-02; batches 6 and 7 measured, batch 8 to run)
+### M3 Workbench tools (built 2026-11-02; batches 6, 7 and 8 measured)
 
 The tools Fleet has without a backend, each in Fleet's island. Built in one
 pass on 2026-11-02 from what Fleet's own files say (its local storage holds
@@ -199,9 +199,12 @@ Search), filter buttons under the field, 26 px rows and the preview under
 the list; `find-in-path` opens its Text Search tab; menus have 28 px rows
 and submenus. The dialogs, toasts and the panel's Search tool are still
 estimates (Fleet's help site was retired in December 2025, so its pages are
-no longer a source). Left for later: the Settings tool
-(batch 8 has to read the 430 defaults off Fleet's pages first; `open-settings`
-opens the settings file and says so), the snapshots tool (snapshots are
+no longer a source). The Settings tool followed from batch 8 the same day
+(`docs/fleet-probe.md`, seventh pass): Fleet's pages as an editor tab, every
+row bound to its key with the default read off the page, and the
+Notifications popup under the bell replaced the panel tool. Left for later:
+the Settings tool's Plugins and AI pages, the modified-value mark and the
+workspace scope, the snapshots tool (snapshots are
 written by `local-history/make-snapshot`, not yet listed), the `showShortcuts`
 overlay and `inputSequenceTimeoutMilliseconds` (gpui owns chord timing),
 `restoreWorkspacesOnStartup` and the empty state, a notification's actions
@@ -248,9 +251,14 @@ which no source shows.
   `~/.config/oak/keymaps/<name>.json`, merged over Fleet's defaults.
 - Done: `local-history/make-snapshot` writes a copy under Oak's
   `local-history/` folder.
-- Probes: batches 6 and 7 as the `goto` and `popups` scenes, run on both
-  editors (the `compare.py` pass is still to be run on the pairs); batch 8
-  not started.
+- Probes: batches 6, 7 and 8 as the `goto`, `popups`, `settings` and
+  `dialogs` scenes, run on both editors (the `compare.py` pass is still to
+  be run on the popups and settings pairs; the confirm dialog is still to
+  be caught).
+- Done: the Settings tool (`open-settings`): `settings_schema.rs` holds
+  Fleet's pages (sections, groups, labels, keys, control kinds, defaults);
+  `settings_view.rs` draws them at the measured values and writes each
+  change to Oak's `settings.json` through `settings::set_value`.
 
 - Goto panel: `goto/everything`, `goto/file`, `goto/symbol` (file symbols
   via tree-sitter, `show-file-symbols`), `goto/action`, `goto/tool`, recent
@@ -270,10 +278,10 @@ which no source shows.
 - Windows: recent workspaces / empty state (`show-recent-workspaces`,
   `restoreWorkspacesOnStartup`, `showEmptyStateOnLastClosedWindow`),
   `toggle-full-screen`, `minimize-window`, multiple windows.
-- Settings tool (`open-settings`, `edit-settings-file`, `edit-keymap-file`):
-  the searchable settings UI built from the 430 documented keys, using
-  `tileButton`, `checkbox`, `combobox`, `dropdown`, `button` (108 keys),
-  `pillButton`, `link`.
+- Settings tool, the rest: the Plugins and AI pages, the modified-value
+  mark (`settings.modified.indicator`), the workspace scope, `tileButton`
+  and `pillButton` states, the rows whose keys the documentation does not
+  name.
 - Keymap presets: load any of Fleet's eight preset files from the user's
   config; `keymap` setting; `showShortcuts` overlay;
   `inputSequenceTimeoutMilliseconds` for chords.

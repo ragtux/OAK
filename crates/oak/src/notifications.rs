@@ -15,6 +15,9 @@ use std::time::Duration;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
     Info,
+    /// Fleet's `banner.*` colours ("File has been changed on disk") are an M3
+    /// follow-up; nothing raises a warning yet.
+    #[allow(dead_code)]
     Warning,
     Error,
 }
@@ -133,6 +136,10 @@ impl Notifications {
             cx.emit(NotificationsEvent::Changed);
             cx.notify();
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 
     pub fn unread(&self) -> usize {

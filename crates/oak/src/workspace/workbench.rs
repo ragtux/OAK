@@ -13,6 +13,8 @@ use crate::keymap::{action_for, hint_for, is_editor_action};
 use crate::menu::{ContextMenu, MenuEntry, MenuEvent};
 use crate::notifications::{Level, Notifications};
 use crate::search_tool::{SearchTool, SearchToolEvent};
+use crate::settings_view::SettingsView;
+use gpui::{deferred, Action, BoxShadow, FontWeight};
 use gpui::{AnyElement, ClipboardItem, FocusHandle};
 use oak_search::{FileIndex, GrepQuery};
 use std::ops::Range;
@@ -774,12 +776,13 @@ impl Workspace {
                     window.dispatch_action(action, cx);
                 }
             }
-            GotoTarget::Tool(tool) => {
-                self.choose_tool(tool_side(tool), tool, window, cx);
-                if tool == Tool::Notifications {
-                    self.notifications.update(cx, |n, cx| n.mark_all_read(cx));
+            GotoTarget::Tool(Tool::Notifications) => {
+                self.focus_editor_now(window, cx);
+                if !self.notifications_open {
+                    self.toggle_notifications(&ToggleNotifications, window, cx);
                 }
             }
+            GotoTarget::Tool(tool) => self.choose_tool(tool_side(tool), tool, window, cx),
             GotoTarget::Workspace(root) => {
                 self.focus_editor_now(window, cx);
                 crate::open_workspace_window(root, Vec::new(), false, (1280., 800.), cx);
@@ -1019,41 +1022,140 @@ impl Workspace {
         let entries = Self::main_menu(cx);
         self.open_menu(entries, position, focus, cx);
     }
-    /// `open-settings`: the Settings tool is batch 8 of the probe plan; until
-    /// it is measured and built, the settings file opens.
+    /// `open-settings`: the Settings tool as a tab in the active split (one
+    /// per workspace; an open one is activated).
     pub(super) fn open_settings(
         &mut self,
         _: &OpenSettings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.notify(
-            Level::Warning,
-            "Settings",
-            Some("The Settings tool is not built yet; editing the settings file instead.".into()),
-            cx,
-        );
-        self.edit_settings_file(&EditSettingsFile, window, cx);
+        for p in 0..self.panes.len() {
+            if let Some(ix) = self.panes[p]
+                .tabs
+                .iter()
+                .position(|t| matches!(t.view, TabView::Settings(_)))
+            {
+                self.activate_tab(p, ix, window, cx);
+                return;
+            }
+        }
+        let root_name = self.file_tree.read(cx).root_name();
+        let view = cx.new(|cx| SettingsView::new(root_name, cx));
+        let p = self.active_pane;
+        let pane = &mut self.panes[p];
+        pane.tabs.push(Tab {
+            view: TabView::Settings(view),
+            preview: false,
+        });
+        pane.active = Some(pane.tabs.len() - 1);
+        pane.scroll.scroll_to_item(pane.tabs.len() - 1);
+        self.focus_editor_now(window, cx);
+        self.after_activate(cx);
     }
-    /// `notifications/toggle`: the Notifications tool in the right panel.
+    /// `notifications/toggle`: Fleet's Notifications popup under the toolbar's
+    /// bell (batch 7); opening it reads everything.
     pub(super) fn toggle_notifications(
         &mut self,
         _: &ToggleNotifications,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let side = tool_side(Tool::Notifications);
-        let panel = self.panel(side);
-        let showing = panel.open && panel.tools.get(panel.active) == Some(&Tool::Notifications);
-        if showing {
-            self.panel_mut(side).open = false;
-            self.focus_editor_now(window, cx);
-            self.save_layout();
-            cx.notify();
-        } else {
-            self.choose_tool(side, Tool::Notifications, window, cx);
+        self.notifications_open = !self.notifications_open;
+        if self.notifications_open {
             self.notifications.update(cx, |n, cx| n.mark_all_read(cx));
         }
+        cx.notify();
+    }
+
+    /// The Notifications popup: a 32 px header (title, two icon buttons), a
+    /// separator, then the rows or the empty state.
+    fn render_notifications_popup(&self, theme: &Theme, m: &Metrics, cx: &App) -> AnyElement {
+        let empty = self.notifications.read(cx).is_empty();
+        let icon_button =
+            |id: &'static str, path: &'static str, action: fn() -> Box<dyn Action>| {
+                div()
+                    .id(id)
+                    .size(px(m.goto_icon_button))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(m.button_radius))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.ghost_hovered))
+                    .on_click(move |_, window, cx| window.dispatch_action(action(), cx))
+                    .child(icon(path, m.icon_size, theme.icon_primary))
+            };
+        let header = div()
+            .h(px(m.notifications_header - 1.))
+            .flex_shrink_0()
+            .pl(px(m.notifications_pad_x))
+            .pr(px(m.notifications_icon_gap))
+            .flex()
+            .items_center()
+            .gap(px(m.notifications_icon_gap))
+            .child(
+                div()
+                    .flex_1()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Notifications"),
+            )
+            .child(icon_button(
+                "notifications-settings",
+                "expui/general/settings",
+                || Box::new(OpenSettings),
+            ))
+            .child(icon_button(
+                "notifications-clear",
+                "expui/general/delete",
+                || Box::new(ClearNotifications),
+            ));
+        let body: AnyElement = if empty {
+            div()
+                .h(px(m.notifications_empty_height))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(theme.text_secondary)
+                .child("You don't have any unread notifications")
+                .into_any_element()
+        } else {
+            div()
+                .max_h(px(m.goto_max_height / 2.))
+                .child(self.notifications.clone())
+                .into_any_element()
+        };
+        deferred(
+            div()
+                .id("notifications-popup")
+                .occlude()
+                .absolute()
+                .right(px(m.notifications_right))
+                .top(px(m.toolbar_height + m.notifications_top_gap))
+                .w(px(m.notifications_width))
+                .flex()
+                .flex_col()
+                .rounded(px(m.popup_radius))
+                .border_1()
+                .border_color(theme.popup_border)
+                .bg(theme.popup_bg)
+                .font_family(theme.ui_font.clone())
+                .text_size(px(m.ui_font_size))
+                .text_color(theme.popup_text)
+                .shadow(vec![BoxShadow {
+                    color: theme.shadow_medium,
+                    offset: point(px(0.), px(m.popup_shadow_offset_y)),
+                    blur_radius: px(m.popup_shadow_blur),
+                    spread_radius: px(0.),
+                }])
+                .on_mouse_down_out(|_, window, cx| {
+                    window.dispatch_action(Box::new(ToggleNotifications), cx)
+                })
+                .child(header)
+                .child(div().h(px(1.)).flex_shrink_0().bg(theme.popup_separator))
+                .child(body),
+        )
+        .into_any_element()
     }
     pub(super) fn clear_notifications(
         &mut self,
@@ -1170,7 +1272,7 @@ impl Workspace {
             let view = self
                 .panes
                 .iter()
-                .flat_map(|p| p.tabs.iter().map(|t| t.editor.clone()))
+                .flat_map(|p| p.tabs.iter().filter_map(|t| t.editor().cloned()))
                 .find(|e| e.read(cx).path(cx).as_deref() == Some(path.as_path()));
             if let Some(editor) = view {
                 let edits: Vec<(Range<usize>, String)> = {
@@ -1253,6 +1355,9 @@ impl Workspace {
         }
         if let Some(toasts) = self.notifications.read(cx).render_toasts(theme, m, cx) {
             out.push(toasts.into_any_element());
+        }
+        if self.notifications_open {
+            out.push(self.render_notifications_popup(theme, m, cx));
         }
         out
     }
