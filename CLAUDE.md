@@ -25,13 +25,15 @@ crates/oak-text     Buffer (ropey) and TextEditor: selection, undo grouping, eve
 crates/oak-syntax   tree-sitter grammars (rust, json, toml, markdown) -> Fleet textAttributes keys
 crates/oak-theme    Fleet theme JSON: palette resolution, typed Color, cascading attribute lookup
 crates/oak-keymap   Fleet keymap JSON: per-platform chord resolution, gpui keystroke spelling
-docs/               fleet-probe.md: the measurements and their provenance
-tools/fleet-probe   scripts: extract themes from a Fleet tarball, regenerate Oak's themes, measure screenshots
+docs/               fleet-probe.md (measurements and provenance), roadmap.md (milestones), probe-plan.md (method and harnesses)
+tools/fleet-probe   scripts: inventory Fleet's actions/settings/theme keys, coverage vs Oak, extract themes, measure screenshots
 ```
 
 ## Commands
 
 On NixOS run the gpui commands inside `nix-shell` (`shell.nix` supplies X11, Wayland and Vulkan).
+On Windows the MSVC Build Tools suffice; when the repo sits on a network share, set
+`CARGO_TARGET_DIR` to a local disk (the probe driver reads `OAK_EXE` for the binary).
 gpui is a git dependency pinned to a Zed release commit (see `Cargo.toml`); bump it one release
 at a time and run on a real GPU before committing.
 

@@ -15,21 +15,26 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Fleet's sizes, in logical pixels. Measured on Fleet 1.48.261 rendering at
-/// 2.76 device pixels per logical pixel (display 1.38 × zoom 2.0), see
-/// `docs/fleet-probe.md` for the raw numbers and what is still estimated.
+/// 2.76 device pixels per logical pixel (display 1.38 × zoom 2.0) on KDE, then
+/// at 1.5 (display 1.5 × zoom 1.0) on Windows; see `docs/fleet-probe.md` for
+/// the raw numbers and what is still estimated.
 pub mod metrics {
     /// The row above the islands: the logo, the panel toggles, the workspace
     /// name, the run and search controls.
     pub const TOOLBAR_HEIGHT: f32 = 36.;
     pub const TOOLBAR_BUTTON: f32 = 28.;
     pub const TOOLBAR_GAP: f32 = 4.;
-    pub const TOOLBAR_PAD_X: f32 = 6.;
+    /// Window edge to the logo's 24 px box (Windows probe: logo centred at 16.7).
+    pub const TOOLBAR_PAD_X: f32 = 4.;
+    /// Either side of the 1 px separator (Windows probe: button centre to line 22.7 = 14 + 4 + 4.7).
+    pub const TOOLBAR_SEPARATOR_MARGIN: f32 = 4.;
     pub const LOGO_SIZE: f32 = 24.;
     pub const ICON_SIZE: f32 = 16.;
     /// The margin between the window edge and an island, and between two islands.
     pub const ISLAND_MARGIN: f32 = 8.;
     pub const ISLAND_RADIUS: f32 = 8.;
-    pub const LEFT_PANEL_WIDTH: f32 = 300.;
+    /// Fleet's Files island in a fresh 1280 × 800 window (Windows probe, batch 1).
+    pub const LEFT_PANEL_WIDTH: f32 = 360.;
     pub const BOTTOM_PANEL_HEIGHT: f32 = 220.;
     /// A tool panel's own tab row ("Files", "Search", "Git", "History", "+").
     pub const PANEL_TAB_HEIGHT: f32 = 28.;
@@ -40,6 +45,8 @@ pub mod metrics {
     pub const PANEL_HEADER_PAD_BOTTOM: f32 = 5.;
     pub const PANEL_PAD_X: f32 = 6.;
     pub const TREE_ROW_HEIGHT: f32 = 26.;
+    /// The selected or hovered row's background is 24 tall inside the 26 px pitch.
+    pub const TREE_ROW_INSET: f32 = 1.;
     pub const TREE_ROW_RADIUS: f32 = 4.;
     pub const TREE_ROOT_PAD_LEFT: f32 = 14.;
     pub const TREE_PAD_LEFT: f32 = 5.;
@@ -49,21 +56,28 @@ pub mod metrics {
     pub const EDITOR_TAB_BAR_HEIGHT: f32 = 40.;
     pub const EDITOR_TAB_HEIGHT: f32 = 28.;
     pub const EDITOR_TAB_RADIUS: f32 = 6.;
-    pub const EDITOR_TAB_PAD_X: f32 = 8.;
+    /// Inside the tab: 4, icon 16, 5, title, 2, close 16, 2 (Windows probe, glyph extents).
+    pub const EDITOR_TAB_PAD_LEFT: f32 = 4.;
+    pub const EDITOR_TAB_PAD_RIGHT: f32 = 2.;
     pub const EDITOR_TAB_GAP: f32 = 4.;
-    pub const EDITOR_TAB_ICON_GAP: f32 = 6.;
+    pub const EDITOR_TAB_ICON_GAP: f32 = 5.;
+    pub const EDITOR_TAB_CLOSE_GAP: f32 = 2.;
     /// The gutter: line numbers right-aligned at `GUTTER_NUMBER_RIGHT`, text from `GUTTER_WIDTH`.
     pub const GUTTER_NUMBER_RIGHT: f32 = 36.;
     pub const GUTTER_WIDTH: f32 = 60.;
     pub const EDITOR_FONT_SIZE: f32 = 13.;
-    pub const EDITOR_LINE_HEIGHT: f32 = 21.;
+    /// 33 device px at 1.5 (Windows probe); 60 at 2.76 (KDE probe) agrees with 22.
+    pub const EDITOR_LINE_HEIGHT: f32 = 22.;
     pub const CARET_WIDTH: f32 = 2.;
-    pub const SCROLLBAR_WIDTH: f32 = 10.;
+    /// The thumb sits flush with the island's right edge (Windows probe).
     pub const SCROLLBAR_THUMB: f32 = 6.;
     pub const UI_FONT_SIZE: f32 = 13.;
-    pub const STATUS_BAR_HEIGHT: f32 = 27.;
+    /// 42 device px at 1.5 (Windows probe).
+    pub const STATUS_BAR_HEIGHT: f32 = 28.;
     pub const STATUS_PAD_X: f32 = 8.;
-    pub const STATUS_GAP: f32 = 24.;
+    /// The right group ends 12 px from the window edge: margin 8 + this.
+    pub const STATUS_PAD_RIGHT: f32 = 4.;
+    pub const STATUS_GAP: f32 = 12.;
 }
 
 pub fn to_hsla(c: Color) -> Hsla {
@@ -233,6 +247,9 @@ impl Theme {
         };
         let parsed =
             oak_theme::Theme::parse(&json).with_context(|| format!("loading theme {source:?}"))?;
+        for warning in &parsed.warnings {
+            eprintln!("oak: theme {source:?}: skipped {warning}");
+        }
         Ok(Theme::from_parsed(parsed))
     }
 

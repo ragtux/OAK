@@ -31,7 +31,11 @@ pub fn icon_button(
 }
 
 pub fn separator(theme: &Theme) -> Div {
-    div().w(px(1.)).h(px(16.)).mx(px(6.)).bg(theme.separator)
+    div()
+        .w(px(1.))
+        .h(px(16.))
+        .mx(px(TOOLBAR_SEPARATOR_MARGIN))
+        .bg(theme.separator)
 }
 
 pub struct ToolbarState {

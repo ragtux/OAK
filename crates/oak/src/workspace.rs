@@ -251,10 +251,10 @@ impl Workspace {
             div()
                 .id(ElementId::NamedInteger("tab".into(), ix as u64))
                 .h(px(EDITOR_TAB_HEIGHT))
-                .px(px(EDITOR_TAB_PAD_X))
+                .pl(px(EDITOR_TAB_PAD_LEFT))
+                .pr(px(EDITOR_TAB_PAD_RIGHT))
                 .flex()
                 .items_center()
-                .gap(px(EDITOR_TAB_ICON_GAP))
                 .rounded(px(EDITOR_TAB_RADIUS))
                 .border_1()
                 .cursor_pointer()
@@ -280,12 +280,19 @@ impl Workspace {
                         cx.notify();
                     })
                 })
-                .child(icon(icon_path, ICON_SIZE, theme.icon_secondary))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .mr(px(EDITOR_TAB_ICON_GAP))
+                        .child(icon(icon_path, ICON_SIZE, theme.icon_secondary)),
+                )
                 .child(div().child(title))
                 .child(
                     div()
                         .id(ElementId::NamedInteger("tab-close".into(), ix as u64))
                         .size(px(ICON_SIZE))
+                        .flex_shrink_0()
+                        .ml(px(EDITOR_TAB_CLOSE_GAP))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -399,7 +406,8 @@ impl Workspace {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .px(px(ISLAND_MARGIN + STATUS_PAD_X))
+            .pl(px(ISLAND_MARGIN + STATUS_PAD_X))
+            .pr(px(ISLAND_MARGIN + STATUS_PAD_RIGHT))
             .text_color(theme.status_text)
             .child(
                 div()

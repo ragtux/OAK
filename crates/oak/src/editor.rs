@@ -1112,17 +1112,16 @@ impl Element for EditorElement {
                     ));
                 }
             }
-            // The scrollbar: a thumb proportional to the view, no track.
+            // The scrollbar: a thumb proportional to the view, no track. Fleet's thumb
+            // starts at the text area's top and sits flush with the island's right edge.
             let total = lh * prepaint.line_count as f32 + bounds.size.height - lh;
             if total > bounds.size.height {
-                let track_h = bounds.size.height - px(8.);
+                let track_h = bounds.size.height;
                 let thumb_h = (track_h * (bounds.size.height / total)).max(px(24.));
                 let max_scroll = total - bounds.size.height;
-                let thumb_y = bounds.origin.y
-                    + px(4.)
-                    + (track_h - thumb_h) * (prepaint.scroll_y / max_scroll);
-                let x =
-                    right - px(SCROLLBAR_WIDTH) + (px(SCROLLBAR_WIDTH) - px(SCROLLBAR_THUMB)) / 2.;
+                let thumb_y =
+                    bounds.origin.y + (track_h - thumb_h) * (prepaint.scroll_y / max_scroll);
+                let x = right - px(SCROLLBAR_THUMB);
                 window.paint_quad(
                     fill(
                         Bounds::new(point(x, thumb_y), size(px(SCROLLBAR_THUMB), thumb_h)),

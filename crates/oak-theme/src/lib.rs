@@ -183,6 +183,10 @@ pub struct Theme {
     pub kind: Kind,
     colors: IndexMap<String, Color>,
     attributes: IndexMap<String, TextAttributes>,
+    /// Entries that did not resolve and were left out, as `key: reason`. Fleet 1.48's own
+    /// `dark.json` carries a 7-digit colour (`editor.interline.match.background.secondary`:
+    /// `#FFFE248`), and Fleet still loads the file, so one bad entry must not reject a theme.
+    pub warnings: Vec<String>,
 }
 
 fn resolve(palette: &IndexMap<String, String>, value: &str) -> Result<Color> {
@@ -218,56 +222,58 @@ impl Theme {
             Some(k) if k.eq_ignore_ascii_case("light") => Kind::Light,
             _ => Kind::Dark,
         };
+        let mut warnings = Vec::new();
         let mut colors = IndexMap::with_capacity(raw.colors.len());
         for (key, value) in &raw.colors {
-            let color = resolve(&raw.palette, value).with_context(|| format!("colors.{key}"))?;
-            colors.insert(key.clone(), color);
+            match resolve(&raw.palette, value) {
+                Ok(color) => {
+                    colors.insert(key.clone(), color);
+                }
+                Err(e) => warnings.push(format!("colors.{key}: {e:#}")),
+            }
         }
         let opt = |v: &Option<String>| -> Result<Option<Color>> {
             v.as_deref().map(|v| resolve(&raw.palette, v)).transpose()
         };
         let mut attributes = IndexMap::with_capacity(raw.text_attributes.len());
         for (key, a) in &raw.text_attributes {
-            let decoration = match &a.decoration {
-                Some(d) => Some(Decoration {
-                    color: opt(&d.color).with_context(|| format!("textAttributes.{key}"))?,
-                    kind: d
-                        .kind
-                        .as_deref()
-                        .map(|k| match k.to_ascii_uppercase().as_str() {
-                            "STRIKETHROUGH" => DecorationType::Strikethrough,
-                            "OVERLINE" => DecorationType::Overline,
-                            _ => DecorationType::Underline,
-                        }),
-                    style: d
-                        .style
-                        .as_deref()
-                        .map(|s| match s.to_ascii_uppercase().as_str() {
-                            "DASHED" => DecorationStyle::Dashed,
-                            "DOTTED" => DecorationStyle::Dotted,
-                            "WAVY" | "WAVE" => DecorationStyle::Wavy,
-                            _ => DecorationStyle::Solid,
-                        }),
-                    thickness: d.thickness,
-                }),
-                None => None,
-            };
-            let weight = a
-                .weight
-                .as_deref()
-                .map(|w| match w.to_ascii_uppercase().as_str() {
-                    "BOLD" | "EXTRA_BOLD" | "BLACK" => FontWeight::Bold,
-                    "SEMI_BOLD" | "SEMIBOLD" => FontWeight::SemiBold,
-                    "MEDIUM" => FontWeight::Medium,
-                    _ => FontWeight::Normal,
-                });
-            attributes.insert(
-                key.clone(),
-                TextAttributes {
-                    foreground: opt(&a.foreground)
-                        .with_context(|| format!("textAttributes.{key}"))?,
-                    background: opt(&a.background)
-                        .with_context(|| format!("textAttributes.{key}"))?,
+            let entry = (|| -> Result<TextAttributes> {
+                let decoration = match &a.decoration {
+                    Some(d) => Some(Decoration {
+                        color: opt(&d.color).with_context(|| format!("textAttributes.{key}"))?,
+                        kind: d
+                            .kind
+                            .as_deref()
+                            .map(|k| match k.to_ascii_uppercase().as_str() {
+                                "STRIKETHROUGH" => DecorationType::Strikethrough,
+                                "OVERLINE" => DecorationType::Overline,
+                                _ => DecorationType::Underline,
+                            }),
+                        style: d
+                            .style
+                            .as_deref()
+                            .map(|s| match s.to_ascii_uppercase().as_str() {
+                                "DASHED" => DecorationStyle::Dashed,
+                                "DOTTED" => DecorationStyle::Dotted,
+                                "WAVY" | "WAVE" => DecorationStyle::Wavy,
+                                _ => DecorationStyle::Solid,
+                            }),
+                        thickness: d.thickness,
+                    }),
+                    None => None,
+                };
+                let weight = a
+                    .weight
+                    .as_deref()
+                    .map(|w| match w.to_ascii_uppercase().as_str() {
+                        "BOLD" | "EXTRA_BOLD" | "BLACK" => FontWeight::Bold,
+                        "SEMI_BOLD" | "SEMIBOLD" => FontWeight::SemiBold,
+                        "MEDIUM" => FontWeight::Medium,
+                        _ => FontWeight::Normal,
+                    });
+                Ok(TextAttributes {
+                    foreground: opt(&a.foreground)?,
+                    background: opt(&a.background)?,
                     weight,
                     italic: a
                         .style
@@ -275,14 +281,21 @@ impl Theme {
                         .is_some_and(|s| s.eq_ignore_ascii_case("italic")),
                     decoration,
                     scrollbar_mark: opt(&a.scrollbar_mark)?,
-                },
-            );
+                })
+            })();
+            match entry {
+                Ok(attrs) => {
+                    attributes.insert(key.clone(), attrs);
+                }
+                Err(e) => warnings.push(format!("textAttributes.{key}: {e:#}")),
+            }
         }
         Ok(Theme {
             name,
             kind,
             colors,
             attributes,
+            warnings,
         })
     }
 
@@ -347,6 +360,33 @@ mod tests {
     }"##;
 
     #[test]
+    fn skips_entries_it_cannot_resolve() {
+        // Fleet 1.48's dark.json ships `"editor.interline.match.background.secondary": "#FFFE248"`
+        // (seven digits) and loads anyway; Oak keeps the rest of the file and reports the entry.
+        let json = r##"{
+          "colors": { "good": "#101010", "bad": "#FFFE248", "unknown": "Nope" },
+          "textAttributes": { "keyword": { "foregroundColor": "#FFFE248" }, "string": { "foregroundColor": "#202020" } }
+        }"##;
+        let t = Theme::parse(json).unwrap();
+        assert_eq!(t.color("good"), Some(Color::rgb(0x10, 0x10, 0x10)));
+        assert_eq!(t.color("bad"), None);
+        assert_eq!(t.color("unknown"), None);
+        assert!(t.attributes("keyword").is_none());
+        assert!(t.attributes("string").is_some());
+        assert_eq!(t.warnings.len(), 3);
+        assert!(
+            t.warnings[0].starts_with("colors.bad: "),
+            "{:?}",
+            t.warnings
+        );
+        assert!(
+            t.warnings[2].starts_with("textAttributes.keyword: "),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
     fn resolves_palette_names_both_ways() {
         let t = Theme::parse(SAMPLE).unwrap();
         assert_eq!(t.name, "Test");
@@ -372,9 +412,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_colour_is_an_error() {
+    fn unknown_colour_is_a_warning() {
         let bad = r#"{ "colors": { "x": "Nope_1" } }"#;
-        assert!(Theme::parse(bad).is_err());
+        let t = Theme::parse(bad).unwrap();
+        assert_eq!(t.color("x"), None);
+        assert_eq!(t.warnings.len(), 1);
+        assert!(t.warnings[0].contains("Nope_1"), "{:?}", t.warnings);
     }
 
     #[test]

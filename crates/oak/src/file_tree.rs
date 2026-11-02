@@ -324,7 +324,9 @@ impl FileTree {
         let id: ElementId = ElementId::NamedInteger("tree-row".into(), ix as u64);
         div()
             .id(id)
-            .h(px(TREE_ROW_HEIGHT))
+            // The background is 24 tall in a 26 px pitch: the margins keep the pitch.
+            .h(px(TREE_ROW_HEIGHT - 2. * TREE_ROW_INSET))
+            .my(px(TREE_ROW_INSET))
             .w_full()
             .flex()
             .items_center()
