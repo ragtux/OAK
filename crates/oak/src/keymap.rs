@@ -73,8 +73,17 @@ action_table! {
     "split-right" => SplitRight, WORKSPACE;
     // Oak's own id for Fleet's tree-menu row, which has none.
     "open-in-split" => OpenInSplit, WORKSPACE;
-    "git/commit/jump-to-tool" => GitCommitJumpToTool, WORKSPACE;
+    "git/commit/jump-to-tool" | "git/commit/new-tool" => GitCommitJumpToTool, WORKSPACE;
     "git/file-history" => GitFileHistory, WORKSPACE;
+    "git/history/jump-to-tool" | "git/history/new-tool" => GitHistoryJumpToTool, WORKSPACE;
+    "git/toggle-blame" => GitToggleBlame, WORKSPACE;
+    "git/push" => GitPush, WORKSPACE;
+    "git/pull" => GitPull, WORKSPACE;
+    "git/revert" => GitRevert, WORKSPACE;
+    "git/interline-toolbar/show-diff" => GitShowDiff, WORKSPACE;
+    "new-diff-tab-tool" => NewDiffTab, WORKSPACE;
+    "diff/two-files" => DiffTwoFiles, WORKSPACE;
+    "diff/with-clipboard" => DiffWithClipboard, WORKSPACE;
     "unsplit" => Unsplit, WORKSPACE;
     "focus-next-split" | "focus-right-split" => FocusNextSplit, WORKSPACE;
     "focus-previous-split" | "focus-left-split" => FocusPreviousSplit, WORKSPACE;
@@ -259,6 +268,15 @@ pub fn action_title(id: &str) -> String {
         }
         "notifications/toggle" => Some("Notifications"),
         "notifications/clear-all" => Some("Clear All Notifications"),
+        "git/commit/jump-to-tool" => Some("Commit"),
+        "git/commit/new-tool" => Some("New Commit Tool"),
+        "git/history/jump-to-tool" => Some("History"),
+        "git/history/new-tool" => Some("New History Tool"),
+        "git/file-history" => Some("File History"),
+        "git/interline-toolbar/show-diff" => Some("Show Diff"),
+        "new-diff-tab-tool" => Some("Changed Files"),
+        "diff/two-files" => Some("Compare Two Files"),
+        "diff/with-clipboard" => Some("Compare with Clipboard"),
         "local-history/make-snapshot" => Some("Make Local History Snapshot"),
         "confirm" => Some("Enter"),
         "arrow-up" => Some("Up"),
@@ -324,19 +342,26 @@ pub fn load(preset: &str) -> Keymap {
     keymap
 }
 
-/// A chord in Fleet's tooltip spelling ("Ctrl+Shift+F").
+/// A chord in Fleet's tooltip spelling ("Ctrl+Shift+F"; a sequence as
+/// "Ctrl+Shift+G, Ctrl+Shift+A").
 pub fn presentable(chord: &str) -> String {
     chord
-        .split('-')
-        .map(|part| {
-            let mut c = part.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                None => String::new(),
-            }
+        .split_whitespace()
+        .map(|chord| {
+            chord
+                .split('-')
+                .map(|part| {
+                    let mut c = part.chars();
+                    match c.next() {
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("+")
         })
         .collect::<Vec<_>>()
-        .join("+")
+        .join(", ")
         .replace("Digit", "")
         .replace("Cmd", "⌘")
 }

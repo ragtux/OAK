@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# `git/revert` on a new file sends it to the system trash.
+trash.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

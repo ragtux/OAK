@@ -46,6 +46,13 @@ impl Settings {
     pub fn git_enable_3way_diff_view(&self) -> bool {
         self.bool("git.enable3WayDiffView").unwrap_or(false)
     }
+
+    /// `ff.expandGitDiffByDefault`: every file's diff open in the Changed
+    /// Files tab, not only the one that opened it. Default false (the ninth
+    /// pass showed one card open; estimate).
+    pub fn ff_expand_git_diff_by_default(&self) -> bool {
+        self.bool("ff.expandGitDiffByDefault").unwrap_or(false)
+    }
 }
 
 #[cfg(test)]

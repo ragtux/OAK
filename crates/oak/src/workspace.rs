@@ -14,6 +14,7 @@ use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
 mod workbench;
 use crate::dialog::{ConfirmDialog, DialogButton};
+use crate::diff_view::DiffView;
 use crate::git_tool::{GitTool, HistoryTool};
 use crate::goto::GotoPanel;
 use crate::menu::ContextMenu;
@@ -221,10 +222,12 @@ struct SplitterDrag {
 
 // ---- editor splits --------------------------------------------------------------
 
-/// What a tab shows: a file in an editor, or the Settings tool.
+/// What a tab shows: a file in an editor, the Settings tool, or a diff
+/// (the Changed Files tab, `diff/two-files`, `diff/with-clipboard`).
 enum TabView {
     Editor(Entity<EditorView>),
     Settings(Entity<SettingsView>),
+    Diff(Entity<DiffView>),
 }
 
 struct Tab {
@@ -238,7 +241,7 @@ impl Tab {
     fn editor(&self) -> Option<&Entity<EditorView>> {
         match &self.view {
             TabView::Editor(e) => Some(e),
-            TabView::Settings(_) => None,
+            TabView::Settings(_) | TabView::Diff(_) => None,
         }
     }
 
@@ -246,6 +249,7 @@ impl Tab {
         match &self.view {
             TabView::Editor(e) => e.read(cx).focus_handle(cx),
             TabView::Settings(s) => s.read(cx).focus_handle(cx),
+            TabView::Diff(d) => d.read(cx).focus_handle(cx),
         }
     }
 
@@ -253,13 +257,16 @@ impl Tab {
         match &self.view {
             TabView::Editor(e) => e.read(cx).title(cx),
             TabView::Settings(_) => "Settings".into(),
+            TabView::Diff(d) => d.read(cx).title(),
         }
     }
 
-    fn icon(&self, cx: &App) -> &'static str {
+    /// The tab's icon; the Changed Files tab has none (ninth pass).
+    fn icon(&self, cx: &App) -> Option<&'static str> {
         match &self.view {
-            TabView::Editor(e) => file_icon(&e.read(cx).title(cx)),
-            TabView::Settings(_) => "expui/general/settings",
+            TabView::Editor(e) => Some(file_icon(&e.read(cx).title(cx))),
+            TabView::Settings(_) => Some("expui/general/settings"),
+            TabView::Diff(_) => None,
         }
     }
 
@@ -312,7 +319,7 @@ struct DraggedTab {
 /// What the pointer drags: the tab inside Fleet's 2 px ring.
 struct TabGhost {
     title: SharedString,
-    icon: &'static str,
+    icon: Option<&'static str>,
     dirty: bool,
 }
 
@@ -344,7 +351,7 @@ impl Render for TabGhost {
 #[allow(clippy::too_many_arguments)]
 fn tab_body(
     title: SharedString,
-    icon_path: &'static str,
+    icon_path: Option<&'static str>,
     dirty: bool,
     preview: bool,
     bg: gpui::Hsla,
@@ -361,13 +368,13 @@ fn tab_body(
         .rounded(px(m.editor_tab_radius))
         .bg(bg)
         .text_color(text)
-        .child(
+        .children(icon_path.map(|icon_path| {
             div()
                 .size(px(m.icon_size))
                 .flex_shrink_0()
                 .mr(px(m.editor_tab_icon_gap))
-                .child(icon(icon_path, m.icon_size, theme.icon_secondary)),
-        )
+                .child(icon(icon_path, m.icon_size, theme.icon_secondary))
+        }))
         .child(
             div()
                 .whitespace_nowrap()
@@ -689,6 +696,10 @@ impl Workspace {
                     this.editor_context_menu(&editor, *position, cx)
                 }
                 EditorEvent::Saved => this.refresh_git(cx),
+                EditorEvent::ShowDiff => {
+                    let path = editor.read(cx).path(cx);
+                    this.open_changed_files(path, cx);
+                }
             }
             cx.notify()
         })
@@ -1944,7 +1955,9 @@ impl Workspace {
                             .absolute()
                             .inset_0()
                             .when(close_left, |d| d.group_hover("tab", |s| s.invisible()))
-                            .child(icon(icon_path, m.icon_size, theme.icon_secondary)),
+                            .children(
+                                icon_path.map(|p| icon(p, m.icon_size, theme.icon_secondary)),
+                            ),
                     )
                     .when(close_left, |d| {
                         d.child(
@@ -2146,6 +2159,7 @@ impl Workspace {
                 TabView::Settings(settings) => {
                     div().flex_1().min_h_0().relative().child(settings.clone())
                 }
+                TabView::Diff(diff) => div().flex_1().min_h_0().relative().child(diff.clone()),
             },
             None => div()
                 .flex_1()
@@ -2773,6 +2787,15 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::open_in_split))
             .on_action(cx.listener(Self::git_commit_jump_to_tool))
             .on_action(cx.listener(Self::git_file_history))
+            .on_action(cx.listener(Self::git_history_jump_to_tool))
+            .on_action(cx.listener(Self::git_toggle_blame))
+            .on_action(cx.listener(Self::git_push))
+            .on_action(cx.listener(Self::git_pull))
+            .on_action(cx.listener(Self::git_revert))
+            .on_action(cx.listener(Self::git_show_diff))
+            .on_action(cx.listener(Self::new_diff_tab))
+            .on_action(cx.listener(Self::diff_two_files))
+            .on_action(cx.listener(Self::diff_with_clipboard))
             .on_action(cx.listener(Self::unsplit))
             .on_action(cx.listener(Self::focus_next_split))
             .on_action(cx.listener(Self::focus_previous_split))

@@ -9,6 +9,7 @@
 mod actions;
 mod assets;
 mod dialog;
+mod diff_view;
 mod document;
 mod editor;
 mod file_tree;

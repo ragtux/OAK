@@ -209,8 +209,20 @@ fn key_name(fleet: &str) -> Option<String> {
 }
 
 /// `ctrl-shift-leftbracket` → `ctrl-shift-[`. Returns `None` for chords
-/// gpui has no spelling for.
+/// gpui has no spelling for. A two-chord sequence (`ctrl-shift-g
+/// ctrl-shift-a`, Fleet's git keys) becomes gpui's space-separated one.
 pub fn chord_to_gpui(chord: &str) -> Option<String> {
+    let mut chords = chord.split_whitespace();
+    let first = chords.next()?;
+    let mut out = single_chord_to_gpui(first)?;
+    for next in chords {
+        out.push(' ');
+        out.push_str(&single_chord_to_gpui(next)?);
+    }
+    Some(out)
+}
+
+fn single_chord_to_gpui(chord: &str) -> Option<String> {
     let mut parts: Vec<&str> = chord.split('-').collect();
     // A chord ending in the "-" key itself splits into an empty last part.
     if parts.last() == Some(&"") && parts.len() >= 2 {
@@ -264,6 +276,12 @@ mod tests {
         assert_eq!(chord_to_gpui("f4").as_deref(), Some("f4"));
         assert_eq!(chord_to_gpui("ctrl-minus").as_deref(), Some("ctrl--"));
         assert_eq!(chord_to_gpui("mouse4"), None);
+        assert_eq!(
+            chord_to_gpui("ctrl-shift-g ctrl-shift-a").as_deref(),
+            Some("ctrl-shift-g ctrl-shift-a")
+        );
+        assert_eq!(chord_to_gpui("ctrl-shift-g mouse4"), None);
+        assert_eq!(chord_to_gpui(""), None);
     }
 
     #[test]

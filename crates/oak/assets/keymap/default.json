@@ -797,6 +797,40 @@
     {
       "mac": "cmd-shift-period",
       "action": "toggle-hidden-files"
+    },
+    {
+      "mac": "ctrl-g ctrl-a",
+      "key": "ctrl-shift-g ctrl-shift-a",
+      "action": "git/toggle-blame"
+    },
+    {
+      "mac": "ctrl-g ctrl-c",
+      "key": "ctrl-shift-g ctrl-shift-c",
+      "action": "git/commit/jump-to-tool"
+    },
+    {
+      "mac": "ctrl-g ctrl-h",
+      "key": "ctrl-shift-g ctrl-shift-h",
+      "action": "git/file-history"
+    },
+    {
+      "mac": "ctrl-g ctrl-u",
+      "key": "ctrl-shift-g ctrl-shift-u",
+      "action": "git/pull"
+    },
+    {
+      "mac": "ctrl-g ctrl-p",
+      "key": "ctrl-shift-g ctrl-shift-p",
+      "action": "git/push"
+    },
+    {
+      "mac": "cmd-alt-z",
+      "key": "ctrl-shift-g ctrl-shift-z",
+      "action": "git/revert"
+    },
+    {
+      "win": "ctrl-shift-g ctrl-y",
+      "action": "git/revert"
     }
   ]
 }

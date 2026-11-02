@@ -46,6 +46,9 @@ pub enum EditorEvent {
     Copied(String),
     /// A right click at this window position: the workspace opens the editor menu.
     ContextMenu(Point<Pixels>),
+    /// The line-status popup's Diff button: the workspace opens the Changed
+    /// Files tab on this file.
+    ShowDiff,
 }
 
 /// The editor's sizes at the current zoom and settings: `editor.fontSize`,
@@ -77,6 +80,10 @@ pub struct TextMetrics {
     pub line_status_popup_left: f32,
     pub line_status_popup_width: f32,
     pub line_status_popup_height: f32,
+    pub blame_width: f32,
+    pub blame_text_x: f32,
+    pub blame_bar_x: f32,
+    pub blame_bar_width: f32,
     pub icon_size: f32,
     pub folded_mark_cells: f32,
     pub folded_mark_radius: f32,
@@ -189,6 +196,10 @@ impl TextMetrics {
             line_status_popup_left: m.line_status_popup_left,
             line_status_popup_width: m.line_status_popup_width,
             line_status_popup_height: m.line_status_popup_height,
+            blame_width: m.blame_width,
+            blame_text_x: m.blame_text_x,
+            blame_bar_x: m.blame_bar_x,
+            blame_bar_width: m.blame_bar_width,
             icon_size: m.icon_size,
             folded_mark_cells: m.folded_mark_cells,
             folded_mark_radius: m.folded_mark_radius,
@@ -420,6 +431,9 @@ pub struct EditorView {
     /// (↓ ↑ Revert Diff ×) is open, as indices into the document's hunks.
     status_hovered: Option<usize>,
     status_popup: Option<usize>,
+    /// `git/toggle-blame`: one entry per line of the file on disk, shown in
+    /// a column at the island's left while set.
+    blame: Option<Vec<oak_git::BlameLine>>,
     /// The caret's blink: shown, and the epoch of the running timer.
     caret_visible: bool,
     blink_epoch: u64,
@@ -507,6 +521,7 @@ impl EditorView {
             hovered_row: None,
             status_hovered: None,
             status_popup: None,
+            blame: None,
             caret_visible: true,
             blink_epoch: 0,
             blink_task: None,
@@ -721,13 +736,29 @@ impl EditorView {
     }
 
     /// `editor.centerEditorHorizontally` / `distractionFreeMode`: the editor
-    /// area (gutter and text) shifts right to sit centred when the view is wider.
+    /// area (gutter and text) shifts right to sit centred when the view is
+    /// wider; the blame column, when shown, pushes it right by its width.
     fn text_offset(&self) -> Pixels {
+        let blame = if self.blame.is_some() {
+            px(self.tm.blame_width)
+        } else {
+            px(0.)
+        };
         if !(self.options.centered || self.options.distraction_free) {
-            return px(0.);
+            return blame;
         }
         let area = px(self.tm.gutter_width) + self.space_width() * self.tm.centered_columns;
-        ((self.last_bounds.size.width - area) / 2.).max(px(0.))
+        ((self.last_bounds.size.width - area) / 2.).max(px(0.)) + blame
+    }
+
+    /// `git/toggle-blame`: shows or hides the blame column.
+    pub fn set_blame(&mut self, blame: Option<Vec<oak_git::BlameLine>>, cx: &mut Context<Self>) {
+        self.blame = blame;
+        cx.notify();
+    }
+
+    pub fn blame_shown(&self) -> bool {
+        self.blame.is_some()
     }
 
     fn rebuild_map(&mut self, cx: &App) {
@@ -1824,7 +1855,15 @@ impl EditorView {
                             },
                         )),
                     )
-                    .child(button("status-diff", "Diff", false))
+                    .child(
+                        button("status-diff", "Diff", true)
+                            .tooltip(crate::tooltip::Tooltip::text("Show Diff"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.status_popup = None;
+                                cx.emit(EditorEvent::ShowDiff);
+                                cx.notify();
+                            })),
+                    )
                     .child(separator())
                     .child(button("status-close", "×", true).on_click(cx.listener(
                         |this, _, _, cx| {
@@ -2240,6 +2279,21 @@ fn editor_font(weight: FontWeight, italic: bool, theme: &Theme, options: &ViewOp
     }
 }
 
+/// A source line as a view outside the editor element draws it (the Changed
+/// Files tab): tabs expanded, with the highlight runs for `spans` (in source
+/// bytes relative to the line's start).
+pub fn styled_line(
+    source: &str,
+    spans: &[(Range<usize>, &'static str)],
+    theme: &Theme,
+    cx: &App,
+) -> (String, Vec<TextRun>) {
+    let options = ViewOptions::from(&cx.global::<AppSettings>().settings);
+    let line = DisplayLine::new(source);
+    let runs = line_runs(&line, spans, theme, &options);
+    (line.text, runs)
+}
+
 /// Shapes one display line. `spans` are the highlight spans that overlap
 /// the line, in source bytes relative to the line's start.
 fn shape_display_line(
@@ -2250,6 +2304,23 @@ fn shape_display_line(
     options: &ViewOptions,
     window: &mut Window,
 ) -> ShapedLine {
+    let runs = line_runs(line, spans, theme, options);
+    window.text_system().shape_line(
+        SharedString::from(line.text.clone()),
+        px(font_size),
+        &runs,
+        None,
+    )
+}
+
+/// The text runs of a display line: the plain editor font, with each
+/// highlight span's colour, weight, style and underline.
+fn line_runs(
+    line: &DisplayLine,
+    spans: &[(Range<usize>, &'static str)],
+    theme: &Theme,
+    options: &ViewOptions,
+) -> Vec<TextRun> {
     let base_weight = FontWeight(options.font_weight);
     let plain = editor_font(base_weight, false, theme, options);
     let mut runs: Vec<TextRun> = Vec::new();
@@ -2326,12 +2397,7 @@ fn shape_display_line(
             strikethrough: None,
         });
     }
-    window.text_system().shape_line(
-        SharedString::from(line.text.clone()),
-        px(font_size),
-        &runs,
-        None,
-    )
+    runs
 }
 
 /// A glyph painted on its own (the whitespace dots and arrows, the folded mark).
@@ -2400,6 +2466,14 @@ struct LaidOutRow {
     /// Display byte offsets of the spaces, for the whitespace dots.
     spaces: Vec<usize>,
     continuation: bool,
+    /// The blame column's bar colour for this row and, on a chunk's first
+    /// row, its label.
+    blame: Option<BlameLayout>,
+}
+
+struct BlameLayout {
+    label: Option<ShapedLine>,
+    color: Hsla,
 }
 
 /// One sticky line: a block head pinned to the top.
@@ -2561,6 +2635,32 @@ impl Element for EditorElement {
         let mut mark_rows = Vec::new();
         let mut sticky = Vec::new();
         let total_rows = map.total;
+        // The blame column (ninth pass): 13 px UI text in the secondary colour.
+        let blame_lines = self.editor.read(cx).blame.clone();
+        let ui_font_size = cx.global::<Metrics>().ui_font_size;
+        let ui_font = Font {
+            family: theme.ui_font.clone(),
+            features: FontFeatures::default(),
+            fallbacks: None,
+            weight: FontWeight::NORMAL,
+            style: FontStyle::Normal,
+        };
+        let shape_blame = |text: String, window: &mut Window| {
+            let text = SharedString::from(text);
+            window.text_system().shape_line(
+                text.clone(),
+                px(ui_font_size),
+                &[TextRun {
+                    len: text.len(),
+                    font: ui_font.clone(),
+                    color: theme.text_secondary,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            )
+        };
         let number_font = editor_font(FontWeight(options.font_weight), false, &theme, &options);
         let shape_number = |text: String, color: Hsla, window: &mut Window| {
             let text = SharedString::from(text);
@@ -2747,6 +2847,28 @@ impl Element for EditorElement {
                     };
                     shape_number(text, color, window)
                 });
+                let blame = blame_lines.as_ref().and_then(|lines| {
+                    let line = lines.get(row)?;
+                    let color = if line.uncommitted {
+                        theme.git_added_bg
+                    } else {
+                        theme.git_blame_bg
+                    };
+                    // A chunk is a run of rows from one commit; its first row
+                    // carries the label.
+                    let head = seg == 0
+                        && (row == 0
+                            || lines.get(row - 1).is_none_or(|prev| {
+                                prev.short_id != line.short_id
+                                    || prev.uncommitted != line.uncommitted
+                            }));
+                    let label = if head {
+                        line.label().map(|text| shape_blame(text, window))
+                    } else {
+                        None
+                    };
+                    Some(BlameLayout { label, color })
+                });
                 let char_end = char_start + seg_cols.end;
                 let seg_char_start = char_start + seg_cols.start;
                 let row_boxes = boxes
@@ -2807,6 +2929,7 @@ impl Element for EditorElement {
                     folded: folded_layout,
                     spaces,
                     continuation: seg > 0,
+                    blame,
                 });
                 d += 1;
             }
@@ -3099,6 +3222,28 @@ impl Element for EditorElement {
                                 theme.editor_caret.opacity(0.5),
                             ));
                         }
+                    }
+                }
+                // The blame column (ninth pass): the chunk's bar on every row,
+                // its date and author on the first.
+                if let Some(blame) = &laid.blame {
+                    let column_x = origin_x - px(tm.blame_width);
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(column_x + px(tm.blame_bar_x), y),
+                            size(px(tm.blame_bar_width), lh),
+                        ),
+                        blame.color,
+                    ));
+                    if let Some(label) = &blame.label {
+                        let _ = label.paint(
+                            point(column_x + px(tm.blame_text_x), y),
+                            lh,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
                     }
                 }
                 // Line number, right-aligned in the gutter.

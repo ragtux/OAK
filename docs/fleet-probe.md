@@ -700,6 +700,29 @@ tool, the branch tag, blame and the Changed Files tab.
 | diff menu | a right click in the diff gives a one-row menu, "Copy Ctrl+C" |
 | Markdown | Fleet opens `.md` files with a rendered preview in a split to the right (the editor 565–1240 device, the preview after); not an M4 matter, noted for the editor |
 
+## Tenth pass: the rest of M4, built from the ninth pass (2026-11-02, night)
+
+Built without Fleet, from the batch 10 rows above, and shot on Oak alone
+(`m4-oak-*.png` in the probe's out folder; the driver cannot deliver the
+two-chord git shortcuts to Oak either, so `git/toggle-blame` went through
+Goto Actions, while `Ctrl+Shift+G, Ctrl+Shift+A` is bound in the keymap).
+
+| element | Oak | Fleet |
+|---|---|---|
+| blame column | text 8.67 in, bar 145.33–148.67, numbers right-aligned to 174.67, text at 201.33 (the gutter moved right by 139.33); the committed chunk's bar `editor.gitDiff.background.blame`, the uncommitted lines' `…added`; dates in the machine's zone (`Dec 31, 2025  Probe`) | 8.67, 145.33–148.67, 174.67, 201.33 |
+| commit rows | `Probe, 18:00 Dec 31, 2025` (`git log --date=format-local`; the fixture's commit is `2026-01-01T00:00:00Z`) | the same |
+| Changed Files tab | the header row 16 under the tab row (centre 105.33 at Oak's tab row against Fleet's 102), the first card 12 lower; cards 6 inside the island, a 40 px open header in `listItem.background.focused` with the checkbox 10.67 in, a 6 px `background.secondary` strip, 22 px rows; collapsed files 42 px rows with the checkbox 14 in and a 1 px `separator.default` under each (estimate) | 88–116, 128–168, 42 px rows |
+| diff columns | old text 6 in, its numbers ending 24 before the 2 px separator, the new numbers ending 34.67 after it, the new text 42.67 after it; the separator at the card's middle | 7.33, 22, 35.33, 42 |
+| diff pairing | git's own hunks (`git diff -U0 -M HEAD`) pair the rows, Oak's Myers diff only for `diff/two-files` and `diff/with-clipboard`; the trailing empty line after a final newline is paired as context. Against HEAD the fixture's README gains a blank line and "Modified after the commit." (git's `+22,2`); Fleet aligns the blank with the old text's trailing line and shows one added line plus the trailing row washed, Oak shows both as added | one added row |
+| washes | `diff.added` (`#14835E33`), `diff.deleted`, `diff.modified` from the theme's text attributes; an added row's old side is washed too with `»` at its number column; a changed row's new side carries the file's staging checkbox (it stages the whole file: hunks are not staged on their own, estimate) | `#172E29`, `»`, the hunk checkbox |
+| fold | a 1 px zigzag in `separator.default` across the row's middle (Fleet's dashed wave; amplitude and period estimates) | a wavy separator |
+| diff menu | "Copy Ctrl+C" with the row's text | the same |
+| line-status popup | Diff opens the Changed Files tab on the file with its card open, as does a double click on a Git tool row, `git/interline-toolbar/show-diff` and `new-diff-tab-tool`; one tab per workspace, custom diffs in tabs of their own | |
+| Push | `git/push` through the tool's button or the chord; with `git.push.confirm` a dialog "Push 1 commit to a new remote branch?" (Push, Cancel; the label reads "to origin/main" with an upstream, estimate); the report as a notification and in the tool | the button |
+| Revert | `git/revert` and the cards' Revert: with `git.revert.confirm` a dialog "Revert changes in README.md?" over "Uncommitted changes will be lost." (Revert, Cancel; wording estimate); a tracked file takes HEAD's text, a rename is undone, a new file leaves the index and goes to the trash | |
+| Git tool menus | the filter button: "All changes / Staged only / Unstaged only" (estimate; Fleet's menu was not opened); the branch chip: the branch tag's menu; the History tool's chips: the local branches, the repository or the active file, "all users" and each author (estimates) | |
+| menus | the Git submenu of the main menu and the tree menu: Commit..., Push, Pull, Show Diff, Revert..., Toggle Blame, Show History, Changed Files (rows estimate) | |
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

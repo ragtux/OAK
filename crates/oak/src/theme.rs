@@ -217,6 +217,46 @@ pub mod metrics {
     pub const HISTORY_CHIP_GAP: f32 = 13.33;
     pub const HISTORY_SCOPE_MAX_WIDTH: f32 = 192.;
     pub const HISTORY_ROWS_GAP: f32 = 8.67;
+    /// The blame column (ninth pass, `git/toggle-blame`): the text 8.67 in
+    /// from the island's edge, a 3.33 px bar at 145.33, and the gutter and
+    /// text moved right so the text starts 201.33 in (139.33 past its usual
+    /// 62; the numbers then sit 6 right of Fleet's, estimate).
+    pub const BLAME_WIDTH: f32 = 139.33;
+    pub const BLAME_TEXT_X: f32 = 8.67;
+    pub const BLAME_BAR_X: f32 = 145.33;
+    pub const BLAME_BAR_WIDTH: f32 = 3.33;
+    /// The Changed Files tab (ninth pass): 16 under the tab row a 28 px header row with its
+    /// checkbox 15.33 in; cards 6 inside the island with a 40 px header (the
+    /// checkbox 10.67 in, the icon 32, the name 58; Revert 60 wide at the
+    /// right end, the pencil 25 before it), a 6 px strip, then 22 px diff
+    /// rows: the old text 7.33 in, its numbers ending 22 before the 2 px
+    /// separator, the new numbers ending 35.33 after it and its text 42;
+    /// collapsed files are 42 px rows (the checkbox 14 in, the icon 34).
+    pub const DIFF_HEADER_TOP: f32 = 16.;
+    pub const DIFF_HEADER_HEIGHT: f32 = 28.;
+    pub const DIFF_HEADER_CHECK_X: f32 = 15.33;
+    pub const DIFF_CARD_INSET: f32 = 6.;
+    pub const DIFF_CARD_HEADER: f32 = 40.;
+    pub const DIFF_CARD_CHECK_X: f32 = 10.67;
+    pub const DIFF_CARD_ICON_X: f32 = 32.;
+    pub const DIFF_CARD_NAME_X: f32 = 58.;
+    pub const DIFF_REVERT_WIDTH: f32 = 60.;
+    pub const DIFF_PENCIL_GAP: f32 = 9.;
+    pub const DIFF_STRIP: f32 = 6.;
+    pub const DIFF_ROW: f32 = 22.;
+    pub const DIFF_OLD_TEXT_X: f32 = 7.33;
+    pub const DIFF_OLD_NUMBER_RIGHT: f32 = 22.;
+    pub const DIFF_SEPARATOR: f32 = 2.;
+    pub const DIFF_NEW_NUMBER_RIGHT: f32 = 35.33;
+    pub const DIFF_NEW_TEXT_X: f32 = 42.;
+    pub const DIFF_NUMBER_WIDTH: f32 = 28.;
+    pub const DIFF_CHECKBOX: f32 = 13.33;
+    pub const DIFF_COLLAPSED_ROW: f32 = 42.;
+    pub const DIFF_COLLAPSED_CHECK_X: f32 = 14.;
+    pub const DIFF_COLLAPSED_ICON_X: f32 = 34.;
+    pub const DIFF_CARD_GAP: f32 = 12.;
+    pub const DIFF_CARD_RADIUS: f32 = 6.;
+    pub const DIFF_CONTEXT_LINES: usize = 3;
     pub const TREE_BADGE_BOX: f32 = 16.;
     pub const TREE_BADGE_DOT: f32 = 6.67;
     pub const TREE_BADGE_FONT: f32 = 13.;
@@ -653,6 +693,34 @@ scaled_metrics!(
     history_chip_gap = HISTORY_CHIP_GAP,
     history_scope_max_width = HISTORY_SCOPE_MAX_WIDTH,
     history_rows_gap = HISTORY_ROWS_GAP,
+    blame_width = BLAME_WIDTH,
+    blame_text_x = BLAME_TEXT_X,
+    blame_bar_x = BLAME_BAR_X,
+    blame_bar_width = BLAME_BAR_WIDTH,
+    diff_header_top = DIFF_HEADER_TOP,
+    diff_header_height = DIFF_HEADER_HEIGHT,
+    diff_header_check_x = DIFF_HEADER_CHECK_X,
+    diff_card_inset = DIFF_CARD_INSET,
+    diff_card_header = DIFF_CARD_HEADER,
+    diff_card_check_x = DIFF_CARD_CHECK_X,
+    diff_card_icon_x = DIFF_CARD_ICON_X,
+    diff_card_name_x = DIFF_CARD_NAME_X,
+    diff_revert_width = DIFF_REVERT_WIDTH,
+    diff_pencil_gap = DIFF_PENCIL_GAP,
+    diff_strip = DIFF_STRIP,
+    diff_row = DIFF_ROW,
+    diff_old_text_x = DIFF_OLD_TEXT_X,
+    diff_old_number_right = DIFF_OLD_NUMBER_RIGHT,
+    diff_separator = DIFF_SEPARATOR,
+    diff_new_number_right = DIFF_NEW_NUMBER_RIGHT,
+    diff_new_text_x = DIFF_NEW_TEXT_X,
+    diff_number_width = DIFF_NUMBER_WIDTH,
+    diff_checkbox = DIFF_CHECKBOX,
+    diff_collapsed_row = DIFF_COLLAPSED_ROW,
+    diff_collapsed_check_x = DIFF_COLLAPSED_CHECK_X,
+    diff_collapsed_icon_x = DIFF_COLLAPSED_ICON_X,
+    diff_card_gap = DIFF_CARD_GAP,
+    diff_card_radius = DIFF_CARD_RADIUS,
     tree_badge_box = TREE_BADGE_BOX,
     tree_badge_dot = TREE_BADGE_DOT,
     tree_badge_font = TREE_BADGE_FONT,
@@ -950,6 +1018,12 @@ pub struct Theme {
     pub git_deleted_bg: Hsla,
     pub git_blame_bg: Hsla,
     pub git_hunk_wash: Hsla,
+    // diff.added / diff.deleted / diff.modified (text attributes): the
+    // Changed Files tab's row washes; `diff.added` is `#14835E33`, the
+    // `#172E29` the ninth pass read over the island.
+    pub diff_added_bg: Hsla,
+    pub diff_deleted_bg: Hsla,
+    pub diff_modified_bg: Hsla,
     // gitBranchTag.local.*: the Git tool's branch chip.
     pub git_branch_tag_border: Hsla,
     pub git_branch_tag_text: Hsla,
@@ -1302,6 +1376,12 @@ impl Theme {
                 Color::rgb(0x14, 0x83, 0x5E),
             )
             .opacity(0.2),
+            diff_added_bg: selection_attr("diff.added")
+                .unwrap_or(to_hsla(Color::rgb(0x14, 0x83, 0x5E).with_alpha(0x33))),
+            diff_deleted_bg: selection_attr("diff.deleted")
+                .unwrap_or(to_hsla(Color::rgb(0xD7, 0x32, 0x51).with_alpha(0x33))),
+            diff_modified_bg: selection_attr("diff.modified")
+                .unwrap_or(to_hsla(Color::rgb(0x08, 0x70, 0xE4).with_alpha(0x33))),
             git_branch_tag_border: c("gitBranchTag.local.border", Color::rgb(0x4B, 0x8D, 0xEC)),
             git_branch_tag_text: c("gitBranchTag.local.text", Color::rgb(0x4B, 0x8D, 0xEC)),
             icon_green: c("icon.background.green", Color::rgb(0x16, 0x90, 0x68)),

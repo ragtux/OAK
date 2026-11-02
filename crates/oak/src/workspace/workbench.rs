@@ -7,18 +7,23 @@
 //! actions.
 
 use super::*;
-use crate::actions::{GitCommitJumpToTool, GitFileHistory, OpenInSplit, SplitRight};
+use crate::actions::{
+    DiffTwoFiles, DiffWithClipboard, GitCommitJumpToTool, GitFileHistory, GitHistoryJumpToTool,
+    GitPull, GitPush, GitRevert, GitShowDiff, GitToggleBlame, NewDiffTab, OpenInSplit, SplitRight,
+};
 use crate::dialog::{ConfirmDialog, DialogButton, DialogEvent};
+use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
 use crate::editor::EditorView;
-use crate::git_tool::GitToolEvent;
+use crate::git_tool::{GitFilter, GitToolEvent, HistoryChip, HistoryToolEvent};
 use crate::goto::{GotoEvent, GotoMode, GotoPanel, GotoSources, GotoTarget};
 use crate::keymap::{action_for, hint_for, is_editor_action};
-use crate::menu::{ContextMenu, MenuEntry, MenuEvent};
+use crate::menu::{ContextMenu, MenuEntry, MenuEvent, MenuItem};
 use crate::notifications::{Level, Notifications};
 use crate::search_tool::{SearchTool, SearchToolEvent};
 use crate::settings_view::SettingsView;
 use gpui::{deferred, Action, BoxShadow, FontWeight};
 use gpui::{AnyElement, ClipboardItem, FocusHandle};
+use oak_git::StatusEntry;
 use oak_search::{FileIndex, GrepQuery};
 use std::ops::Range;
 use std::rc::Rc;
@@ -84,13 +89,31 @@ impl Workspace {
         cx.subscribe_in(&search_tool, window, Self::on_search_tool_event)
             .detach();
         let git_tool = self.git_tool.clone();
-        cx.subscribe(&git_tool, |this, _, event: &GitToolEvent, cx| match event {
-            GitToolEvent::Changed => {
-                this.refresh_git(cx);
-                this.files_changed(cx);
-            }
-            GitToolEvent::Open(path) => this.open_path(path.clone(), false, cx),
-        })
+        cx.subscribe_in(
+            &git_tool,
+            window,
+            |this, _, event: &GitToolEvent, window, cx| match event {
+                GitToolEvent::Changed => {
+                    this.refresh_git(cx);
+                    this.files_changed(cx);
+                }
+                GitToolEvent::Diff(path) => this.open_changed_files(Some(path.clone()), cx),
+                GitToolEvent::Push => this.git_push(&GitPush, window, cx),
+                GitToolEvent::Filter(at) => this.show_git_filter(*at, cx),
+                GitToolEvent::Branches(at) => this.branches_menu(*at, cx),
+            },
+        )
+        .detach();
+        let history_tool = self.history_tool.clone();
+        cx.subscribe_in(
+            &history_tool,
+            window,
+            |this, _, event: &HistoryToolEvent, window, cx| match event {
+                HistoryToolEvent::Chip(which, at) => {
+                    this.show_history_chip(*which, *at, window, cx)
+                }
+            },
+        )
         .detach();
         let notifications = self.notifications.clone();
         cx.observe(&notifications, |_, _, cx| cx.notify()).detach();
@@ -335,11 +358,28 @@ impl Workspace {
         entries.extend(Self::entries(&["copy-path", "copy-relative-path"], cx));
         entries.push(MenuEntry::disabled("Paste"));
         entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::submenu(
-            "Git",
-            vec![MenuEntry::disabled("Git arrives with M4")],
-        ));
+        entries.push(MenuEntry::submenu("Git", Self::git_menu(cx)));
         entries
+    }
+
+    /// The Git submenu of the tree menu and the main menu (its rows are an
+    /// estimate; the ninth pass did not open it).
+    fn git_menu(cx: &App) -> Vec<MenuEntry> {
+        Self::entries(
+            &[
+                "Commit...=git/commit/jump-to-tool",
+                "git/push",
+                "git/pull",
+                "-",
+                "Show Diff=git/interline-toolbar/show-diff",
+                "Revert...=git/revert",
+                "-",
+                "git/toggle-blame",
+                "Show History=git/file-history",
+                "new-diff-tab-tool",
+            ],
+            cx,
+        )
     }
 
     /// The tree menu's "Open in Split" (a row without an action id of its
@@ -464,6 +504,456 @@ impl Workspace {
             };
             doc.update(cx, |d, cx| d.set_hunks(hunks, cx));
         }
+        // The Changed Files tabs, and the blame columns that are open.
+        for p in 0..self.panes.len() {
+            for ix in 0..self.panes[p].tabs.len() {
+                match &self.panes[p].tabs[ix].view {
+                    TabView::Diff(view) => {
+                        let view = view.clone();
+                        view.update(cx, |v, cx| v.refresh(cx));
+                    }
+                    TabView::Editor(editor) if editor.read(cx).blame_shown() => {
+                        let editor = editor.clone();
+                        if let Some(path) = editor.read(cx).path(cx) {
+                            let blame = repo.blame(&path).ok();
+                            editor.update(cx, |e, cx| e.set_blame(blame, cx));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// The open Changed Files tab, if any (custom diffs are separate tabs).
+    fn changed_files_tab(&self, cx: &App) -> Option<(usize, usize, Entity<DiffView>)> {
+        for (p, pane) in self.panes.iter().enumerate() {
+            for (ix, tab) in pane.tabs.iter().enumerate() {
+                if let TabView::Diff(view) = &tab.view {
+                    if view.read(cx).is_changed_files() {
+                        return Some((p, ix, view.clone()));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The Changed Files tab (ninth pass), opened or activated, with
+    /// `file`'s card open: the Git tool's row, the line-status popup's Diff,
+    /// `git/interline-toolbar/show-diff` and `new-diff-tab-tool` all land here.
+    pub(super) fn open_changed_files(&mut self, file: Option<PathBuf>, cx: &mut Context<Self>) {
+        if let Some((p, ix, view)) = self.changed_files_tab(cx) {
+            self.active_pane = p;
+            self.panes[p].active = Some(ix);
+            self.panes[p].scroll.scroll_to_item(ix);
+            view.update(cx, |v, cx| {
+                v.refresh(cx);
+                if let Some(file) = file {
+                    v.expand(file, cx);
+                }
+            });
+            self.focus_later(view.read(cx).focus_handle(cx), cx);
+            self.after_activate(cx);
+            return;
+        }
+        let repo = self.repo.clone();
+        let view = cx.new(|cx| DiffView::changed_files(repo, cx));
+        if let Some(file) = file {
+            view.update(cx, |v, cx| v.expand(file, cx));
+        }
+        self.open_diff_tab(view, cx);
+    }
+
+    /// Adds a diff view as a tab of the active split and shows it.
+    fn open_diff_tab(&mut self, view: Entity<DiffView>, cx: &mut Context<Self>) {
+        cx.subscribe(&view, |this, _, event: &DiffViewEvent, cx| match event {
+            DiffViewEvent::Changed => {
+                this.refresh_git(cx);
+                this.files_changed(cx);
+            }
+            DiffViewEvent::Open(path) => this.open_path(path.clone(), false, cx),
+            DiffViewEvent::Revert(entry) => this.revert_entries(vec![entry.clone()], cx),
+            DiffViewEvent::ContextMenu { position, text } => {
+                this.diff_copy_menu(*position, text.clone(), cx)
+            }
+        })
+        .detach();
+        let p = self.active_pane;
+        let pane = &mut self.panes[p];
+        pane.tabs.push(Tab {
+            view: TabView::Diff(view.clone()),
+            preview: false,
+        });
+        pane.active = Some(pane.tabs.len() - 1);
+        pane.scroll.scroll_to_item(pane.tabs.len() - 1);
+        self.focus_later(view.read(cx).focus_handle(cx), cx);
+        self.after_activate(cx);
+    }
+
+    /// The diff's one-row menu (ninth pass): "Copy Ctrl+C" with the row's text.
+    fn diff_copy_menu(&mut self, position: Point<Pixels>, text: String, cx: &mut Context<Self>) {
+        let entry = MenuEntry::Item(MenuItem {
+            label: "Copy".into(),
+            shortcut: hint_for(cx, "copy")
+                .or_else(|| Some("Ctrl+C".to_string()))
+                .map(Into::into),
+            action: Box::new(PopupCancel),
+            enabled: true,
+            on_select: Some(Rc::new(move |_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            })),
+        });
+        self.open_menu(vec![entry], position, None, cx);
+    }
+
+    /// `git/interline-toolbar/show-diff`: the Changed Files tab on the active file.
+    pub(super) fn git_show_diff(
+        &mut self,
+        _: &GitShowDiff,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let file = self.target_file(window, cx);
+        self.open_changed_files(file, cx);
+    }
+
+    /// `new-diff-tab-tool`: the Changed Files tab.
+    pub(super) fn new_diff_tab(&mut self, _: &NewDiffTab, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_changed_files(None, cx);
+    }
+
+    /// `diff/two-files`: the two files selected in the Files tool, side by side.
+    pub(super) fn diff_two_files(
+        &mut self,
+        _: &DiffTwoFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let files = self.target_files(window, cx);
+        let [a, b] = files.as_slice() else {
+            self.notify_error(
+                "Compare Two Files",
+                "Select two files in the Files tool first.".to_string(),
+                cx,
+            );
+            return;
+        };
+        let name = |p: &Path| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+        let old = std::fs::read_to_string(a).unwrap_or_default();
+        let new = std::fs::read_to_string(b).unwrap_or_default();
+        let title = format!("{} vs {}", name(a), name(b));
+        let source = DiffSource::texts(title.clone(), Some(b.clone()), old, new);
+        let view = cx.new(|cx| DiffView::custom(title, vec![source], cx));
+        self.open_diff_tab(view, cx);
+    }
+
+    /// `diff/with-clipboard`: the active file against the clipboard's text.
+    pub(super) fn diff_with_clipboard(
+        &mut self,
+        _: &DiffWithClipboard,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.active_editor().cloned() else {
+            return;
+        };
+        let Some(clipboard) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            self.notify_error(
+                "Compare with Clipboard",
+                "The clipboard holds no text.".to_string(),
+                cx,
+            );
+            return;
+        };
+        let (name, text, path) = {
+            let doc = editor.read(cx).document.read(cx);
+            (doc.title(), doc.buffer.text(), doc.path.clone())
+        };
+        let title = format!("Clipboard vs {name}");
+        let source = DiffSource::texts(title.clone(), path, clipboard, text);
+        let view = cx.new(|cx| DiffView::custom(title, vec![source], cx));
+        self.open_diff_tab(view, cx);
+    }
+
+    /// `git/toggle-blame`: the blame column on the active editor.
+    pub(super) fn git_toggle_blame(
+        &mut self,
+        _: &GitToggleBlame,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.active_editor().cloned() else {
+            return;
+        };
+        if editor.read(cx).blame_shown() {
+            editor.update(cx, |e, cx| e.set_blame(None, cx));
+            return;
+        }
+        let (Some(repo), Some(path)) = (self.repo.clone(), editor.read(cx).path(cx)) else {
+            return;
+        };
+        match repo.blame(&path) {
+            Ok(lines) => editor.update(cx, |e, cx| e.set_blame(Some(lines), cx)),
+            Err(e) => self.notify_error("Blame", format!("{e:#}"), cx),
+        }
+    }
+
+    /// `git/push`, after `git.push.confirm`'s dialog.
+    pub(super) fn git_push(&mut self, _: &GitPush, _: &mut Window, cx: &mut Context<Self>) {
+        if self.repo.is_none() {
+            return;
+        }
+        if !Self::settings(cx).git_push_confirm() {
+            self.run_git("Push", |repo| repo.push(), cx);
+            return;
+        }
+        let label = self.git_tool.read(cx).push_label();
+        self.confirm(
+            format!("{label}?"),
+            None,
+            vec![
+                DialogButton::primary("Push"),
+                DialogButton::secondary("Cancel"),
+            ],
+            cx,
+            |this, choice, cx| {
+                if choice == 0 {
+                    this.run_git("Push", |repo| repo.push(), cx);
+                }
+            },
+        );
+    }
+
+    /// `git/pull`.
+    pub(super) fn git_pull(&mut self, _: &GitPull, _: &mut Window, cx: &mut Context<Self>) {
+        self.run_git("Pull", |repo| repo.pull(), cx);
+    }
+
+    /// Runs a git command off the main thread, then shows its report as a
+    /// notification and in the Git tool, and reads git again.
+    fn run_git(
+        &mut self,
+        what: &'static str,
+        op: impl FnOnce(&oak_git::Repo) -> anyhow::Result<String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { op(&repo).map_err(|e| format!("{e:#}")) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match &result {
+                    Ok(report) => {
+                        let message = Some(report.clone()).filter(|r| !r.is_empty());
+                        this.notify(Level::Info, what, message, cx);
+                    }
+                    Err(e) => this.notify_error(&format!("{what} failed"), e.clone(), cx),
+                }
+                this.git_tool.update(cx, |t, cx| t.report(result, cx));
+                this.refresh_git(cx);
+                this.files_changed(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// `git/revert`: the target files' changes, after `git.revert.confirm`'s dialog.
+    pub(super) fn git_revert(
+        &mut self,
+        _: &GitRevert,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let files = self.target_files(window, cx);
+        let entries: Vec<StatusEntry> = repo
+            .status_entries()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| files.iter().any(|f| e.path == *f || e.path.starts_with(f)))
+            .collect();
+        self.revert_entries(entries, cx);
+    }
+
+    /// Reverts the entries, asking first when `git.revert.confirm` is on
+    /// (the dialog's wording is an estimate).
+    pub(super) fn revert_entries(&mut self, entries: Vec<StatusEntry>, cx: &mut Context<Self>) {
+        if entries.is_empty() {
+            return;
+        }
+        if !Self::settings(cx).git_revert_confirm() {
+            self.do_revert(entries, cx);
+            return;
+        }
+        let title = if entries.len() == 1 {
+            let name = entries[0]
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            format!("Revert changes in {name}?")
+        } else {
+            format!("Revert changes in {} files?", entries.len())
+        };
+        self.confirm(
+            title,
+            Some("Uncommitted changes will be lost.".into()),
+            vec![
+                DialogButton::dangerous("Revert"),
+                DialogButton::secondary("Cancel"),
+            ],
+            cx,
+            move |this, choice, cx| {
+                if choice == 0 {
+                    this.do_revert(entries, cx);
+                }
+            },
+        );
+    }
+
+    fn do_revert(&mut self, entries: Vec<StatusEntry>, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        for entry in &entries {
+            if let Err(e) = repo.revert(entry) {
+                self.notify_error("Revert failed", format!("{e:#}"), cx);
+            }
+        }
+        // A reverted open file takes the disk's text at once.
+        for doc in self.documents.clone() {
+            let path = doc.read(cx).path.clone();
+            if path.is_some_and(|p| entries.iter().any(|e| e.path == p)) {
+                doc.update(cx, |d, cx| {
+                    if !d.is_dirty() {
+                        let _ = d.reload_from_disk(cx);
+                    } else {
+                        d.note_disk_change(cx);
+                    }
+                });
+            }
+        }
+        self.refresh_git(cx);
+        self.files_changed(cx);
+    }
+
+    /// `git/history/jump-to-tool`: the History tool.
+    pub(super) fn git_history_jump_to_tool(
+        &mut self,
+        _: &GitHistoryJumpToTool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_tool(tool_side(Tool::History), Tool::History, window, cx);
+        let handle = self.history_tool.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
+    }
+
+    /// The Git tool's filter button: which changed files the list shows
+    /// (estimate; the ninth pass did not open it).
+    fn show_git_filter(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        let current = self.git_tool.read(cx).filter;
+        let entries = GitFilter::ALL
+            .iter()
+            .map(|&filter| {
+                let label = if filter == current {
+                    format!("● {}", filter.label())
+                } else {
+                    format!("   {}", filter.label())
+                };
+                let tool = self.git_tool.clone();
+                MenuEntry::custom(label, move |_, cx| {
+                    tool.update(cx, |t, cx| t.set_filter(filter, cx));
+                })
+            })
+            .collect();
+        self.open_menu(entries, at, None, cx);
+    }
+
+    /// The History tool's chips (estimate): the branch chip lists the local
+    /// branches, the scope chip the repository and the active file, the
+    /// author chip "all users" and every author listed.
+    fn show_history_chip(
+        &mut self,
+        which: HistoryChip,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let tool = self.history_tool.clone();
+        let entries: Vec<MenuEntry> = match which {
+            HistoryChip::Branch => repo
+                .branches()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|b| {
+                    let tool = tool.clone();
+                    let name = b.name.clone();
+                    let label = if b.current {
+                        format!("● {}", b.name)
+                    } else {
+                        format!("   {}", b.name)
+                    };
+                    MenuEntry::custom(label, move |_, cx| {
+                        let chosen = Some(name.clone());
+                        tool.update(cx, |t, cx| t.set_branch(chosen, cx));
+                    })
+                })
+                .collect(),
+            HistoryChip::Scope => {
+                let repo_name = repo
+                    .root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let all = tool.clone();
+                let mut entries = vec![MenuEntry::custom(repo_name, move |_, cx| {
+                    all.update(cx, |t, cx| t.set_file(None, cx));
+                })];
+                if let Some(file) = self.target_file(window, cx) {
+                    let name = file
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let tool = tool.clone();
+                    entries.push(MenuEntry::custom(name, move |_, cx| {
+                        let file = Some(file.clone());
+                        tool.update(cx, |t, cx| t.set_file(file, cx));
+                    }));
+                }
+                entries
+            }
+            HistoryChip::Author => {
+                let all = tool.clone();
+                let mut entries = vec![MenuEntry::custom("all users", move |_, cx| {
+                    all.update(cx, |t, cx| t.set_author(None, cx));
+                })];
+                for author in tool.read(cx).authors() {
+                    let tool = tool.clone();
+                    let name = author.clone();
+                    entries.push(MenuEntry::custom(author, move |_, cx| {
+                        let author = Some(name.clone());
+                        tool.update(cx, |t, cx| t.set_author(author, cx));
+                    }));
+                }
+                entries
+            }
+        };
+        self.open_menu(entries, at, None, cx);
     }
 
     /// `git/commit/jump-to-tool`: the Git tool with its message field focused.
@@ -499,10 +989,20 @@ impl Workspace {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let m = *cx.global::<Metrics>();
+        let position = point(
+            at.x - px(m.branch_menu_offset_x),
+            px(m.toolbar_height + m.branch_menu_gap),
+        );
+        self.branches_menu(position, cx);
+    }
+
+    /// The branches menu at a position: the Git tool's branch chip opens it
+    /// too (estimate).
+    fn branches_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let m = *cx.global::<Metrics>();
         let mut entries = vec![MenuEntry::disabled("Create New Branch...")];
         match repo.branches() {
             Ok(branches) => {
@@ -528,10 +1028,6 @@ impl Workspace {
             }
             Err(e) => eprintln!("oak: {e:#}"),
         }
-        let position = point(
-            at.x - px(m.branch_menu_offset_x),
-            px(m.toolbar_height + m.branch_menu_gap),
-        );
         self.open_menu(entries, position, None, cx);
     }
 
@@ -829,7 +1325,7 @@ impl Workspace {
                 "Run",
                 vec![MenuEntry::disabled("Run configurations arrive with M6")],
             ),
-            MenuEntry::submenu("Git", vec![MenuEntry::disabled("Git arrives with M4")]),
+            MenuEntry::submenu("Git", Self::git_menu(cx)),
             MenuEntry::submenu(
                 "Window",
                 Self::entries(

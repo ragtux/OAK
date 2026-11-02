@@ -21,8 +21,44 @@ use std::path::PathBuf;
 pub enum GitToolEvent {
     /// Files were staged, unstaged or committed: the workspace re-reads git.
     Changed,
-    /// A row was double-clicked: open the file.
-    Open(PathBuf),
+    /// A row was double-clicked: the Changed Files tab on the file (ninth pass).
+    Diff(PathBuf),
+    /// The Push button.
+    Push,
+    /// The filter button, at this window position: the workspace opens its menu.
+    Filter(gpui::Point<gpui::Pixels>),
+    /// The branch chip, at this window position: the branches menu.
+    Branches(gpui::Point<gpui::Pixels>),
+}
+
+/// The filter button's choice: which changed files the list shows
+/// (estimate; the ninth pass did not open the menu).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GitFilter {
+    #[default]
+    All,
+    Staged,
+    Unstaged,
+}
+
+impl GitFilter {
+    pub const ALL: [GitFilter; 3] = [GitFilter::All, GitFilter::Staged, GitFilter::Unstaged];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GitFilter::All => "All changes",
+            GitFilter::Staged => "Staged only",
+            GitFilter::Unstaged => "Unstaged only",
+        }
+    }
+
+    fn admits(self, entry: &StatusEntry) -> bool {
+        match self {
+            GitFilter::All => true,
+            GitFilter::Staged => entry.staged,
+            GitFilter::Unstaged => !entry.staged,
+        }
+    }
 }
 
 pub struct GitTool {
@@ -30,10 +66,15 @@ pub struct GitTool {
     pub message: Entity<TextInput>,
     entries: Vec<StatusEntry>,
     branch: Option<String>,
+    /// The upstream's name, for the Push button's label.
+    upstream: Option<String>,
     /// Commits not on the upstream (every commit without one).
     unsynced: usize,
     commits: Vec<Commit>,
     error: Option<String>,
+    /// The row a click selected (Fleet's `git-tool-selected` shot).
+    selected: Option<PathBuf>,
+    pub filter: GitFilter,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -63,9 +104,12 @@ impl GitTool {
             message,
             entries: Vec::new(),
             branch: None,
+            upstream: None,
             unsynced: 0,
             commits: Vec::new(),
             error: None,
+            selected: None,
+            filter: GitFilter::All,
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
@@ -86,11 +130,45 @@ impl GitTool {
                 .then(a.path.cmp(&b.path))
         });
         self.branch = repo.branch();
+        self.upstream = repo.upstream();
         self.unsynced = match repo.ahead_behind() {
             Some(ab) => ab.ahead,
             None => repo.commit_count(),
         };
         self.commits = repo.history(None, HISTORY_LIMIT).unwrap_or_default();
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|s| !self.entries.iter().any(|e| &e.path == s))
+        {
+            self.selected = None;
+        }
+        cx.notify();
+    }
+
+    pub fn set_filter(&mut self, filter: GitFilter, cx: &mut Context<Self>) {
+        self.filter = filter;
+        cx.notify();
+    }
+
+    /// The Push button's label: "Push 1 commit to origin/main", or "to a
+    /// new remote branch" without an upstream (the ninth pass; the upstream
+    /// wording is an estimate).
+    pub fn push_label(&self) -> String {
+        let target = match &self.upstream {
+            Some(u) => u.clone(),
+            None => "a new remote branch".to_string(),
+        };
+        format!(
+            "Push {} commit{} to {target}",
+            self.unsynced,
+            if self.unsynced == 1 { "" } else { "s" }
+        )
+    }
+
+    /// Shows what a push or pull reported, or failed with.
+    pub fn report(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
+        self.error = result.err();
         cx.notify();
     }
 
@@ -165,7 +243,7 @@ fn status_glyph(status: Status, theme: &Theme) -> (&'static str, gpui::Hsla) {
     }
 }
 
-fn status_text_color(status: Status, theme: &Theme) -> gpui::Hsla {
+pub(crate) fn status_text_color(status: Status, theme: &Theme) -> gpui::Hsla {
     match status {
         Status::Added | Status::Untracked => theme.git_added_text,
         Status::Modified | Status::Renamed => theme.git_modified_text,
@@ -176,7 +254,7 @@ fn status_text_color(status: Status, theme: &Theme) -> gpui::Hsla {
 }
 
 /// Fleet's 14.67 px checkbox in the Git tool's rows.
-fn checkbox(
+pub(crate) fn checkbox(
     id: impl Into<ElementId>,
     state: CheckState,
     theme: &Theme,
@@ -214,20 +292,17 @@ fn checkbox(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CheckState {
+pub(crate) enum CheckState {
     Off,
     Some,
     All,
 }
 
 /// One commit as both tools list it: a dot, the summary, then the author
-/// and date in secondary text (ninth pass: 40 px blocks).
+/// and date in secondary text (ninth pass: 40 px blocks, "Probe, 18:00 Dec
+/// 31, 2025").
 fn commit_row(ix: usize, commit: &Commit, theme: &Theme, m: &Metrics) -> impl IntoElement {
-    let date = commit
-        .date
-        .get(..16)
-        .map(|d| d.replace('T', " "))
-        .unwrap_or_else(|| commit.date.clone());
+    let date = oak_git::format_iso(&commit.date);
     div()
         .id(ElementId::NamedInteger("commit".into(), ix as u64))
         .h(px(m.git_commit_row))
@@ -282,9 +357,12 @@ impl Render for GitTool {
             n if n == self.entries.len() => CheckState::All,
             _ => CheckState::Some,
         };
+        let filter = self.filter;
+        let selected = self.selected.clone();
         let rows: Vec<_> = self
             .entries
             .iter()
+            .filter(|e| filter.admits(e))
             .enumerate()
             .map(|(ix, e)| {
                 let name: SharedString = e
@@ -307,6 +385,7 @@ impl Render for GitTool {
                 let toggle_path = e.path.clone();
                 let open = entity.clone();
                 let toggle = entity.clone();
+                let is_selected = selected.as_ref() == Some(&e.path);
                 div()
                     .id(ElementId::NamedInteger("git-row".into(), ix as u64))
                     .h(px(m.git_row))
@@ -314,11 +393,16 @@ impl Render for GitTool {
                     .flex()
                     .items_center()
                     .rounded(px(m.popup_row_radius))
-                    .hover(|s| s.bg(theme.list_bg_hovered))
+                    .when(is_selected, |d| d.bg(theme.list_bg_selected))
+                    .when(!is_selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
                     .on_click(move |event, _, cx| {
-                        if event.click_count() == 2 {
-                            open.update(cx, |_, cx| cx.emit(GitToolEvent::Open(path.clone())));
-                        }
+                        open.update(cx, |this, cx| {
+                            this.selected = Some(path.clone());
+                            if event.click_count() == 2 {
+                                cx.emit(GitToolEvent::Diff(path.clone()));
+                            }
+                            cx.notify();
+                        });
                     })
                     .child(
                         div()
@@ -382,14 +466,12 @@ impl Render for GitTool {
             .collect();
         let count: SharedString = self.entries.len().to_string().into();
         let branch: SharedString = self.branch.clone().unwrap_or_default().into();
-        let push_label: SharedString = format!(
-            "Push {} commit{} to a new remote branch",
-            self.unsynced,
-            if self.unsynced == 1 { "" } else { "s" }
-        )
-        .into();
+        let push_label: SharedString = self.push_label().into();
         let commit_entity = entity.clone();
         let all_entity = entity.clone();
+        let filter_entity = entity.clone();
+        let push_entity = entity.clone();
+        let chip_entity = entity.clone();
         div()
             .key_context("GitTool")
             .track_focus(&self.focus_handle)
@@ -447,7 +529,13 @@ impl Render for GitTool {
                             .items_center()
                             .justify_center()
                             .rounded(px(m.button_radius))
+                            .cursor_pointer()
                             .hover(|s| s.bg(theme.ghost_hovered))
+                            .when(filter != GitFilter::All, |d| d.bg(theme.ghost_hovered))
+                            .on_click(move |event, _, cx| {
+                                let at = event.position();
+                                filter_entity.update(cx, |_, cx| cx.emit(GitToolEvent::Filter(at)));
+                            })
                             .child(icon(
                                 "expui/general/filter",
                                 m.icon_size,
@@ -557,7 +645,10 @@ impl Render for GitTool {
                                     &m,
                                 )
                                 .h(px(m.git_push_height))
-                                .text_color(theme.text_secondary),
+                                .text_color(theme.text_secondary)
+                                .on_click(move |_, _, cx| {
+                                    push_entity.update(cx, |_, cx| cx.emit(GitToolEvent::Push))
+                                }),
                             ),
                     )
                     .child(
@@ -568,6 +659,7 @@ impl Render for GitTool {
                             .flex()
                             .child(
                                 div()
+                                    .id("git-branch-chip")
                                     .h(px(m.git_chip_height))
                                     .px(px(m.git_chip_pad_x))
                                     .flex()
@@ -577,6 +669,13 @@ impl Render for GitTool {
                                     .border_1()
                                     .border_color(theme.git_branch_tag_border)
                                     .text_color(theme.git_branch_tag_text)
+                                    .cursor_pointer()
+                                    .on_click(move |event, _, cx| {
+                                        let at = event.position();
+                                        chip_entity.update(cx, |_, cx| {
+                                            cx.emit(GitToolEvent::Branches(at))
+                                        });
+                                    })
                                     .child(branch)
                                     .child(icon(
                                         "expui/general/chevronDown",
@@ -603,16 +702,36 @@ impl Render for GitTool {
 
 // ---- the History tool --------------------------------------------------------
 
+/// Which of the History tool's three filter chips was clicked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryChip {
+    Branch,
+    Scope,
+    Author,
+}
+
+#[derive(Clone, Debug)]
+pub enum HistoryToolEvent {
+    /// A chip was clicked at this window position: the workspace opens its menu.
+    Chip(HistoryChip, gpui::Point<gpui::Pixels>),
+}
+
 pub struct HistoryTool {
     repo: Option<Repo>,
     pub search: Entity<TextInput>,
     /// `git/file-history`: only this file's commits.
     file: Option<PathBuf>,
+    /// The checked-out branch, and the one the branch chip chose instead.
     branch: Option<String>,
+    chosen_branch: Option<String>,
+    /// The author chip's choice; None is "all users".
+    author: Option<String>,
     commits: Vec<Commit>,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
+
+impl EventEmitter<HistoryToolEvent> for HistoryTool {}
 
 impl Focusable for HistoryTool {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -634,6 +753,8 @@ impl HistoryTool {
             search,
             file: None,
             branch: None,
+            chosen_branch: None,
+            author: None,
             commits: Vec::new(),
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
@@ -647,13 +768,37 @@ impl HistoryTool {
         self.refresh(cx);
     }
 
+    /// The branch chip's choice; None goes back to the checked-out branch.
+    pub fn set_branch(&mut self, branch: Option<String>, cx: &mut Context<Self>) {
+        self.chosen_branch = branch;
+        self.refresh(cx);
+    }
+
+    /// The author chip's choice; None is every author.
+    pub fn set_author(&mut self, author: Option<String>, cx: &mut Context<Self>) {
+        self.author = author;
+        cx.notify();
+    }
+
+    /// Every author among the listed commits, for the chip's menu.
+    pub fn authors(&self) -> Vec<String> {
+        let mut authors: Vec<String> = self.commits.iter().map(|c| c.author.clone()).collect();
+        authors.sort();
+        authors.dedup();
+        authors
+    }
+
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
         self.branch = repo.branch();
         self.commits = repo
-            .history(self.file.as_deref(), HISTORY_LIMIT)
+            .history_of(
+                self.chosen_branch.as_deref(),
+                self.file.as_deref(),
+                HISTORY_LIMIT,
+            )
             .unwrap_or_default();
         cx.notify();
     }
@@ -663,12 +808,15 @@ impl Render for HistoryTool {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
+        let entity = cx.entity();
         let focused = self.search.read(cx).is_focused(window);
         let query = self.search.read(cx).text().to_lowercase();
+        let author = self.author.clone();
         let commits: Vec<_> = self
             .commits
             .iter()
             .filter(|c| query.is_empty() || c.summary.to_lowercase().contains(&query))
+            .filter(|c| author.as_ref().is_none_or(|a| &c.author == a))
             .enumerate()
             .map(|(ix, c)| commit_row(ix, c, &theme, &m))
             .collect();
@@ -685,14 +833,21 @@ impl Render for HistoryTool {
                 .unwrap_or_default()
                 .into(),
         };
-        let chip = |label: SharedString| {
+        let chip = |which: HistoryChip, id: &'static str, label: SharedString| {
+            let entity = entity.clone();
             div()
+                .id(id)
                 .flex()
                 .items_center()
                 .gap(px(m.git_chip_pad_x / 2.))
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .text_color(theme.text_secondary)
+                .cursor_pointer()
+                .on_click(move |event, _, cx| {
+                    let at = event.position();
+                    entity.update(cx, |_, cx| cx.emit(HistoryToolEvent::Chip(which, at)));
+                })
                 .child(label)
                 .child(icon(
                     "expui/general/chevronDown",
@@ -700,6 +855,17 @@ impl Render for HistoryTool {
                     theme.icon_secondary,
                 ))
         };
+        let branch_label: SharedString = self
+            .chosen_branch
+            .clone()
+            .or_else(|| self.branch.clone())
+            .unwrap_or_default()
+            .into();
+        let author_label: SharedString = self
+            .author
+            .clone()
+            .unwrap_or_else(|| "all users".to_string())
+            .into();
         div()
             .key_context("HistoryTool")
             .track_focus(&self.focus_handle)
@@ -734,13 +900,13 @@ impl Render for HistoryTool {
                     .flex()
                     .items_center()
                     .gap(px(m.history_chip_gap))
-                    .child(chip(self.branch.clone().unwrap_or_default().into()))
-                    .child(
-                        div()
-                            .max_w(px(m.history_scope_max_width))
-                            .child(chip(scope)),
-                    )
-                    .child(chip("all users".into())),
+                    .child(chip(HistoryChip::Branch, "history-branch", branch_label))
+                    .child(div().max_w(px(m.history_scope_max_width)).child(chip(
+                        HistoryChip::Scope,
+                        "history-scope",
+                        scope,
+                    )))
+                    .child(chip(HistoryChip::Author, "history-author", author_label)),
             )
             .child(
                 div()

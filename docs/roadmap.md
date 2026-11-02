@@ -293,15 +293,28 @@ which no source shows.
 - Local history (`local-history/make-snapshot`, snapshots tool).
 - Probes: batches 6–8.
 
-### M4 Git (M; begun 2026-11-02)
+### M4 Git (built 2026-11-02; batch 10 measured)
 
 Begun with what the shots on hand show (`docs/fleet-probe.md`, eighth
 pass): the `oak-git` crate (branch and per-file status through the `git`
 binary) and the Files tree's names coloured and badged by status. Batch 10
 ran that evening (ninth pass) and gave the gutter's line-status bars with
-their popup and the branch tag's menu, both built, then the Git tool (status rows with staging, commit, unsynced
-commits) and the History tool (`git/file-history`); blame and the Changed
-Files tab are measured and still to build.
+their popup and the branch tag's menu, then the Git tool (status rows with
+staging, commit, unsynced commits) and the History tool
+(`git/file-history`). The rest followed the same night (tenth pass): the
+blame column (`git/toggle-blame`), the Changed Files tab (`diff_view.rs`:
+cards per changed file, git's hunks paired side by side with the file's
+syntax colours, staging, Revert, the Copy menu), `diff/two-files` and
+`diff/with-clipboard` on the same view, `git/push` and `git/pull` off the
+main thread with `git.push.confirm`, `git/revert` with `git.revert.confirm`,
+the Git tool's filter and chip menus, the History tool's chips, the Git
+submenus, Fleet's two-chord git shortcuts in the keymap, and dates in the
+machine's zone.
+
+Left for later: staging single hunks (the diff's row checkbox stages the
+file), "Create New Branch...", `git.enable3WayDiffView` (conflicts show as
+a plain diff), and a Fleet pass over the estimates the tenth pass lists
+(the filter and chip menus, the dialogs' wording, the fold's wave).
 
 - Status colours in the tree and tabs (`vcs/*` icons, `tree.*`), line
   status in the gutter (`editor.showLineStatus`), branch tag in the toolbar

@@ -1,8 +1,9 @@
 //! Git for Oak, M4's first piece: the branch the toolbar shows and the
 //! per-file status the Files tree colours (`editor.gitDiff.text.*`,
-//! `icon.background.*`, `docs/fleet-probe.md`, eighth pass), and a file's
-//! changed lines for the gutter, its history and its blame (painted once
-//! batch 10 shows them). Everything
+//! `icon.background.*`, `docs/fleet-probe.md`, eighth pass), a file's
+//! changed lines for the gutter, its history and its blame, the index for
+//! the Git tool (stage, unstage, commit), push, pull and revert, and the
+//! line diff behind the Changed Files tab (ninth pass). Everything
 //! shells out to the `git` on the path, as Fleet does
 //! (`git.discoverGitManually`); when there is no git, there is no repository
 //! and nothing is coloured.
@@ -163,6 +164,76 @@ impl Repo {
     }
 }
 
+impl Repo {
+    /// A changed file's hunks against HEAD for the Changed Files tab: as
+    /// [`Repo::line_status`], but a rename is followed to its old path so
+    /// the diff is of the contents, not a whole file added.
+    pub fn file_diff(&self, entry: &StatusEntry) -> Result<Vec<Hunk>> {
+        let rel = self.relative(&entry.path);
+        let mut args = vec![
+            "diff",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+            "-M",
+            "HEAD",
+            "--",
+            &rel,
+        ];
+        let old;
+        if let Some(old_path) = &entry.old_path {
+            old = self.relative(old_path);
+            args.push(&old);
+        }
+        let out = git(&self.root, &args)?;
+        Ok(parse_hunks(&String::from_utf8_lossy(&out)))
+    }
+}
+
+/// The rows of a side-by-side view from git's own hunks, so the pairing
+/// is git's (and Fleet's) rather than a second diff's; None when the hunks
+/// do not fit texts of these lengths.
+pub fn ops_from_hunks(hunks: &[Hunk], old_len: usize, new_len: usize) -> Option<Vec<LineOp>> {
+    let mut ops = Vec::new();
+    let (mut o, mut n) = (0, 0);
+    for h in hunks {
+        while n < h.row {
+            if o >= old_len || n >= new_len {
+                return None;
+            }
+            ops.push(LineOp::Keep(o, n));
+            o += 1;
+            n += 1;
+        }
+        if n != h.row {
+            return None;
+        }
+        for _ in 0..h.old.len() {
+            if o >= old_len {
+                return None;
+            }
+            ops.push(LineOp::Remove(o));
+            o += 1;
+        }
+        for _ in 0..h.rows {
+            if n >= new_len {
+                return None;
+            }
+            ops.push(LineOp::Add(n));
+            n += 1;
+        }
+    }
+    while n < new_len {
+        if o >= old_len {
+            return None;
+        }
+        ops.push(LineOp::Keep(o, n));
+        o += 1;
+        n += 1;
+    }
+    (o == old_len).then_some(ops)
+}
+
 /// Parses the `@@ -a,b +c,d @@` lines of a unified diff with no context.
 pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
     let mut hunks: Vec<Hunk> = Vec::new();
@@ -226,19 +297,57 @@ pub struct Commit {
 pub struct BlameLine {
     pub short_id: String,
     pub author: String,
+    /// `author-time`: unix seconds as parsed; `Repo::blame` replaces it
+    /// with the local day (`2025-12-31`).
     pub date: String,
+    /// `author-tz`: `+0100`.
+    pub tz: String,
     pub summary: String,
     /// An uncommitted line (the all-zero commit).
     pub uncommitted: bool,
 }
 
-const LOG_FORMAT: &str = "--format=%H%x00%h%x00%an%x00%aI%x00%s%x00";
+impl BlameLine {
+    /// The column's label: `Dec 31, 2025  Author`; nothing for an uncommitted line.
+    pub fn label(&self) -> Option<String> {
+        if self.uncommitted {
+            return None;
+        }
+        // `author-time` seconds in the author's zone until `Repo::blame`
+        // swaps in the local day.
+        let day = match self.date.parse::<i64>() {
+            Ok(t) => format_day(t, &self.tz),
+            Err(_) => format_iso(&self.date),
+        };
+        Some(format!("{day}  {}", self.author))
+    }
+}
+
+/// Five NUL-ended fields; the date in the machine's zone, as Fleet shows it
+/// (the fixture's `2026-01-01T00:00:00Z` commit reads `18:00 Dec 31, 2025`
+/// in Fleet's rows, ninth pass).
+const LOG_FORMAT: &str = "--format=%H%x00%h%x00%an%x00%ad%x00%s%x00";
+const LOG_DATE: &str = "--date=format-local:%Y-%m-%dT%H:%M:%S";
 
 impl Repo {
     /// The newest `limit` commits of the repository, or of one file.
     pub fn history(&self, path: Option<&Path>, limit: usize) -> Result<Vec<Commit>> {
+        self.history_of(None, path, limit)
+    }
+
+    /// The same on another branch (the History tool's branch chip); None
+    /// is HEAD.
+    pub fn history_of(
+        &self,
+        branch: Option<&str>,
+        path: Option<&Path>,
+        limit: usize,
+    ) -> Result<Vec<Commit>> {
         let limit = format!("-n{limit}");
-        let mut args = vec!["log", LOG_FORMAT, &limit];
+        let mut args = vec!["log", LOG_FORMAT, LOG_DATE, &limit];
+        if let Some(branch) = branch {
+            args.push(branch);
+        }
         let rel;
         if let Some(path) = path {
             rel = self.relative(path);
@@ -250,11 +359,45 @@ impl Repo {
         Ok(parse_log(&String::from_utf8_lossy(&out)))
     }
 
-    /// One entry per line of the file as it is on disk.
+    /// One entry per line of the file as it is on disk, each commit's day
+    /// in the machine's zone.
     pub fn blame(&self, path: &Path) -> Result<Vec<BlameLine>> {
         let rel = self.relative(path);
         let out = git(&self.root, &["blame", "--line-porcelain", "--", &rel])?;
-        Ok(parse_blame(&String::from_utf8_lossy(&out)))
+        let mut lines = parse_blame(&String::from_utf8_lossy(&out));
+        let mut ids: Vec<String> = lines
+            .iter()
+            .filter(|l| !l.uncommitted)
+            .map(|l| l.short_id.clone())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        if !ids.is_empty() {
+            let mut args = vec![
+                "log",
+                "--no-walk=unsorted",
+                "--format=%h%x00%ad%x00",
+                "--date=format-local:%Y-%m-%d",
+            ];
+            args.extend(ids.iter().map(String::as_str));
+            if let Ok(out) = git(&self.root, &args) {
+                let text = String::from_utf8_lossy(&out);
+                let mut fields = text.split('\0').map(|s| s.trim_start_matches('\n'));
+                let mut days: HashMap<String, String> = HashMap::new();
+                while let (Some(id), Some(day)) = (fields.next(), fields.next()) {
+                    if id.is_empty() {
+                        break;
+                    }
+                    days.insert(id.to_string(), day.to_string());
+                }
+                for line in &mut lines {
+                    if let Some(day) = days.get(&line.short_id) {
+                        line.date = day.clone();
+                    }
+                }
+            }
+        }
+        Ok(lines)
     }
 
     fn relative(&self, path: &Path) -> String {
@@ -342,6 +485,270 @@ impl Repo {
         .ok()?;
         parse_ahead_behind(&String::from_utf8_lossy(&out))
     }
+
+    /// The upstream branch's short name (`origin/main`), if HEAD has one.
+    pub fn upstream(&self) -> Option<String> {
+        let out = git(
+            &self.root,
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+        )
+        .ok()?;
+        let name = String::from_utf8_lossy(&out).trim().to_string();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// `git/push`: to the upstream, or with `--set-upstream origin <branch>`
+    /// when there is none yet (the Git tool's "Push N commits to a new
+    /// remote branch"). Returns what git printed.
+    pub fn push(&self) -> Result<String> {
+        if self.upstream().is_some() {
+            return git_report(&self.root, &["push"]);
+        }
+        let branch = self
+            .branch()
+            .ok_or_else(|| anyhow::anyhow!("no branch to push"))?;
+        git_report(&self.root, &["push", "--set-upstream", "origin", &branch])
+    }
+
+    /// `git/pull`. Returns what git printed.
+    pub fn pull(&self) -> Result<String> {
+        git_report(&self.root, &["pull"])
+    }
+
+    /// The file's text in HEAD, or None when HEAD does not have the path
+    /// (an added or untracked file).
+    pub fn head_text(&self, path: &Path) -> Option<String> {
+        let spec = format!("HEAD:{}", self.relative(path));
+        let out = git(&self.root, &["show", &spec]).ok()?;
+        Some(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// `git/revert` on one changed file: HEAD's version comes back for a
+    /// tracked file (index and work tree alike), a rename is undone, and a
+    /// new file leaves the index and goes to the system trash (Fleet deletes
+    /// without a dialog elsewhere; the trash keeps Oak's revert recoverable).
+    pub fn revert(&self, entry: &StatusEntry) -> Result<()> {
+        let rel = self.relative(&entry.path);
+        match entry.status {
+            Status::Untracked => trash_file(&entry.path),
+            Status::Added => {
+                git(
+                    &self.root,
+                    &["rm", "--quiet", "--cached", "--force", "--", &rel],
+                )?;
+                trash_file(&entry.path)
+            }
+            Status::Renamed => {
+                let old = entry
+                    .old_path
+                    .as_ref()
+                    .map(|p| self.relative(p))
+                    .ok_or_else(|| anyhow::anyhow!("a rename without its old path"))?;
+                git(&self.root, &["reset", "--quiet", "--", &old, &rel])?;
+                git(&self.root, &["checkout", "--quiet", "HEAD", "--", &old])?;
+                if entry.path.exists() {
+                    trash_file(&entry.path)?;
+                }
+                Ok(())
+            }
+            Status::Modified | Status::Deleted | Status::Conflict => {
+                let _ = git(&self.root, &["reset", "--quiet", "--", &rel]);
+                git(&self.root, &["checkout", "--quiet", "HEAD", "--", &rel]).map(|_| ())
+            }
+            Status::Ignored => Ok(()),
+        }
+    }
+}
+
+fn trash_file(path: &Path) -> Result<()> {
+    trash::delete(path).with_context(|| format!("trash {}", path.display()))
+}
+
+/// Runs git for its report (push and pull write theirs to stderr), failing
+/// with that report when the command does.
+fn git_report(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("git {}", args.join(" ")))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !err.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&err);
+    }
+    if output.status.success() {
+        Ok(text)
+    } else {
+        anyhow::bail!("git {}: {text}", args.join(" "))
+    }
+}
+
+// ---- line diffs, for the Changed Files tab -----------------------------------------
+
+/// One row of a line diff: both texts keep the line, or one side alone has it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineOp {
+    /// The old row and the new row that match.
+    Keep(usize, usize),
+    /// A row only the old text has.
+    Remove(usize),
+    /// A row only the new text has.
+    Add(usize),
+}
+
+/// Past this many edits the two texts count as wholly replaced.
+const MAX_EDITS: usize = 1000;
+
+/// A line diff of `old` against `new` (Myers' O(ND) algorithm, the edit
+/// script git itself prints), in row order.
+pub fn diff_lines<T: PartialEq>(old: &[T], new: &[T]) -> Vec<LineOp> {
+    let n = old.len() as isize;
+    let m = new.len() as isize;
+    let max = (n + m) as usize;
+    if max == 0 {
+        return Vec::new();
+    }
+    // k runs -d..=d with d ≤ max; one spare slot each side keeps k ± 1 in range.
+    let offset = max as isize + 1;
+    let mut v = vec![0isize; 2 * max + 3];
+    // For each round d, the frontier before it over k in -d-1..=d+1.
+    let mut trace: Vec<Vec<isize>> = Vec::new();
+    let mut reached = None;
+    'rounds: for d in 0..=max.min(MAX_EDITS) {
+        let d = d as isize;
+        let lo = (offset - d - 1) as usize;
+        let hi = (offset + d + 1) as usize;
+        trace.push(v[lo..=hi].to_vec());
+        let mut k = -d;
+        while k <= d {
+            let idx = (k + offset) as usize;
+            let mut x = if k == -d || (k != d && v[idx - 1] < v[idx + 1]) {
+                v[idx + 1]
+            } else {
+                v[idx - 1] + 1
+            };
+            let mut y = x - k;
+            while x < n && y < m && old[x as usize] == new[y as usize] {
+                x += 1;
+                y += 1;
+            }
+            v[idx] = x;
+            if x >= n && y >= m {
+                reached = Some(d);
+                break 'rounds;
+            }
+            k += 2;
+        }
+    }
+    let Some(last) = reached else {
+        let mut ops: Vec<LineOp> = (0..old.len()).map(LineOp::Remove).collect();
+        ops.extend((0..new.len()).map(LineOp::Add));
+        return ops;
+    };
+    let mut ops = Vec::new();
+    let (mut x, mut y) = (n, m);
+    for d in (0..=last).rev() {
+        let v = &trace[d as usize];
+        let at = |k: isize| v[(k + d + 1) as usize];
+        let k = x - y;
+        let prev_k = if k == -d || (k != d && at(k - 1) < at(k + 1)) {
+            k + 1
+        } else {
+            k - 1
+        };
+        let (prev_x, prev_y) = if d == 0 {
+            (0, 0)
+        } else {
+            let px = at(prev_k);
+            (px, px - prev_k)
+        };
+        while x > prev_x && y > prev_y {
+            x -= 1;
+            y -= 1;
+            ops.push(LineOp::Keep(x as usize, y as usize));
+        }
+        if d > 0 {
+            if x == prev_x {
+                ops.push(LineOp::Add(prev_y as usize));
+            } else {
+                ops.push(LineOp::Remove(prev_x as usize));
+            }
+            x = prev_x;
+            y = prev_y;
+        }
+    }
+    ops.reverse();
+    ops
+}
+
+// ---- dates, as Fleet prints them ---------------------------------------------------
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// `+0100` → seconds east of UTC.
+fn tz_seconds(tz: &str) -> i64 {
+    let (sign, digits) = match tz.chars().next() {
+        Some('-') => (-1, &tz[1..]),
+        Some('+') => (1, &tz[1..]),
+        _ => (1, tz),
+    };
+    let hours: i64 = digits.get(..2).and_then(|h| h.parse().ok()).unwrap_or(0);
+    let minutes: i64 = digits.get(2..4).and_then(|m| m.parse().ok()).unwrap_or(0);
+    sign * (hours * 3600 + minutes * 60)
+}
+
+/// A unix time in the author's zone as the blame column shows it: `Dec 31, 2025`.
+pub fn format_day(unix: i64, tz: &str) -> String {
+    let local = unix + tz_seconds(tz);
+    let (y, m, d) = civil_from_days(local.div_euclid(86_400));
+    format!("{} {d}, {y}", MONTHS[(m - 1) as usize])
+}
+
+/// An ISO 8601 date (`%aI`) as the commit rows show it: `18:00 Dec 31, 2025`.
+pub fn format_iso(iso: &str) -> String {
+    let (date, rest) = iso.split_once('T').unwrap_or((iso, ""));
+    let mut parts = date.split('-');
+    let (Some(y), Some(m), Some(d)) = (parts.next(), parts.next(), parts.next()) else {
+        return iso.to_string();
+    };
+    let month = m
+        .parse::<usize>()
+        .ok()
+        .and_then(|m| MONTHS.get(m.wrapping_sub(1)))
+        .copied()
+        .unwrap_or(m);
+    let day = d.trim_start_matches('0');
+    let time = rest.get(..5).unwrap_or("");
+    if time.is_empty() {
+        format!("{month} {day}, {y}")
+    } else {
+        format!("{time} {month} {day}, {y}")
+    }
 }
 
 /// Parses `git rev-list --left-right --count HEAD...@{upstream}`: `ahead\tbehind`.
@@ -400,6 +807,7 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
                     short_id: sha[..7].to_string(),
                     author: String::new(),
                     date: String::new(),
+                    tz: "+0000".to_string(),
                     summary: String::new(),
                     uncommitted: sha.bytes().all(|b| b == b'0'),
                 });
@@ -409,6 +817,8 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
                     entry.author = v.to_string();
                 } else if let Some(v) = line.strip_prefix("author-time ") {
                     entry.date = v.to_string();
+                } else if let Some(v) = line.strip_prefix("author-tz ") {
+                    entry.tz = v.to_string();
                 } else if let Some(v) = line.strip_prefix("summary ") {
                     entry.summary = v.to_string();
                 }
@@ -587,6 +997,49 @@ mod tests {
     }
 
     #[test]
+    fn rows_from_hunks() {
+        let hunks = vec![
+            Hunk {
+                row: 1,
+                rows: 1,
+                kind: HunkKind::Modified,
+                old: vec!["b".to_string()],
+            },
+            Hunk {
+                row: 3,
+                rows: 0,
+                kind: HunkKind::Deleted,
+                old: vec!["d".to_string()],
+            },
+            Hunk {
+                row: 3,
+                rows: 2,
+                kind: HunkKind::Added,
+                old: vec![],
+            },
+        ];
+        // old: a b c d e; new: a x c y z e
+        assert_eq!(
+            ops_from_hunks(&hunks, 5, 6),
+            Some(vec![
+                LineOp::Keep(0, 0),
+                LineOp::Remove(1),
+                LineOp::Add(1),
+                LineOp::Keep(2, 2),
+                LineOp::Remove(3),
+                LineOp::Add(3),
+                LineOp::Add(4),
+                LineOp::Keep(4, 5),
+            ])
+        );
+        assert_eq!(ops_from_hunks(&hunks, 4, 6), None, "the old text is short");
+        assert_eq!(
+            ops_from_hunks(&[], 2, 2),
+            Some(vec![LineOp::Keep(0, 0), LineOp::Keep(1, 1)])
+        );
+    }
+
+    #[test]
     fn parses_log_and_blame() {
         let log = "abc123def\x00abc123d\x00Ada\x002026-11-02T10:00:00+01:00\x00First\x00\n0f0f0f0f0\x000f0f0f0\x00Bo\x002026-11-01T09:00:00+01:00\x00Second line\x00\n";
         let commits = parse_log(log);
@@ -596,15 +1049,85 @@ mod tests {
         assert_eq!(commits[1].summary, "Second line");
         assert!(parse_log("").is_empty());
 
-        let blame = "abc123def4567890 1 1 1\nauthor Ada\nauthor-mail <a>\nauthor-time 1762074000\nsummary First\nfilename f\n\tline one\n0000000000000000000000000000000000000000 2 2 1\nauthor Not Committed Yet\nauthor-time 1762074001\nsummary Version of f from f\nfilename f\n\tline two\n";
+        let blame = "abc123def4567890 1 1 1\nauthor Ada\nauthor-mail <a>\nauthor-time 1762074000\nauthor-tz +0100\nsummary First\nfilename f\n\tline one\n0000000000000000000000000000000000000000 2 2 1\nauthor Not Committed Yet\nauthor-time 1762074001\nsummary Version of f from f\nfilename f\n\tline two\n";
         let lines = parse_blame(blame);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].short_id, "abc123d");
         assert_eq!(lines[0].author, "Ada");
         assert_eq!(lines[0].date, "1762074000");
+        assert_eq!(lines[0].tz, "+0100");
         assert_eq!(lines[0].summary, "First");
         assert!(!lines[0].uncommitted);
+        assert_eq!(lines[0].label().as_deref(), Some("Nov 2, 2025  Ada"));
         assert!(lines[1].uncommitted);
+        assert_eq!(lines[1].label(), None);
+    }
+
+    #[test]
+    fn formats_dates() {
+        // 2025-12-31T18:00:00+01:00 is 17:00 UTC: 1767200400.
+        assert_eq!(format_day(1_767_200_400, "+0100"), "Dec 31, 2025");
+        assert_eq!(format_day(1_767_200_400, "+0000"), "Dec 31, 2025");
+        // Just before midnight in Tokyo is the next day there.
+        assert_eq!(format_day(1_767_200_400, "+0900"), "Jan 1, 2026");
+        assert_eq!(format_day(0, "+0000"), "Jan 1, 1970");
+        assert_eq!(format_day(-1, "+0000"), "Dec 31, 1969");
+        assert_eq!(format_day(951_782_400, "+0000"), "Feb 29, 2000");
+        assert_eq!(
+            format_iso("2025-12-31T18:00:00+01:00"),
+            "18:00 Dec 31, 2025"
+        );
+        assert_eq!(format_iso("2026-03-05"), "Mar 5, 2026");
+        assert_eq!(format_iso("soon"), "soon");
+    }
+
+    #[test]
+    fn diffs_lines() {
+        let old = ["a", "b", "c", "d"];
+        let new = ["a", "x", "c", "d", "e"];
+        assert_eq!(
+            diff_lines(&old, &new),
+            vec![
+                LineOp::Keep(0, 0),
+                LineOp::Remove(1),
+                LineOp::Add(1),
+                LineOp::Keep(2, 2),
+                LineOp::Keep(3, 3),
+                LineOp::Add(4),
+            ]
+        );
+        assert_eq!(diff_lines(&["a"], &["a"]), vec![LineOp::Keep(0, 0)]);
+        assert_eq!(diff_lines::<&str>(&[], &[]), vec![]);
+        assert_eq!(diff_lines(&[], &["a"]), vec![LineOp::Add(0)]);
+        assert_eq!(diff_lines(&["a"], &[]), vec![LineOp::Remove(0)]);
+        assert_eq!(
+            diff_lines(&["a", "b"], &["b", "a"]),
+            vec![LineOp::Remove(0), LineOp::Keep(1, 0), LineOp::Add(1)]
+        );
+        // Every op accounts for every row of both sides, in order.
+        let old: Vec<String> = (0..300).map(|i| format!("l{}", i * 3 % 17)).collect();
+        let new: Vec<String> = (0..320).map(|i| format!("l{}", i * 5 % 13)).collect();
+        let ops = diff_lines(&old, &new);
+        let (mut o, mut n) = (0, 0);
+        for op in &ops {
+            match *op {
+                LineOp::Keep(a, b) => {
+                    assert_eq!((a, b), (o, n));
+                    assert_eq!(old[a], new[b]);
+                    o += 1;
+                    n += 1;
+                }
+                LineOp::Remove(a) => {
+                    assert_eq!(a, o);
+                    o += 1;
+                }
+                LineOp::Add(b) => {
+                    assert_eq!(b, n);
+                    n += 1;
+                }
+            }
+        }
+        assert_eq!((o, n), (old.len(), new.len()));
     }
 
     #[test]
@@ -639,6 +1162,8 @@ mod tests {
         run(&["init", "-q", "-b", "trunk"]);
         run(&["config", "user.email", "oak@example.com"]);
         run(&["config", "user.name", "Oak"]);
+        // Windows installs set `core.autocrlf`; the test compares bytes.
+        run(&["config", "core.autocrlf", "false"]);
         std::fs::write(dir.path().join("kept.txt"), "a\n").unwrap();
         run(&["add", "kept.txt"]);
         run(&["commit", "-q", "-m", "one"]);
@@ -692,6 +1217,24 @@ mod tests {
             blame[0].uncommitted,
             "the work tree's line is not committed"
         );
+        assert_eq!(
+            repo.head_text(&repo.root.join("kept.txt")).as_deref(),
+            Some("a\n")
+        );
+        assert_eq!(repo.head_text(&repo.root.join("new.txt")), None);
+        assert_eq!(repo.upstream(), None);
+        // Revert: the modified file takes HEAD's text back.
+        let kept = repo.root.join("kept.txt");
+        let entry = repo
+            .status_entries()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.path == kept)
+            .unwrap();
+        repo.revert(&entry).unwrap();
+        assert_eq!(std::fs::read_to_string(&kept).unwrap(), "a\n");
+        assert!(!repo.status().unwrap().contains_key(&kept));
+        std::fs::write(&kept, "b\n").unwrap();
         assert_eq!(repo.ahead_behind(), None, "no upstream yet");
         let branches = repo.branches().unwrap();
         assert_eq!(branches.len(), 1);
@@ -717,6 +1260,7 @@ mod tests {
         std::fs::write(dir.path().join("kept.txt"), "c\n").unwrap();
         run(&["commit", "-q", "-am", "two"]);
         let clone = Repo::discover(&clone_path).unwrap();
+        assert_eq!(clone.upstream().as_deref(), Some("origin/trunk"));
         clone.fetch().unwrap();
         assert_eq!(
             clone.ahead_behind(),
