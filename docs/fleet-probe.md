@@ -659,6 +659,16 @@ dialog, and the idle Text Search popup collapses to its fields. The probe
 scenes' Oak steps no longer reach Delete: with no dialog the fixture lost a
 file per run (restored from the Recycle Bin).
 
+Batch 10 in Oak, first part: the gutter's line-status bars from `oak-git`'s
+hunks (the open hunk washed, ↓ ↑ Revert × working, Diff waiting for the
+Changed Files tab), and the branch tag's tooltip and menu (the local
+branches from `git branch`, the current one with its counts, a row checks
+out). Against Fleet: Oak's bar is 376–379.33 to Fleet's 375.33–380 (the
+island clips the 1.33 Fleet draws outside it), the popup pill 382.67–580 ×
+4 above the hunk to Fleet's 382–580 × 4, the hunk wash `#172E28`, the
+branch menu 773.33–932.67 × 34.67–105.33 to Fleet's 772.67–952.67 ×
+36.67–103.33 (Fleet's rows carry a + and a dot icon; Oak's are text).
+
 ### Batch 10: git
 
 Read off `README.md` (modified against HEAD: lines 23–24 added), the Git

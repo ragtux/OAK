@@ -2688,11 +2688,15 @@ impl Render for Workspace {
             },
             &theme,
             &m,
-            move |which, window, cx| {
-                entity.update(cx, |this, cx| {
-                    this.toggle_panel(Side::ALL[which], window, cx)
-                })
+            {
+                let entity = entity.clone();
+                move |which, window, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.toggle_panel(Side::ALL[which], window, cx)
+                    })
+                }
             },
+            move |at, window, cx| entity.update(cx, |this, cx| this.show_branches(at, window, cx)),
         );
         let left = self.panels[0].open;
         let bottom = self.panels[1].open;

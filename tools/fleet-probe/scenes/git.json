@@ -28,11 +28,14 @@
       ["move", 34, 55], ["click"], ["wait", 800]
     ],
     "oak": [
-      ["wait", 1000],
+      ["wait", 2500],
       ["shot", "line-status"],
-      ["move", 404, 139], ["wait", 400], ["shot", "line-status-hover"],
+      ["move", 378, 560], ["wait", 600], ["shot", "line-status-hover"],
+      ["click"], ["wait", 800], ["shot", "line-status-popup"],
+      ["move", 900, 300], ["click"], ["wait", 400],
       ["move", 138, 55], ["click"], ["wait", 800], ["shot", "git-tool"],
-      ["move", 1180, 18], ["wait", 800], ["shot", "branch-hover"],
+      ["move", 793, 18], ["wait", 1500], ["shot", "branch-hover"],
+      ["click"], ["wait", 800], ["shot", "branch-popup"], ["key", "escape"], ["wait", 400],
       ["move", 34, 55], ["click"], ["wait", 400]
     ]
   },

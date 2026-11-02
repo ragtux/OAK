@@ -297,8 +297,11 @@ which no source shows.
 
 Begun with what the shots on hand show (`docs/fleet-probe.md`, eighth
 pass): the `oak-git` crate (branch and per-file status through the `git`
-binary) and the Files tree's names coloured and badged by status. The
-rest waits for batch 10.
+binary) and the Files tree's names coloured and badged by status. Batch 10
+ran that evening (ninth pass) and gave the gutter's line-status bars with
+their popup and the branch tag's menu, both built; the Git tool, the
+History tool, blame and the Changed Files tab are measured and still to
+build.
 
 - Status colours in the tree and tabs (`vcs/*` icons, `tree.*`), line
   status in the gutter (`editor.showLineStatus`), branch tag in the toolbar

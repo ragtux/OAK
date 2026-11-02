@@ -11,8 +11,8 @@ use crate::assets::icon;
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
-    div, prelude::*, px, App, Div, ElementId, Hsla, Rgba, SharedString, Stateful, Window,
-    WindowControlArea,
+    div, prelude::*, px, App, Div, ElementId, Hsla, Pixels, Point, Rgba, SharedString, Stateful,
+    Window, WindowControlArea,
 };
 
 /// A 28 px icon button with a hover wash: Fleet's ghost button.
@@ -117,6 +117,7 @@ pub fn render(
     theme: &Theme,
     m: &Metrics,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    on_branch: impl Fn(Point<Pixels>, &mut Window, &mut App) + Clone + 'static,
 ) -> impl IntoElement {
     let toggle = |ix: usize, path: &str, label: &'static str| {
         let f = on_toggle.clone();
@@ -151,10 +152,19 @@ pub fn render(
                         .child(state.workspace_name.clone()),
                 )
                 .children(state.branch.clone().map(|branch| {
+                    // Fleet: a tooltip "Current Branch: main" and a click opens the
+                    // branch menu (ninth pass).
+                    let on_branch = on_branch.clone();
                     div()
+                        .id("branch-tag")
+                        // Above the toolbar's drag area, as the buttons are.
+                        .occlude()
                         .flex()
                         .items_center()
                         .ml(px(m.title_branch_gap))
+                        .cursor_pointer()
+                        .tooltip(Tooltip::text(format!("Current Branch: {branch}")))
+                        .on_click(move |event, window, cx| on_branch(event.position(), window, cx))
                         .child(icon("oak/git-branch", m.icon_size, theme.icon_primary))
                         .child(div().ml(px(m.title_branch_icon_gap)).child(branch))
                 })),

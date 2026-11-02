@@ -112,11 +112,13 @@ impl Repo {
 /// One changed run of lines in a file against HEAD, for the gutter's line
 /// status (`editor.showLineStatus`). Rows are zero-based in the current
 /// text; a deletion is the row the removed lines sat before, with no rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hunk {
     pub row: usize,
     pub rows: usize,
     pub kind: HunkKind,
+    /// The lines HEAD had there (what Revert puts back).
+    pub old: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,9 +155,16 @@ impl Repo {
 
 /// Parses the `@@ -a,b +c,d @@` lines of a unified diff with no context.
 pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
-    let mut hunks = Vec::new();
+    let mut hunks: Vec<Hunk> = Vec::new();
     for line in diff.lines() {
         let Some(rest) = line.strip_prefix("@@ -") else {
+            if let Some(old) = line.strip_prefix('-') {
+                if !line.starts_with("---") {
+                    if let Some(h) = hunks.last_mut() {
+                        h.old.push(old.to_string());
+                    }
+                }
+            }
             continue;
         };
         let Some((old, rest)) = rest.split_once(" +") else {
@@ -181,7 +190,12 @@ pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
         } else {
             (HunkKind::Modified, new_start - 1, new_len)
         };
-        hunks.push(Hunk { row, rows, kind });
+        hunks.push(Hunk {
+            row,
+            rows,
+            kind,
+            old: Vec::new(),
+        });
     }
     hunks
 }
@@ -238,6 +252,60 @@ impl Repo {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/")
+    }
+}
+
+/// A local branch (`git branch`), for the branch tag's menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Branch {
+    pub name: String,
+    pub current: bool,
+    /// Ahead of and behind its upstream, when it has one.
+    pub upstream: Option<AheadBehind>,
+}
+
+impl Repo {
+    /// The local branches, the checked-out one marked.
+    pub fn branches(&self) -> Result<Vec<Branch>> {
+        let out = git(
+            &self.root,
+            &[
+                "branch",
+                "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)",
+            ],
+        )?;
+        let text = String::from_utf8_lossy(&out);
+        let mut branches = Vec::new();
+        for line in text.lines() {
+            let mut parts = line.split('\0');
+            let (Some(name), Some(head), Some(upstream)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let upstream = if upstream.is_empty() {
+                None
+            } else {
+                let range = format!("{name}...{upstream}");
+                git(&self.root, &["rev-list", "--left-right", "--count", &range])
+                    .ok()
+                    .and_then(|o| parse_ahead_behind(&String::from_utf8_lossy(&o)))
+            };
+            branches.push(Branch {
+                name: name.to_string(),
+                current: head == "*",
+                upstream,
+            });
+        }
+        Ok(branches)
+    }
+
+    /// `git checkout <branch>`.
+    pub fn checkout(&self, branch: &str) -> Result<()> {
+        git(&self.root, &["checkout", "--quiet", branch]).map(|_| ())
     }
 }
 
@@ -401,22 +469,26 @@ mod tests {
                 Hunk {
                     row: 0,
                     rows: 1,
-                    kind: HunkKind::Modified
+                    kind: HunkKind::Modified,
+                    old: vec!["a".to_string()],
                 },
                 Hunk {
                     row: 3,
                     rows: 2,
-                    kind: HunkKind::Added
+                    kind: HunkKind::Added,
+                    old: vec![],
                 },
                 Hunk {
                     row: 10,
                     rows: 0,
-                    kind: HunkKind::Deleted
+                    kind: HunkKind::Deleted,
+                    old: vec!["p".to_string(), "q".to_string()],
                 },
                 Hunk {
                     row: 11,
                     rows: 4,
-                    kind: HunkKind::Modified
+                    kind: HunkKind::Modified,
+                    old: vec![],
                 },
             ]
         );
@@ -498,7 +570,8 @@ mod tests {
             vec![Hunk {
                 row: 0,
                 rows: 1,
-                kind: HunkKind::Modified
+                kind: HunkKind::Modified,
+                old: vec!["a".to_string()],
             }]
         );
         assert!(repo
@@ -518,6 +591,11 @@ mod tests {
             "the work tree's line is not committed"
         );
         assert_eq!(repo.ahead_behind(), None, "no upstream yet");
+        let branches = repo.branches().unwrap();
+        assert_eq!(branches.len(), 1);
+        assert_eq!(branches[0].name, "trunk");
+        assert!(branches[0].current);
+        assert_eq!(branches[0].upstream, None);
 
         // A clone has an upstream: one commit behind after the origin moves on.
         let clone_dir = tempfile::tempdir().unwrap();
@@ -540,6 +618,14 @@ mod tests {
         clone.fetch().unwrap();
         assert_eq!(
             clone.ahead_behind(),
+            Some(AheadBehind {
+                ahead: 0,
+                behind: 1
+            })
+        );
+        let branches = clone.branches().unwrap();
+        assert_eq!(
+            branches[0].upstream,
             Some(AheadBehind {
                 ahead: 0,
                 behind: 1

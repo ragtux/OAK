@@ -13,17 +13,24 @@
 use crate::actions::{PopupCancel, PopupConfirm, PopupDown, PopupLeft, PopupRight, PopupUp};
 use crate::assets::icon;
 use crate::theme::{Metrics, Theme};
+use std::rc::Rc;
+
 use gpui::{
     deferred, div, point, prelude::*, px, Action, App, Bounds, BoxShadow, Context, ElementId,
     Entity, EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight,
     Pixels, Point, SharedString, Size, Subscription, TextRun, Window,
 };
 
+/// What a data row runs when chosen.
+pub type SelectFn = Rc<dyn Fn(&mut Window, &mut App)>;
+
 pub struct MenuItem {
     pub label: SharedString,
     pub shortcut: Option<SharedString>,
     pub action: Box<dyn Action>,
     pub enabled: bool,
+    /// Runs instead of `action` (a row made from data, such as a branch).
+    pub on_select: Option<SelectFn>,
 }
 
 pub enum MenuEntry {
@@ -45,7 +52,22 @@ impl MenuEntry {
             shortcut: crate::keymap::hint_for(cx, id).map(Into::into),
             action,
             enabled: true,
+            on_select: None,
         }))
+    }
+
+    /// A row that runs a closure (the branch tag's menu lists branches).
+    pub fn custom(
+        label: impl Into<SharedString>,
+        f: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> MenuEntry {
+        MenuEntry::Item(MenuItem {
+            label: label.into(),
+            shortcut: None,
+            action: Box::new(PopupCancel),
+            enabled: true,
+            on_select: Some(Rc::new(f)),
+        })
     }
 
     /// A row with its own label (the id gives the action and the chord).
@@ -64,6 +86,7 @@ impl MenuEntry {
             shortcut: None,
             action: Box::new(PopupCancel),
             enabled: false,
+            on_select: None,
         })
     }
 
@@ -81,6 +104,7 @@ impl MenuEntry {
                 shortcut: i.shortcut.clone(),
                 action: i.action.boxed_clone(),
                 enabled: i.enabled,
+                on_select: i.on_select.clone(),
             }),
             MenuEntry::Separator => MenuEntry::Separator,
             MenuEntry::Submenu { label, entries } => MenuEntry::Submenu {
@@ -237,8 +261,12 @@ impl ContextMenu {
         match self.entries.get(ix) {
             Some(MenuEntry::Item(item)) if item.enabled => {
                 let action = item.action.boxed_clone();
+                let custom = item.on_select.clone();
                 self.restore_focus(window, cx);
-                window.dispatch_action(action, cx);
+                match custom {
+                    Some(f) => f(window, cx),
+                    None => window.dispatch_action(action, cx),
+                }
                 cx.emit(MenuEvent::Activated);
             }
             Some(MenuEntry::Submenu { .. }) => self.open_child(ix, cx),

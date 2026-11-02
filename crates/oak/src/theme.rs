@@ -154,6 +154,23 @@ pub mod metrics {
     /// end (its centre 14.3 from the row's edge) holding a 6.67 px dot for a
     /// change or a glyph (`+` added, `?` untracked, 8–9 px tall; a 13 px
     /// semibold glyph is the estimate).
+    /// The gutter's git line status (ninth pass): a bar 1.33 outside the
+    /// island's left edge, 4.67 wide (5.33 under the pointer, 6.67 with its
+    /// popup open), hit within 4 of the edge; the popup pill 198 × 35.33,
+    /// its top 39.33 above the hunk and its left 6 inside the island.
+    pub const LINE_STATUS_X: f32 = -1.33;
+    pub const LINE_STATUS_WIDTH: f32 = 4.67;
+    pub const LINE_STATUS_HOVER_WIDTH: f32 = 5.33;
+    pub const LINE_STATUS_ACTIVE_WIDTH: f32 = 6.67;
+    pub const LINE_STATUS_HIT: f32 = 4.;
+    pub const LINE_STATUS_POPUP_ABOVE: f32 = 39.33;
+    pub const LINE_STATUS_POPUP_LEFT: f32 = 6.;
+    pub const LINE_STATUS_POPUP_WIDTH: f32 = 198.;
+    pub const LINE_STATUS_POPUP_HEIGHT: f32 = 35.33;
+    /// The branch tag's menu (ninth pass): 0.67 under the toolbar; its left
+    /// about 20 left of the click (the tag's icon, estimate).
+    pub const BRANCH_MENU_GAP: f32 = 0.67;
+    pub const BRANCH_MENU_OFFSET_X: f32 = 20.;
     pub const TREE_BADGE_BOX: f32 = 16.;
     pub const TREE_BADGE_DOT: f32 = 6.67;
     pub const TREE_BADGE_FONT: f32 = 13.;
@@ -545,6 +562,17 @@ scaled_metrics!(
     fold_chevron_x = FOLD_CHEVRON_X,
     breakpoint_hint_x = BREAKPOINT_HINT_X,
     breakpoint_hint_size = BREAKPOINT_HINT_SIZE,
+    line_status_x = LINE_STATUS_X,
+    line_status_width = LINE_STATUS_WIDTH,
+    line_status_hover_width = LINE_STATUS_HOVER_WIDTH,
+    line_status_active_width = LINE_STATUS_ACTIVE_WIDTH,
+    line_status_hit = LINE_STATUS_HIT,
+    line_status_popup_above = LINE_STATUS_POPUP_ABOVE,
+    line_status_popup_left = LINE_STATUS_POPUP_LEFT,
+    line_status_popup_width = LINE_STATUS_POPUP_WIDTH,
+    line_status_popup_height = LINE_STATUS_POPUP_HEIGHT,
+    branch_menu_gap = BRANCH_MENU_GAP,
+    branch_menu_offset_x = BRANCH_MENU_OFFSET_X,
     tree_badge_box = TREE_BADGE_BOX,
     tree_badge_dot = TREE_BADGE_DOT,
     tree_badge_font = TREE_BADGE_FONT,
@@ -834,6 +862,14 @@ pub struct Theme {
     pub git_modified_text: Hsla,
     pub git_deleted_text: Hsla,
     pub git_conflict_text: Hsla,
+    // editor.gitDiff.background.*: the gutter's line-status bars, the blame
+    // column's bar; the open hunk's wash is the added colour at 20 %
+    // (`#172E29` over the island, ninth pass; no key names it, estimate).
+    pub git_added_bg: Hsla,
+    pub git_modified_bg: Hsla,
+    pub git_deleted_bg: Hsla,
+    pub git_blame_bg: Hsla,
+    pub git_hunk_wash: Hsla,
     pub icon_green: Hsla,
     pub icon_blue: Hsla,
     pub icon_red: Hsla,
@@ -1162,6 +1198,27 @@ impl Theme {
             git_modified_text: c("editor.gitDiff.text.modified", Color::rgb(0x71, 0xA3, 0xEF)),
             git_deleted_text: c("editor.gitDiff.text.deleted", Color::rgb(0xF8, 0x7C, 0x88)),
             git_conflict_text: c("editor.gitDiff.text.conflict", Color::rgb(0xCD, 0x98, 0x4D)),
+            git_added_bg: c(
+                "editor.gitDiff.background.added",
+                Color::rgb(0x14, 0x83, 0x5E),
+            ),
+            git_modified_bg: c(
+                "editor.gitDiff.background.modified",
+                Color::rgb(0x08, 0x70, 0xE4),
+            ),
+            git_deleted_bg: c(
+                "editor.gitDiff.background.deleted",
+                Color::rgb(0xD7, 0x32, 0x51),
+            ),
+            git_blame_bg: c(
+                "editor.gitDiff.background.blame",
+                Color::rgb(0x9F, 0x68, 0x0C),
+            ),
+            git_hunk_wash: c(
+                "editor.gitDiff.background.added",
+                Color::rgb(0x14, 0x83, 0x5E),
+            )
+            .opacity(0.2),
             icon_green: c("icon.background.green", Color::rgb(0x16, 0x90, 0x68)),
             icon_blue: c("icon.background.blue", Color::rgb(0x2A, 0x7D, 0xEB)),
             icon_red: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)),

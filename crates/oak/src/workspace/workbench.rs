@@ -439,6 +439,64 @@ impl Workspace {
                 .update(cx, |tree, cx| tree.set_statuses(statuses, cx)),
             Err(e) => eprintln!("oak: {e:#}"),
         }
+        // The open files' line status (`editor.showLineStatus`).
+        let show = Self::settings(cx).editor_show_line_status();
+        for doc in self.documents.clone() {
+            let Some(path) = doc.read(cx).path.clone() else {
+                continue;
+            };
+            let hunks = if show {
+                repo.line_status(&path).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            doc.update(cx, |d, cx| d.set_hunks(hunks, cx));
+        }
+    }
+
+    /// The branch tag's menu (ninth pass): "Create New Branch..." (later),
+    /// then every local branch, the current one with a dot and its counts
+    /// against the upstream; a row checks its branch out.
+    pub(super) fn show_branches(
+        &mut self,
+        at: Point<Pixels>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let m = *cx.global::<Metrics>();
+        let mut entries = vec![MenuEntry::disabled("Create New Branch...")];
+        match repo.branches() {
+            Ok(branches) => {
+                for b in branches {
+                    let label = match (b.current, b.upstream) {
+                        (true, Some(u)) => format!("● {} ↑{} ↓{}", b.name, u.ahead, u.behind),
+                        (true, None) => format!("● {}", b.name),
+                        (false, _) => format!("   {}", b.name),
+                    };
+                    let repo = repo.clone();
+                    let name = b.name.clone();
+                    let weak = cx.weak_entity();
+                    entries.push(MenuEntry::custom(label, move |_, cx| {
+                        if let Err(e) = repo.checkout(&name) {
+                            eprintln!("oak: {e:#}");
+                        }
+                        let _ = weak.update(cx, |this, cx| {
+                            this.refresh_git(cx);
+                            this.files_changed(cx);
+                        });
+                    }));
+                }
+            }
+            Err(e) => eprintln!("oak: {e:#}"),
+        }
+        let position = point(
+            at.x - px(m.branch_menu_offset_x),
+            px(m.toolbar_height + m.branch_menu_gap),
+        );
+        self.open_menu(entries, position, None, cx);
     }
 
     /// `git.autoFetch`: a `git fetch` every `git.fetchInterval` minutes, off

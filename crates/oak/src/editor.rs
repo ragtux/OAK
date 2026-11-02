@@ -20,12 +20,13 @@ use crate::theme::{
     Metrics, Theme,
 };
 use gpui::{
-    div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, ContentMask,
-    Context, Corners, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle,
-    FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    ShapedLine, SharedString, Style, Task, TextAlign, TextRun, UTF16Selection, Window,
+    deferred, div, fill, point, prelude::*, px, relative, size, App, Bounds, BoxShadow,
+    ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Font,
+    FontFeatures, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
+    InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style, Task, TextAlign, TextRun,
+    UTF16Selection, Window,
 };
 use oak_settings::{CaretShape, LineNumbers, Settings};
 use oak_syntax::{enclosing_heads, Fold, Language};
@@ -67,6 +68,15 @@ pub struct TextMetrics {
     pub fold_chevron_x: f32,
     pub breakpoint_hint_x: f32,
     pub breakpoint_hint_size: f32,
+    pub line_status_x: f32,
+    pub line_status_width: f32,
+    pub line_status_hover_width: f32,
+    pub line_status_active_width: f32,
+    pub line_status_hit: f32,
+    pub line_status_popup_above: f32,
+    pub line_status_popup_left: f32,
+    pub line_status_popup_width: f32,
+    pub line_status_popup_height: f32,
     pub icon_size: f32,
     pub folded_mark_cells: f32,
     pub folded_mark_radius: f32,
@@ -170,6 +180,15 @@ impl TextMetrics {
             fold_chevron_x: m.fold_chevron_x,
             breakpoint_hint_x: m.breakpoint_hint_x,
             breakpoint_hint_size: m.breakpoint_hint_size,
+            line_status_x: m.line_status_x,
+            line_status_width: m.line_status_width,
+            line_status_hover_width: m.line_status_hover_width,
+            line_status_active_width: m.line_status_active_width,
+            line_status_hit: m.line_status_hit,
+            line_status_popup_above: m.line_status_popup_above,
+            line_status_popup_left: m.line_status_popup_left,
+            line_status_popup_width: m.line_status_popup_width,
+            line_status_popup_height: m.line_status_popup_height,
             icon_size: m.icon_size,
             folded_mark_cells: m.folded_mark_cells,
             folded_mark_radius: m.folded_mark_radius,
@@ -397,6 +416,10 @@ pub struct EditorView {
     /// The pointer is over the gutter: fold chevrons show.
     gutter_hovered: bool,
     hovered_row: Option<usize>,
+    /// The git line-status bar under the pointer, and the one whose popup
+    /// (↓ ↑ Revert Diff ×) is open, as indices into the document's hunks.
+    status_hovered: Option<usize>,
+    status_popup: Option<usize>,
     /// The caret's blink: shown, and the epoch of the running timer.
     caret_visible: bool,
     blink_epoch: u64,
@@ -453,12 +476,12 @@ impl EditorView {
     pub fn new(document: Entity<Document>, cx: &mut Context<Self>) -> Self {
         let cursor = Cursor::new(&document.read(cx).buffer);
         // Any view's edit repaints this one, and tells the workspace.
-        cx.subscribe(&document, |this, _doc, event: &DocumentEvent, cx| {
-            cx.emit(match event {
-                DocumentEvent::Changed => EditorEvent::Changed,
-                DocumentEvent::Saved => EditorEvent::Saved,
-            });
-            let _ = this;
+        cx.subscribe(&document, |_, _doc, event: &DocumentEvent, cx| {
+            match event {
+                DocumentEvent::Changed => cx.emit(EditorEvent::Changed),
+                DocumentEvent::Saved => cx.emit(EditorEvent::Saved),
+                DocumentEvent::StatusChanged => {}
+            }
             cx.notify();
         })
         .detach();
@@ -482,6 +505,8 @@ impl EditorView {
             expand_last: None,
             gutter_hovered: false,
             hovered_row: None,
+            status_hovered: None,
+            status_popup: None,
             caret_visible: true,
             blink_epoch: 0,
             blink_task: None,
@@ -1522,6 +1547,11 @@ impl EditorView {
         let y = y_in + self.scroll_y;
         let d = (y / lh).floor().max(0.) as usize;
         let (row, seg) = self.map.at(d);
+        if position.x - bounds.origin.x < px(self.tm.line_status_hit) {
+            if let Some(ix) = self.hunk_at(row, cx) {
+                return Hit::LineStatus(ix);
+            }
+        }
         let x_in = position.x - bounds.origin.x - self.text_offset();
         let chevron_left = px(self.tm.fold_chevron_x);
         if x_in >= chevron_left && x_in < chevron_left + px(self.tm.icon_size) && seg == 0 {
@@ -1592,7 +1622,18 @@ impl EditorView {
         let shift = event.modifiers.shift;
         let alt = event.modifiers.alt;
         let clicks = event.click_count;
+        if !matches!(hit, Hit::LineStatus(_)) && self.status_popup.take().is_some() {
+            cx.notify();
+        }
         match hit {
+            Hit::LineStatus(ix) => {
+                self.status_popup = if self.status_popup == Some(ix) {
+                    None
+                } else {
+                    Some(ix)
+                };
+                cx.notify();
+            }
             Hit::Chevron(row) => {
                 if self.map.fold_at_head(row).is_some() {
                     self.unfold_row(row, cx);
@@ -1673,11 +1714,148 @@ impl EditorView {
         } else {
             None
         };
-        if in_gutter != self.gutter_hovered || row != self.hovered_row {
+        let status = match row {
+            Some(r) if position.x - bounds.origin.x < px(self.tm.line_status_hit) => {
+                self.hunk_at(r, cx)
+            }
+            _ => None,
+        };
+        if in_gutter != self.gutter_hovered
+            || row != self.hovered_row
+            || status != self.status_hovered
+        {
             self.gutter_hovered = in_gutter;
             self.hovered_row = row;
+            self.status_hovered = status;
             cx.notify();
         }
+    }
+
+    /// The hunk whose rows hold `row` (a deletion sits on its row).
+    fn hunk_at(&self, row: usize, cx: &App) -> Option<usize> {
+        self.document
+            .read(cx)
+            .hunks
+            .iter()
+            .position(|h| hunk_covers(h, row))
+    }
+
+    /// The line-status popup: ↓ and ↑ step through the hunks, Revert puts
+    /// HEAD's lines back, Diff opens the Changed Files tab (M4, later), ×
+    /// closes (ninth pass: a 198 × 35.33 popup-coloured pill 39.33 above the
+    /// hunk, 6 inside the island).
+    fn render_status_popup(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let ix = self.status_popup?;
+        let (row, count) = {
+            let doc = self.document.read(cx);
+            (doc.hunks.get(ix)?.row, doc.hunks.len())
+        };
+        let theme = cx.global::<Theme>().clone();
+        let tm = self.tm;
+        let lh = self.line_height();
+        let d = self.map.display_row(row, 0);
+        let top = lh * d as f32 - self.scroll_y - px(tm.line_status_popup_above);
+        let m = *cx.global::<Metrics>();
+        let button = |id: &'static str, label: &'static str, enabled: bool| {
+            div()
+                .id(id)
+                .h_full()
+                .px(px(m.popup_row_pad_x))
+                .flex()
+                .items_center()
+                .rounded(px(m.popup_row_radius))
+                .text_color(if enabled {
+                    theme.popup_text
+                } else {
+                    theme.text_secondary
+                })
+                .when(enabled, |d| {
+                    d.cursor_pointer().hover(|s| s.bg(theme.list_bg_hovered))
+                })
+                .child(label)
+        };
+        let separator = || {
+            div()
+                .w(px(1.))
+                .h(px(m.find_bar_separator_height))
+                .mx(px(m.find_bar_separator_gap_left))
+                .bg(theme.separator)
+        };
+        Some(
+            deferred(
+                div()
+                    .id("line-status-popup")
+                    .occlude()
+                    .absolute()
+                    .top(top)
+                    .left(px(tm.line_status_popup_left))
+                    .w(px(tm.line_status_popup_width))
+                    .h(px(tm.line_status_popup_height))
+                    .px(px(m.popup_pad))
+                    .flex()
+                    .items_center()
+                    .rounded(px(m.popup_radius))
+                    .border_1()
+                    .border_color(theme.popup_border)
+                    .bg(theme.popup_bg)
+                    .font_family(theme.ui_font.clone())
+                    .text_size(px(m.ui_font_size))
+                    .shadow(vec![BoxShadow {
+                        color: theme.shadow_medium,
+                        offset: point(px(0.), px(m.popup_shadow_offset_y)),
+                        blur_radius: px(m.popup_shadow_blur),
+                        spread_radius: px(0.),
+                    }])
+                    .child(
+                        button("status-next", "↓", ix + 1 < count).on_click(
+                            cx.listener(move |this, _, _, cx| this.step_status_popup(1, cx)),
+                        ),
+                    )
+                    .child(button("status-prev", "↑", ix > 0).on_click(
+                        cx.listener(move |this, _, _, cx| this.step_status_popup(-1, cx)),
+                    ))
+                    .child(separator())
+                    .child(
+                        button("status-revert", "Revert", true).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.document.update(cx, |d, cx| d.revert_hunk(ix, cx));
+                                this.status_popup = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(button("status-diff", "Diff", false))
+                    .child(separator())
+                    .child(button("status-close", "×", true).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.status_popup = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any_element(),
+        )
+    }
+
+    fn step_status_popup(&mut self, by: isize, cx: &mut Context<Self>) {
+        let Some(ix) = self.status_popup else {
+            return;
+        };
+        let next = ix as isize + by;
+        let (row, count) = {
+            let doc = self.document.read(cx);
+            let Some(h) = doc.hunks.get(next.max(0) as usize) else {
+                return;
+            };
+            (h.row, doc.hunks.len())
+        };
+        if next < 0 || next as usize >= count {
+            return;
+        }
+        self.status_popup = Some(next as usize);
+        let offset = self.document.read(cx).buffer.line_to_char(row);
+        self.reveal(offset, cx);
+        cx.notify();
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
@@ -1715,6 +1893,17 @@ enum Hit {
     Chevron(usize),
     FoldedMark(usize),
     Sticky(usize),
+    /// A git line-status bar on the island's edge (the hunk's index).
+    LineStatus(usize),
+}
+
+/// Whether a hunk's rows hold `row`; a deletion sits on the row after it.
+fn hunk_covers(hunk: &oak_git::Hunk, row: usize) -> bool {
+    if hunk.rows == 0 {
+        hunk.row == row
+    } else {
+        row >= hunk.row && row < hunk.row + hunk.rows
+    }
 }
 
 /// Whether `row` heads a foldable block, asked of the document.
@@ -1894,7 +2083,9 @@ impl EntityInputHandler for EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status_popup = self.render_status_popup(cx);
         div()
+            .children(status_popup)
             .key_context("Editor")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::move_up))
@@ -2745,6 +2936,14 @@ impl Element for EditorElement {
                     ));
                 }
             }
+            let (hunks, status_popup, status_hovered) = {
+                let e = self.editor.read(cx);
+                (
+                    e.document.read(cx).hunks.clone(),
+                    e.status_popup,
+                    e.status_hovered,
+                )
+            };
             let first_display = (prepaint.scroll_y / lh).floor().max(0.) as usize;
             for (display_row, (laid, (line_start, line_end))) in
                 (first_display..).zip(prepaint.rows.iter().zip(buffer_rows))
@@ -2765,6 +2964,47 @@ impl Element for EditorElement {
                     };
                     window.paint_quad(fill(
                         Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, lh)),
+                        color,
+                    ));
+                }
+                // The git line status (ninth pass): a bar on the island's edge for
+                // each changed run, wider under the pointer and with its popup
+                // open; the open hunk's rows wash across the text.
+                for (ix, hunk) in hunks.iter().enumerate() {
+                    if !hunk_covers(hunk, laid.row) {
+                        continue;
+                    }
+                    if status_popup == Some(ix) {
+                        let left =
+                            bounds.origin.x + px(tm.line_status_x + tm.line_status_active_width);
+                        window.paint_quad(fill(
+                            Bounds::new(point(left, y), size(right - left, lh)),
+                            theme.git_hunk_wash,
+                        ));
+                    }
+                    let width = if status_popup == Some(ix) {
+                        tm.line_status_active_width
+                    } else if status_hovered == Some(ix) {
+                        tm.line_status_hover_width
+                    } else {
+                        tm.line_status_width
+                    };
+                    let color = match hunk.kind {
+                        oak_git::HunkKind::Added => theme.git_added_bg,
+                        oak_git::HunkKind::Modified => theme.git_modified_bg,
+                        oak_git::HunkKind::Deleted => theme.git_deleted_bg,
+                    };
+                    // A deletion has no rows: a short mark on the boundary (estimate).
+                    let (top, height) = if hunk.rows == 0 {
+                        (y - px(1.33), px(2.67))
+                    } else {
+                        (y, lh)
+                    };
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(bounds.origin.x + px(tm.line_status_x), top),
+                            size(px(width), height),
+                        ),
                         color,
                     ));
                 }

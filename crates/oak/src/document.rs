@@ -14,6 +14,8 @@ pub enum DocumentEvent {
     /// The text or the dirty state changed; tabs and the title bar re-read it.
     Changed,
     Saved,
+    /// The git line status was read again; the editor repaints its gutter.
+    StatusChanged,
 }
 
 /// What the indentation was derived from, to notice a settings change.
@@ -43,6 +45,10 @@ pub struct Document {
     /// The file changed on disk while this text had unsaved edits: the editor
     /// shows Fleet's banner until Overwrite or Reload.
     pub conflict: bool,
+    /// The changed runs against HEAD (`editor.showLineStatus`), read with the
+    /// git status; against the saved text, not the unsaved edits (estimate:
+    /// Fleet diffs the buffer).
+    pub hunks: Vec<oak_git::Hunk>,
 }
 
 fn modified_time(path: &std::path::Path) -> Option<std::time::SystemTime> {
@@ -73,10 +79,41 @@ impl Document {
             indent_source: None,
             disk_modified: None,
             conflict: false,
+            hunks: Vec::new(),
         };
         doc.disk_modified = doc.path.as_deref().and_then(modified_time);
         doc.refresh_indent(settings);
         doc
+    }
+
+    pub fn set_hunks(&mut self, hunks: Vec<oak_git::Hunk>, cx: &mut Context<Self>) {
+        if self.hunks != hunks {
+            self.hunks = hunks;
+            cx.emit(DocumentEvent::StatusChanged);
+            cx.notify();
+        }
+    }
+
+    /// Revert on the line-status popup: HEAD's lines take the hunk's place
+    /// (the whole text is replaced in one edit, an approximation).
+    pub fn revert_hunk(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(hunk) = self.hunks.get(ix).cloned() else {
+            return;
+        };
+        let text = self.buffer.text();
+        let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        let end = (hunk.row + hunk.rows).min(lines.len());
+        let row = hunk.row.min(lines.len());
+        lines.splice(row..end, hunk.old.iter().cloned());
+        let new_text = lines.join("\n");
+        self.edit(cx, |buffer| buffer.set_text(&new_text));
+        let shift = hunk.old.len() as isize - hunk.rows as isize;
+        self.hunks.remove(ix);
+        for h in self.hunks.iter_mut().filter(|h| h.row > hunk.row) {
+            h.row = (h.row as isize + shift).max(0) as usize;
+        }
+        cx.emit(DocumentEvent::StatusChanged);
+        cx.notify();
     }
 
     /// The file on disk is newer (or older) than what was read or written.
