@@ -31,6 +31,7 @@ use gpui::{
     MouseButton, Pixels, Point, Render, ScrollHandle, SharedString, Stateful, Window,
 };
 use oak_search::FileIndex;
+use oak_settings::AutoSave;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -406,6 +407,10 @@ fn tab_body(
 pub struct Workspace {
     root: PathBuf,
     branch: Option<SharedString>,
+    /// `showShortcuts`: the chord just pressed, shown in the overlay pill for
+    /// a moment; the counter tells a stale timer from a fresh one.
+    shortcut_hint: Option<SharedString>,
+    shortcut_generation: u64,
     /// The git repository above the root, when git finds one (M4).
     repo: Option<oak_git::Repo>,
     /// Disk-poll ticks, for the slower git status refresh.
@@ -512,6 +517,8 @@ impl Workspace {
         let mut this = Workspace {
             branch: git_branch(&root).map(Into::into),
             repo: oak_git::Repo::discover(&root),
+            shortcut_hint: None,
+            shortcut_generation: 0,
             disk_ticks: 0,
             root,
             file_tree,
@@ -543,6 +550,15 @@ impl Workspace {
         this.init_workbench(window, cx);
         this.refresh_git(cx);
         this.watch_disk(cx);
+        this.watch_shortcuts(cx);
+        // `autoSave: "OnFocus"`: every dirty document is written when the
+        // window loses the focus.
+        cx.observe_window_activation(window, |this, window, cx| {
+            if !window.is_window_active() && Self::settings(cx).auto_save() == AutoSave::OnFocus {
+                this.save_dirty(cx);
+            }
+        })
+        .detach();
         for path in open {
             this.open_path(path, false, cx);
         }
@@ -676,7 +692,7 @@ impl Workspace {
     /// document is written.
     fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
         let settings = Self::settings(cx);
-        if !settings.auto_save() {
+        if settings.auto_save() != AutoSave::AfterDelay {
             return;
         }
         let delay = Duration::from_millis(settings.auto_save_delay_ms());
@@ -1343,46 +1359,18 @@ impl Workspace {
         self.open_prompt(PromptKind::Rename { path }, &name, Vec::new(), window, cx);
     }
 
-    /// `files/delete`: confirms in Fleet's dialog, then removes the files (every
-    /// selected row when the tree has the focus) and closes their tabs.
+    /// `files/delete`: Fleet removes the files at once, no dialog (ninth
+    /// pass); Oak sends them to the system trash (every selected row when the
+    /// tree has the focus) and closes their tabs.
     fn delete_file(&mut self, _: &DeleteFile, window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.target_files(window, cx);
-        if paths.is_empty() {
-            return;
+        for path in &paths {
+            self.delete_path(path, cx);
         }
-        let title = if paths.len() == 1 {
-            let name = paths[0]
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            format!("Delete {name}?")
-        } else {
-            format!("Delete {} items?", paths.len())
-        };
-        self.confirm(
-            title,
-            Some("The files are removed from disk.".into()),
-            vec![
-                DialogButton::dangerous("Delete"),
-                DialogButton::secondary("Cancel"),
-            ],
-            cx,
-            move |this, choice, cx| {
-                if choice == 0 {
-                    for path in &paths {
-                        this.delete_path(path, cx);
-                    }
-                }
-            },
-        );
     }
 
     fn delete_path(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let result = if path.is_dir() {
-            std::fs::remove_dir_all(path)
-        } else {
-            std::fs::remove_file(path)
-        };
+        let result = trash::delete(path).map_err(|e| std::io::Error::other(e.to_string()));
         if let Err(e) = result {
             self.notify_error("Cannot delete", format!("{}: {e}", path.display()), cx);
             return;

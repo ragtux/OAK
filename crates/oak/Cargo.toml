@@ -19,6 +19,7 @@ oak-keymap.workspace = true
 oak-settings.workspace = true
 oak-search.workspace = true
 oak-git.workspace = true
+trash.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 gpui.workspace = true

@@ -298,6 +298,9 @@ pub mod metrics {
     /// Replace and Replace All buttons 8.67 apart, 11.33 above the bottom.
     pub const SEARCH_MASK_WIDTH: f32 = 164.;
     pub const SEARCH_COUNT_ROW: f32 = 28.;
+    /// Text Search with nothing typed: the popup ends 16.67 under the folder
+    /// row (ninth pass: 170.67 to 187.33).
+    pub const SEARCH_IDLE_BOTTOM_PAD: f32 = 16.67;
     pub const GOTO_BUTTONS_PAD: f32 = 11.33;
     pub const GOTO_BUTTON_GAP: f32 = 8.67;
     /// Estimates left in the Goto panel: the preview box's radius and its
@@ -410,6 +413,26 @@ pub mod metrics {
     pub const SETTINGS_CHECKBOX_GAP: f32 = 8.;
     pub const SETTINGS_DESCRIPTION_LINE: f32 = 17.;
     pub const SETTINGS_CARD_GAP: f32 = 20.67;
+    /// The modified-value bar (ninth pass): 2 wide at the card's left edge, 24
+    /// tall on the row. The dropdown list: 2.33 outside the control each side,
+    /// 3.33 under it, 4.67 padding, rows 26.67 apart with a 24 px wash.
+    pub const SETTINGS_MODIFIED_WIDTH: f32 = 2.;
+    pub const SETTINGS_MODIFIED_HEIGHT: f32 = 24.;
+    pub const SETTINGS_OPTIONS_OVERHANG: f32 = 2.33;
+    pub const SETTINGS_OPTIONS_GAP: f32 = 0.67;
+    pub const SETTINGS_OPTIONS_PAD: f32 = 1.;
+    pub const SETTINGS_OPTIONS_PAD_X: f32 = 6.33;
+    pub const SETTINGS_OPTION_GAP: f32 = 2.67;
+    pub const SETTINGS_OPTION_ROW: f32 = 26.67;
+    pub const SETTINGS_OPTION_WASH: f32 = 24.;
+    /// The `showShortcuts` pill (ninth pass): 56 tall, its bottom 64 above the
+    /// window's, centred; 146.67 wide for "Ctrl+Shift+F" at about 18 px, so
+    /// 23 of side padding (estimate); radius 8 (estimate).
+    pub const SHORTCUT_OVERLAY_HEIGHT: f32 = 56.;
+    pub const SHORTCUT_OVERLAY_BOTTOM: f32 = 64.;
+    pub const SHORTCUT_OVERLAY_PAD_X: f32 = 23.;
+    pub const SHORTCUT_OVERLAY_FONT: f32 = 18.;
+    pub const SHORTCUT_OVERLAY_RADIUS: f32 = 8.;
     /// The Notifications popup (batch 7): under the bell at the toolbar's
     /// right end, 318.67 wide with its right edge 6.67 from the window's, a
     /// 32 px header (the title 10.67 in, three 24 px icon buttons at the right)
@@ -611,6 +634,7 @@ scaled_metrics!(
     goto_separator_below = GOTO_SEPARATOR_BELOW,
     search_mask_width = SEARCH_MASK_WIDTH,
     search_count_row = SEARCH_COUNT_ROW,
+    search_idle_bottom_pad = SEARCH_IDLE_BOTTOM_PAD,
     goto_buttons_pad = GOTO_BUTTONS_PAD,
     goto_button_gap = GOTO_BUTTON_GAP,
     goto_preview_radius = GOTO_PREVIEW_RADIUS,
@@ -684,6 +708,20 @@ scaled_metrics!(
     settings_checkbox_gap = SETTINGS_CHECKBOX_GAP,
     settings_description_line = SETTINGS_DESCRIPTION_LINE,
     settings_card_gap = SETTINGS_CARD_GAP,
+    settings_modified_width = SETTINGS_MODIFIED_WIDTH,
+    settings_modified_height = SETTINGS_MODIFIED_HEIGHT,
+    settings_options_overhang = SETTINGS_OPTIONS_OVERHANG,
+    settings_options_gap = SETTINGS_OPTIONS_GAP,
+    settings_options_pad = SETTINGS_OPTIONS_PAD,
+    settings_options_pad_x = SETTINGS_OPTIONS_PAD_X,
+    settings_option_gap = SETTINGS_OPTION_GAP,
+    settings_option_row = SETTINGS_OPTION_ROW,
+    settings_option_wash = SETTINGS_OPTION_WASH,
+    shortcut_overlay_height = SHORTCUT_OVERLAY_HEIGHT,
+    shortcut_overlay_bottom = SHORTCUT_OVERLAY_BOTTOM,
+    shortcut_overlay_pad_x = SHORTCUT_OVERLAY_PAD_X,
+    shortcut_overlay_font = SHORTCUT_OVERLAY_FONT,
+    shortcut_overlay_radius = SHORTCUT_OVERLAY_RADIUS,
     notifications_width = NOTIFICATIONS_WIDTH,
     notifications_top_gap = NOTIFICATIONS_TOP_GAP,
     notifications_right = NOTIFICATIONS_RIGHT,
@@ -804,6 +842,16 @@ pub struct Theme {
     /// (read off the `fold` scene's hover shot; no theme key names it, so
     /// `icon.background.red` with the opacity is an estimate).
     pub breakpoint_hint: Hsla,
+    /// `settings.modified.indicator`: the Settings tool's bar beside a row
+    /// whose value Oak's file sets (the shot read `#BD8128`; no key gives
+    /// that, so the named key stands in, an estimate).
+    pub settings_modified: Hsla,
+    /// The `showShortcuts` overlay (ninth pass): a light pill with dark text,
+    /// `#B8B9B9` and `#090909` read off the shot; `shortcut.background` and
+    /// `shortcut.text` are the popup hints' colours and do not match, so
+    /// these have no key (estimate).
+    pub shortcut_overlay_bg: Hsla,
+    pub shortcut_overlay_text: Hsla,
     /// `editor.foldedMark.*`: the `{…}` box on a folded line.
     pub folded_mark_bg: Hsla,
     pub folded_mark_text: Hsla,
@@ -1106,6 +1154,9 @@ impl Theme {
                 "editor.foldIndicator.icon.hovered",
                 Color::rgb(0x7A, 0x7F, 0x86),
             ),
+            settings_modified: c("settings.modified.indicator", Color::rgb(0xCD, 0xA2, 0x61)),
+            shortcut_overlay_bg: to_hsla(Color::rgb(0xB8, 0xB9, 0xB9)),
+            shortcut_overlay_text: to_hsla(Color::rgb(0x09, 0x09, 0x09)),
             breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.28),
             git_added_text: c("editor.gitDiff.text.added", Color::rgb(0x69, 0xB0, 0x90)),
             git_modified_text: c("editor.gitDiff.text.modified", Color::rgb(0x71, 0xA3, 0xEF)),

@@ -18,8 +18,7 @@ use crate::settings_schema::{option_label, values_equal, Item, Kind, SECTIONS};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     deferred, div, point, prelude::*, px, App, BoxShadow, Context, ElementId, Entity, FocusHandle,
-    Focusable, FontWeight, HighlightStyle, Pixels, Point, ScrollHandle, SharedString, StyledText,
-    Window,
+    Focusable, FontWeight, HighlightStyle, ScrollHandle, SharedString, StyledText, Window,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,8 +37,8 @@ pub struct SettingsView {
     selected: TreeRow,
     /// The text fields, one per key, made when first shown.
     fields: HashMap<&'static str, Entity<TextInput>>,
-    /// An open dropdown: its key and where its list hangs.
-    dropdown: Option<(&'static str, Point<Pixels>)>,
+    /// The key of the open dropdown; its list hangs under the control.
+    dropdown: Option<&'static str>,
     content_scroll: ScrollHandle,
     tree_scroll: ScrollHandle,
     focus_handle: FocusHandle,
@@ -371,6 +370,16 @@ impl SettingsView {
     ) -> gpui::AnyElement {
         let entity = cx.entity();
         let value = current(item, cx);
+        let modified = cx.global::<AppSettings>().settings.is_own(item.key);
+        let mark = modified.then(|| {
+            div()
+                .absolute()
+                .left_0()
+                .top(px((m.settings_row - m.settings_modified_height) / 2.))
+                .w(px(m.settings_modified_width))
+                .h(px(m.settings_modified_height))
+                .bg(theme.settings_modified)
+        });
         let indent = if item.indent {
             m.settings_card_pad_x
         } else {
@@ -384,6 +393,8 @@ impl SettingsView {
                 let toggle = entity.clone();
                 return div()
                     .min_h(px(Self::item_height(item, m)))
+                    .relative()
+                    .children(mark)
                     .pl(px(m.settings_card_pad_x + indent))
                     .pr(px(m.settings_card_pad_right))
                     .flex_shrink_0()
@@ -454,12 +465,16 @@ impl SettingsView {
             Kind::Dropdown(options) => {
                 let key = item.key;
                 let open = entity.clone();
+                let list = (self.dropdown == Some(key))
+                    .then(|| self.render_options(item, options, &value, theme, m, cx));
                 div()
                     .id(ElementId::Name(
                         format!("settings-drop-{}", item.key).into(),
                     ))
                     .flex_1()
                     .min_w_0()
+                    .relative()
+                    .children(list)
                     .h(px(m.settings_control_height))
                     .px(px(m.settings_control_pad_x))
                     .flex()
@@ -472,12 +487,11 @@ impl SettingsView {
                     .cursor_pointer()
                     .whitespace_nowrap()
                     .overflow_hidden()
-                    .on_click(move |event, _, cx| {
-                        let at = event.position();
+                    .on_click(move |_, _, cx| {
                         open.update(cx, |this, cx| {
                             this.dropdown = match this.dropdown {
-                                Some((k, _)) if k == key => None,
-                                _ => Some((key, at)),
+                                Some(k) if k == key => None,
+                                _ => Some(key),
                             };
                             cx.notify();
                         })
@@ -527,6 +541,7 @@ impl SettingsView {
             .pr(px(m.settings_card_pad_right))
             .flex_shrink_0()
             .relative()
+            .children(mark)
             .flex()
             .items_center()
             .child(
@@ -688,33 +703,28 @@ impl SettingsView {
         self.page(-1., cx);
     }
 
-    fn render_dropdown(
+    /// The open dropdown's list, hung under its control (ninth pass).
+    fn render_options(
         &self,
+        item: &'static Item,
+        options: &'static [(&'static str, &'static str)],
+        value: &Value,
         theme: &Theme,
         m: &Metrics,
         cx: &Context<Self>,
-    ) -> Option<impl IntoElement> {
-        let (key, at) = self.dropdown?;
-        let item = SECTIONS
-            .iter()
-            .flat_map(|s| s.groups.iter())
-            .flat_map(|g| g.items.iter())
-            .find(|i| i.key == key)?;
-        let Kind::Dropdown(options) = item.kind else {
-            return None;
-        };
-        let value = current(item, cx);
+    ) -> impl IntoElement {
+        let key = item.key;
         let entity = cx.entity();
         let close = entity.clone();
         let rows = options.iter().enumerate().map(|(ix, (json, label))| {
             let chosen = serde_json::from_str::<Value>(json)
-                .map(|v| values_equal(&v, &value))
+                .map(|v| values_equal(&v, value))
                 .unwrap_or(false);
             let entity = entity.clone();
             let json = *json;
             div()
                 .id(ElementId::NamedInteger("settings-option".into(), ix as u64))
-                .h(px(m.goto_row_height))
+                .h(px(m.settings_option_wash))
                 .px(px(m.popup_row_pad_x))
                 .flex_shrink_0()
                 .flex()
@@ -723,7 +733,7 @@ impl SettingsView {
                 .cursor_pointer()
                 .whitespace_nowrap()
                 .text_color(theme.list_text)
-                .when(chosen, |d| d.bg(theme.list_bg_selected))
+                .when(chosen, |d| d.bg(theme.list_bg_focused))
                 .hover(|s| s.bg(theme.list_bg_hovered))
                 .on_click(move |_, _, cx| {
                     entity.update(cx, |this, cx| {
@@ -736,15 +746,18 @@ impl SettingsView {
                 })
                 .child(*label)
         });
-        Some(deferred(
+        deferred(
             div()
                 .id("settings-dropdown")
                 .occlude()
                 .absolute()
-                .left(at.x - px(m.settings_control_width / 2.))
-                .top(at.y + px(m.settings_control_height / 2.))
-                .w(px(m.settings_control_width))
-                .p(px(m.popup_pad))
+                .left(px(-m.settings_options_overhang))
+                .right(px(-m.settings_options_overhang))
+                .top(px(m.settings_control_height + m.settings_options_gap))
+                .pt(px(m.settings_options_pad))
+                .pb(px(m.settings_options_pad + 4.))
+                .px(px(m.settings_options_pad_x))
+                .gap(px(m.settings_option_gap))
                 .flex()
                 .flex_col()
                 .rounded(px(m.popup_radius))
@@ -764,7 +777,7 @@ impl SettingsView {
                     })
                 })
                 .children(rows),
-        ))
+        )
     }
 }
 
@@ -872,6 +885,5 @@ impl Render for SettingsView {
                             .child(self.render_content(&theme, &m, cx)),
                     ),
             )
-            .children(self.render_dropdown(&theme, &m, cx))
     }
 }

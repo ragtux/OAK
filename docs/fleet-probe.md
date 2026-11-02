@@ -647,6 +647,17 @@ Fleet carried out at once.
 | History tool | a "Search commits" field 13.33–361.33 × 76–100 (24 tall), a filter row at y 118 of three chips with chevrons ("main", the folder or file, "all users"; 22–66.67, 80.67–272, 285.33–352.67), then commit rows: a 6.67 px grey dot at x 25.33 (`#69696B`, taken as `text.tertiary`, estimate), the summary at x 44 in `#E0E1E4` on the row's first line (centre 150), the author and date on a secondary second line (centre 169); `git/file-history` opens a second History tab filtered to the file (the folder chip reads the file's name, the tab gets a close box) |
 | Delete | "Delete..." on a file removes it at once; no dialog appeared in three runs, so Oak drops its confirmation and sends the file to the system trash (the folder case was not tried, estimate) |
 | folder menu | New File..., New Folder..., sep, Find in Files... Ctrl+Shift+F, Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › (no Open in Split) |
+| Text Search, idle | with nothing typed the popup is its fields only: it ends 16.67 under the folder row (64.67–188 at 1280 × 800); Oak had kept the empty list and preview, and its folder and mask fields had collapsed (gpui's `flex_none` keeps the zero flex basis `flex_1` sets, so `.w()` was ignored until a basis was given) |
+
+Oak after this pass: `autoSave` is the three-valued `AutoSave` (`OnFocus` saves
+every dirty document when the window loses the focus, `AfterDelay` after
+`autoSave.delay`), the Settings tool shows the mark beside a value Oak's file
+sets and hangs the dropdown list under its control (rows within 0.7 px of
+Fleet's), the `showShortcuts` pill lands at 565.33–714.67 × 680–736 against
+Fleet's 567.33–714 × 680–736, Delete sends files to the system trash with no
+dialog, and the idle Text Search popup collapses to its fields. The probe
+scenes' Oak steps no longer reach Delete: with no dialog the fixture lost a
+file per run (restored from the Recycle Bin).
 
 ### Batch 10: git
 

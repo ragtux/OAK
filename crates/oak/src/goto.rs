@@ -1446,6 +1446,11 @@ impl GotoPanel {
                             - m.search_mask_width
                             - m.goto_block_gap
                             - 2.))
+                        .flex_basis(px(m.goto_width
+                            - 2. * m.goto_pad
+                            - m.search_mask_width
+                            - m.goto_block_gap
+                            - 2.))
                         .pl(px(m.goto_pad))
                         .child(div().flex_1().min_w_0().h_full().child(s.folder.clone()))
                         .child(icon(
@@ -1458,6 +1463,7 @@ impl GotoPanel {
                     frame(mask_focused, theme, m)
                         .flex_none()
                         .w(px(m.search_mask_width))
+                        .flex_basis(px(m.search_mask_width))
                         .pl(px(m.goto_pad))
                         .child(div().flex_1().min_w_0().h_full().child(s.mask.clone())),
                 )
@@ -1465,7 +1471,11 @@ impl GotoPanel {
         );
         out.push(
             div()
-                .h(px(m.search_count_row))
+                .h(px(if self.search_idle(cx) {
+                    0.
+                } else {
+                    m.search_count_row
+                }))
                 .px(px(m.goto_pad - 1. + m.popup_row_pad_x))
                 .flex_shrink_0()
                 .flex()
@@ -1483,7 +1493,15 @@ impl GotoPanel {
     }
 
     /// The vertical space the blocks above the list take, inside the border.
-    fn list_top(&self, m: &Metrics) -> f32 {
+    /// With nothing typed and nothing found, Fleet's Text Search popup is
+    /// just its fields (ninth pass): no count row, list or preview.
+    fn search_idle(&self, cx: &App) -> bool {
+        self.mode == GotoMode::TextSearch
+            && self.search.results.is_empty()
+            && self.input.read(cx).text().trim().is_empty()
+    }
+
+    fn list_top(&self, m: &Metrics, idle: bool) -> f32 {
         let mut y =
             m.goto_tab_top - 1. + m.goto_tab_height + m.goto_tab_field_gap + m.goto_field_height;
         match self.mode {
@@ -1502,7 +1520,7 @@ impl GotoPanel {
                 } else {
                     y += m.goto_chip_top_gap + m.focus_outline;
                 }
-                y += m.goto_field_height + m.search_count_row;
+                y += m.goto_field_height + if idle { 0. } else { m.search_count_row };
             }
             GotoMode::Actions | GotoMode::Tools | GotoMode::Workspaces => {
                 y += m.goto_list_field_gap + m.focus_outline;
@@ -1532,13 +1550,19 @@ impl Render for GotoPanel {
         let width = px(m.goto_width).min(viewport.width - margin * 2.);
         let left = (viewport.width - width) / 2.;
         let max_height = px(m.goto_max_height).min(viewport.height - px(m.goto_top) - margin);
-        let list_top = self.list_top(&m);
+        let idle = self.search_idle(cx);
+        let list_top = self.list_top(&m, idle);
         let rows_height = self.rows_height(&m);
-        let full = self.mode.full_height();
+        let full = self.mode.full_height() && !idle;
         let height = if full {
             max_height
         } else {
-            px(list_top + rows_height + m.goto_bottom_pad + 2.).min(max_height)
+            let bottom = if idle {
+                m.search_idle_bottom_pad
+            } else {
+                m.goto_bottom_pad
+            };
+            px(list_top + rows_height + bottom + 2.).min(max_height)
         };
         let show_preview = full && !self.sources.preview_hidden && self.mode.has_preview();
         let replace_buttons = self.mode == GotoMode::TextSearch && self.search.replace_mode;

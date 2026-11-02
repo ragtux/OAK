@@ -75,6 +75,16 @@ pub enum ClickMode {
     Double,
 }
 
+/// When an edited file is written by itself (`autoSave`): Fleet's General
+/// page offers Off, On focus change and After delay and writes `"Off"`,
+/// `"OnFocus"` and `"AfterDelay"` (ninth pass). Default `OnFocus`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoSave {
+    Off,
+    OnFocus,
+    AfterDelay,
+}
+
 /// Whether an indent is made of spaces or a tab (`editor.indentStyle`, and
 /// EditorConfig's `indent_style`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -351,9 +361,25 @@ impl Settings {
         self.bool("trimTrailingSpacesOnSave").unwrap_or(true)
     }
 
-    /// `autoSave`: "Automatically save the edited file". Default false (estimate).
-    pub fn auto_save(&self) -> bool {
-        self.bool("autoSave").unwrap_or(true)
+    /// `autoSave`: "Automatically save the edited file": `Off`, `OnFocus` or
+    /// `AfterDelay` (Fleet's spellings; a bool from an older Oak file still
+    /// reads as on or off). Default `OnFocus`.
+    pub fn auto_save(&self) -> AutoSave {
+        match self.get("autoSave") {
+            Some(Value::Bool(false)) => AutoSave::Off,
+            Some(Value::Bool(true)) => AutoSave::OnFocus,
+            Some(Value::String(s)) => match s.to_ascii_lowercase().as_str() {
+                "off" | "false" => AutoSave::Off,
+                "afterdelay" | "after_delay" | "delay" => AutoSave::AfterDelay,
+                _ => AutoSave::OnFocus,
+            },
+            _ => AutoSave::OnFocus,
+        }
+    }
+
+    /// Whether Oak's own file sets the key (the Settings tool's modified mark).
+    pub fn is_own(&self, key: &str) -> bool {
+        self.own.contains_key(key)
     }
 
     /// `autoSave.delay`: "Automatically save the edited file after a specified
@@ -731,7 +757,15 @@ mod tests {
         assert!(s.enable_indenter());
         // Batch 8 read these off Fleet's Settings pages (2026-11-02).
         assert!(s.trim_trailing_spaces_on_save());
-        assert!(s.auto_save());
+        assert_eq!(s.auto_save(), AutoSave::OnFocus);
+        assert!(!s.is_own("autoSave"));
+        let s = Settings::parse(r#"{"autoSave": "AfterDelay"}"#).unwrap();
+        assert_eq!(s.auto_save(), AutoSave::AfterDelay);
+        assert!(s.is_own("autoSave"));
+        let s = Settings::parse(r#"{"autoSave": "Off"}"#).unwrap();
+        assert_eq!(s.auto_save(), AutoSave::Off);
+        let s = Settings::parse(r#"{"autoSave": false}"#).unwrap();
+        assert_eq!(s.auto_save(), AutoSave::Off);
         assert_eq!(s.auto_save_delay_ms(), 1000);
         assert!(s.create_scratch_on_new_file());
         assert_eq!(s.local_big_file_minimum_threshold_mb(), 20.0);

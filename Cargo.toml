@@ -43,6 +43,8 @@ tempfile = "3"
 regex = "1"
 # The workspace walk behind Goto and the Search tool (the walker ripgrep uses: .gitignore, hidden files).
 ignore = "0.4"
+# Fleet's Delete sends a file to the system trash without a dialog (ninth pass).
+trash = "5"
 
 # Cargo.lock pins libc to 0.2.189: gpui -> http_client -> async-tar -> xattr 0.2.3 reads `libc::ENOATTR`,
 # which libc 0.2.190 removed on Linux. Drop the pin once async-tar moves to xattr 1.x.

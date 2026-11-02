@@ -27,7 +27,6 @@
       ["key", "ctrl+shift+f"], ["wait", 800], ["shot", "search"],
       ["type", "Record"], ["wait", 1500], ["shot", "search-typed"], ["key", "escape"], ["wait", 400],
       ["key", "ctrl+shift+h"], ["wait", 800], ["shot", "replace"], ["key", "escape"], ["wait", 400],
-      ["move", 100, 478], ["click"], ["wait", 600], ["key", "shift+delete"], ["wait", 800], ["shot", "delete-dialog"], ["key", "escape"], ["wait", 400],
       ["key", "ctrl+alt+w"], ["wait", 800], ["shot", "recent-workspaces"], ["key", "escape"], ["wait", 400]
     ]
   },

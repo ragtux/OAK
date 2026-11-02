@@ -107,7 +107,11 @@ const KEYMAPS: &[(&str, &str)] = &[
     ("\"eclipse\"", "Eclipse"),
     ("\"emacs\"", "Emacs"),
 ];
-const AUTO_SAVE: &[(&str, &str)] = &[("true", "On focus change"), ("false", "Off")];
+const AUTO_SAVE: &[(&str, &str)] = &[
+    ("\"Off\"", "Off"),
+    ("\"OnFocus\"", "On focus change"),
+    ("\"AfterDelay\"", "After delay"),
+];
 const FONTS: &[(&str, &str)] = &[
     ("\"JetBrains Mono\"", "JetBrains Mono"),
     ("\"Cascadia Mono\"", "Cascadia Mono"),
@@ -146,7 +150,7 @@ pub const SECTIONS: &[Section] = &[
                 item("Theme", "theme", Kind::Dropdown(THEMES), "\"dark\""),
                 item("Zoom", "zoomLevel", Kind::Dropdown(ZOOMS), "1.0"),
                 item("Keymap", "keymap", Kind::Dropdown(KEYMAPS), "\"fleet\""),
-                item("Auto save", "autoSave", Kind::Dropdown(AUTO_SAVE), "true"),
+                item("Auto save", "autoSave", Kind::Dropdown(AUTO_SAVE), "\"OnFocus\""),
             ],
         }],
     },

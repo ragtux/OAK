@@ -23,7 +23,7 @@
       ["key", "escape"], ["wait", 500]
     ],
     "oak": [
-      ["wait", 1000],
+      ["wait", 1000], ["oak-settings", {"showShortcuts": true, "editor.tabSize": 2}], ["wait", 1500],
       ["key", "ctrl+comma"], ["wait", 1500], ["shot", "settings-general"],
       ["move", 984, 414], ["click"], ["wait", 800], ["shot", "autosave-options"], ["key", "escape"], ["wait", 400],
       ["move", 533, 381], ["click"], ["wait", 800], ["shot", "settings-code-modified"],
@@ -31,8 +31,7 @@
       ["key", "ctrl+shift+f"], ["wait", 400], ["shot", "shortcut-overlay"], ["key", "escape"], ["wait", 400],
       ["move", 189, 55], ["click"], ["wait", 800], ["shot", "history-tool"],
       ["move", 34, 55], ["click"], ["wait", 400],
-      ["move", 100, 478], ["click"], ["wait", 400], ["click", "right"], ["wait", 600],
-      ["key", "down", "down", "down", "down", "down", "down"], ["wait", 300], ["key", "enter"], ["wait", 800], ["shot", "delete-dialog"],
+      ["move", 100, 478], ["click"], ["wait", 400], ["click", "right"], ["wait", 600], ["shot", "file-menu"],
       ["key", "escape"], ["wait", 400]
     ]
   },

@@ -205,8 +205,10 @@ row bound to its key with the default read off the page, and the
 Notifications popup under the bell replaced the panel tool; the same pass
 added the inline rename, "Open in Split", the changed-on-disk pill, the
 find bar's push-down and the gutter's breakpoint hint. Left for later:
-the Settings tool's Plugins and AI pages, the modified-value mark and the
-workspace scope, the snapshots tool (snapshots are
+the Settings tool's Plugins and AI pages and the
+workspace scope (the ninth pass settled `autoSave`'s three values, the
+modified-value mark, the shortcut overlay and the dialog-less Delete, all
+built), the snapshots tool (snapshots are
 written by `local-history/make-snapshot`, not yet listed), the `showShortcuts`
 overlay and `inputSequenceTimeoutMilliseconds` (gpui owns chord timing),
 `restoreWorkspacesOnStartup` and the empty state, a notification's actions

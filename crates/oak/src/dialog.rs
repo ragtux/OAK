@@ -17,6 +17,11 @@ use gpui::{
 pub enum ButtonKind {
     Primary,
     Secondary,
+    /// Kept for `git/revert` with `git.revert.confirm` (M4); Fleet's file Delete
+
+    /// has no dialog (ninth pass).
+
+    #[allow(dead_code)]
     Dangerous,
 }
 
@@ -39,6 +44,7 @@ impl DialogButton {
             kind: ButtonKind::Secondary,
         }
     }
+    #[allow(dead_code)]
     pub fn dangerous(label: impl Into<SharedString>) -> DialogButton {
         DialogButton {
             label: label.into(),

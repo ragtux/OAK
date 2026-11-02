@@ -350,6 +350,78 @@ impl Workspace {
         self.open_path(path, false, cx);
     }
 
+    /// `showShortcuts` (Fleet: "Make the shortcuts that you are using at the
+    /// moment appear on the screen"): every chord with a modifier or a
+    /// function key shows in the pill at the window's bottom for a moment.
+    /// gpui runs the key bindings before any element listener and a bound
+    /// keystroke never reaches them, so the interceptor that runs before the
+    /// bindings is the hook (estimate: Fleet shows the chords that ran an
+    /// action).
+    pub(super) fn watch_shortcuts(&mut self, cx: &mut Context<Self>) {
+        let weak = cx.weak_entity();
+        cx.intercept_keystrokes(move |event, _, cx| {
+            let k = &event.keystroke;
+            let chord = k.modifiers.control || k.modifiers.alt || k.modifiers.platform;
+            let function =
+                k.key.len() > 1 && k.key.starts_with('f') && k.key[1..].parse::<u8>().is_ok();
+            if !(chord || function) || !Self::settings(cx).show_shortcuts() {
+                return;
+            }
+            let text = crate::keymap::presentable(&k.to_string());
+            let _ = weak.update(cx, |this, cx| this.show_shortcut(text.into(), cx));
+        })
+        .detach();
+    }
+
+    fn show_shortcut(&mut self, text: SharedString, cx: &mut Context<Self>) {
+        self.shortcut_hint = Some(text);
+        self.shortcut_generation = self.shortcut_generation.wrapping_add(1);
+        let generation = self.shortcut_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1500))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.shortcut_generation == generation {
+                    this.shortcut_hint = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn render_shortcut_overlay(&self, theme: &Theme, m: &Metrics) -> Option<AnyElement> {
+        let text = self.shortcut_hint.clone()?;
+        Some(
+            deferred(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(m.shortcut_overlay_bottom))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .h(px(m.shortcut_overlay_height))
+                            .px(px(m.shortcut_overlay_pad_x))
+                            .flex()
+                            .items_center()
+                            .rounded(px(m.shortcut_overlay_radius))
+                            .bg(theme.shortcut_overlay_bg)
+                            .font_family(theme.ui_font.clone())
+                            .text_size(px(m.shortcut_overlay_font))
+                            .text_color(theme.shortcut_overlay_text)
+                            .child(text),
+                    ),
+            )
+            .with_priority(100)
+            .into_any_element(),
+        )
+    }
+
     /// Reads the branch and every file's git status again: on open, after
     /// a save or a file operation, and every fifth disk poll.
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
@@ -1536,6 +1608,7 @@ impl Workspace {
         if self.notifications_open {
             out.push(self.render_notifications_popup(theme, m, cx));
         }
+        out.extend(self.render_shortcut_overlay(theme, m));
         out
     }
 

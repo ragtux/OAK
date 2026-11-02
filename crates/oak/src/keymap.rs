@@ -323,7 +323,7 @@ pub fn load(preset: &str) -> Keymap {
 }
 
 /// A chord in Fleet's tooltip spelling ("Ctrl+Shift+F").
-fn presentable(chord: &str) -> String {
+pub fn presentable(chord: &str) -> String {
     chord
         .split('-')
         .map(|part| {
