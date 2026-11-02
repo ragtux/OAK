@@ -23,13 +23,13 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-02) |
+| Table | Count | Oak covers (2026-11-02, after M2) |
 | --- | --- | --- |
-| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 77 |
+| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 101 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 15 |
-| Theme `colors` keys | 684 | 71 |
-| Theme `textAttributes` keys | 157 | 28 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 47 |
+| Theme `colors` keys | 684 | 97 |
+| Theme `textAttributes` keys | 157 | 32 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
 
@@ -108,48 +108,81 @@ does not draw (the `shadow.*` keys are the popups').
 Theme groups: `tab`, `tooltip`, `scrollbar`, `focusOutline`, `island`,
 `layout`, `separator`, `shadow`, `border`, `background`, `text`, `icon`.
 
-### M2 Editor core (L, in progress)
+### M2 Editor core (built 2026-11-02; the M2 scenes still to run against Fleet)
 
-Everything Fleet's editor does to a plain text file.
+Everything Fleet's editor does to a plain text file. Built in one pass on
+2026-11-02 against the batch 5 measurements (`docs/fleet-probe.md`, fourth
+and fifth passes). What batch 5 did not measure is marked "estimate" in
+`theme.rs::metrics` and in the probe record; the scenes `find`, `fold` and
+`wrap` are written for the missing measurements and have not yet been run
+against Fleet, so M2's end condition (every scene passing `compare.py`) is
+still open. Left for later: the smooth caret (`editor.caretSmoothAnimation`
+is read, not animated), an "in selection" button on the find bar (the mode
+engages by itself when the bar opens on a multi-line selection; whether
+Fleet also shows a toggle is unprobed), the breakpoint hint circle in the
+hovered gutter (M8), the `editor.guides` ruler colour (no theme key names
+it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
+`goto/line` (batch 6).
 
-- Done 2026-11-02: one document per open file (`crates/oak/src/document.rs`),
-  shared by every tab and split that shows it; each view keeps its own
-  cursor, which follows the other views' edits through the buffer's edit
+- Done: one document per open file (`crates/oak/src/document.rs`), shared by
+  every tab and split that shows it; each view keeps its own cursor, folds
+  and scroll, which follow the other views' edits through the buffer's edit
   log (`oak-text`'s `Cursor::sync`). Undo and the dirty state are the
   document's. The `splits` scene (Oak only) shows it.
-
-- Done 2026-11-02 (batch 5, `surface` and `surface2` scenes): the editor
-  surface measured and drawn as Fleet does: rounded selection rows with the
-  newline cell and the empty-row stub, the current-line wash under a
-  selection, `identifier.underCaret` boxes on every whole-word occurrence,
-  `editor.brace.match` on the bracket pair, indent guides with the caret
-  block's in `.current`, the caret-line and search-match scrollbar marks
-  (`oak-text`'s `analysis` module, gpui-free). The find-match boxes paint
-  from `EditorView::search`, which the find bar will fill.
-- Multiple carets (`editor/add-caret-above|below`,
+- Done (batch 5, `surface` and `surface2` scenes): the editor surface
+  measured and drawn as Fleet does: rounded selection rows with the newline
+  cell and the empty-row stub, the current-line wash under a selection,
+  `identifier.underCaret` boxes on every whole-word occurrence,
+  `editor.brace.match` on the bracket pair (the grammar's pair first, the
+  text scan's for plain text), indent guides with the caret block's in
+  `.current`, the caret-line (`editor.currentLine.scrollbarMark`) and
+  search-match scrollbar marks.
+- Done: multiple carets (`editor/add-caret-above|below`,
   `editor/add-carets-to-ends-of-selected-lines`, `select-next-occurrence`,
-  `select-all-occurrences`, `unselect-occurrence`).
-- Find and replace bar (`find`, `replace`, `replace-one`, `replace-all`,
-  `next-occurrence`, `prev-occurrence`) with the match-case, words, regex
-  and in-selection toggles (`inputField.*`, `toggleButton.*`).
-- `expand-selection`, `shrink-selection`, `editor/move-caret-to-matching-bracket`,
-  bracket matching (`editor.brace.*`), folding (`editor/expand-folding`,
-  `editor/collapse-folding`, `editor.showFoldings`), from tree-sitter.
-- Rendering options from settings: soft wrap (`editor.softWrapEnabled`,
-  `editor.guideToSoftWrapBy`), `editor.guides`, indent guides, whitespace,
-  line numbers on/relative/off, caret shape and blink, smooth caret,
-  active-line highlight, sticky lines (`editor.showStickyLines`), scrollbar
-  marks, `editor.distractionFreeMode`, `editor.centerEditorHorizontally`,
-  `editor.lineSpacing`, `editor.fontFamily|Size|Weight|Features|ligatures`.
-- Editing behaviour: auto-indent (`enableIndenter`), auto-pairs,
+  `select-all-occurrences`, `unselect-occurrence`, Alt+click), every edit
+  at every caret in one undo step; a paste of N lines into N carets.
+- Done: the find and replace bar (`crates/oak/src/find.rs`; `find`,
+  `replace`, `replace-one`, `replace-all`, `next-occurrence`,
+  `prev-occurrence`) at batch 5's geometry, with the match-case, words and
+  regex toggles (`inputField.*`, `toggleButton.*`), the match counter, the
+  search kept to a multi-line selection, `editor.useSelectionForSearch`, and
+  `$1` groups in regex replacements (`oak-text`'s `search` module, on the
+  `regex` crate).
+- Done: `expand-selection` (the camel hump, the word, then the enclosing
+  syntax nodes), `shrink-selection` (back through the same steps),
+  `editor/move-caret-to-matching-bracket`, folding (`editor/expand-folding`,
+  `editor/collapse-folding`, the gutter chevrons on hover, the `{…}` mark
+  from `editor.foldedMark.*`, `editor.showFoldings`) and the sticky lines
+  (`editor.showStickyLines`, `stickyLinesMaxCount`), all from tree-sitter
+  (`oak-syntax`'s `structure` module: `SyntaxTree::expand|shrink|folds|
+  matching_bracket|errors`).
+- Done: rendering options from settings: soft wrap (`editor.softWrapEnabled`,
+  `editor.guideToSoftWrapBy`; word-wrapped at the view's width through a
+  display map of buffer rows to display rows), `editor.guides` and
+  `showVisualGuides`, `showIndentGuides`, `renderWhitespace`, `lineNumbers`
+  on/relative/off, `caretShape` (line, block, underline) and
+  `caretBlinkingEnabled`, `activeLineHighlightEnabled`, `showScrollbarMarks`,
+  `distractionFreeMode` (no tabs, the editor area centred),
+  `centerEditorHorizontally`, `lineSpacing`, `fontFamily|Size|Weight|
+  Features|ligatures`.
+- Done: editing behaviour: the indenter (`enableIndenter`: a level after an
+  opener, the closer on its own line, a typed closer re-indented),
+  auto-pairs (insert, step over, wrap a selection, backspace both),
   `editor.tabSize`, `editor.indentStyle`, `editor.autoDetectIndentation`,
-  EditorConfig, `trimTrailingSpacesOnSave`, `autoSave` and `autoSave.delay`,
-  `editor/change-line-endings`, encoding and language in the status bar,
-  `toggle-case`, `wrap-line`, `comment-block`, `editor/paste-from-history`,
-  `goto/line`, big-file confirmation (`localBigFileMinimumThreshold`).
-- Scratch files (`createScratchOnNewFile`, `--scratch`), `new-file`,
-  `files/rename`, `files/delete` from the editor.
-- Probes: batch 5.
+  `.editorconfig` (`oak-settings`'s `editorconfig` module: indent style and
+  size, end of line, trim and final newline), `trimTrailingSpacesOnSave`
+  (caret rows kept), `autoSave` and `autoSave.delay`,
+  `editor/change-line-endings` (also a click on the status bar's LF/CRLF),
+  encoding and language in the status bar, `toggle-case`, `wrap-line`,
+  `comment-block`, `editor/paste-from-history` (the editor's own copy
+  history), `goto/line`, the big-file confirmation
+  (`localBigFileMinimumThreshold`).
+- Done: scratch files (`createScratchOnNewFile`, `--scratch`, in Oak's
+  `scratches/` folder), `new-file` (a name prompt, the file created in the
+  Files tree's folder), `files/rename`, `files/delete` (confirmed) on the
+  tree's selection or the active tab's file.
+- Probes: batch 5 (`surface`, `surface2`, run); `find`, `fold`, `wrap`
+  (Oak's side run, Fleet's side and the comparison still to do).
 
 Theme groups: `editor` (43), `highlight`, `inputField`, `toggleButton`,
 `ghostButton`, most `textAttributes`.

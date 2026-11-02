@@ -104,8 +104,9 @@ Each is a script under `tools/fleet-probe/` unless noted. Build them in this
 order; A–D unblock M1, E and F are an afternoon each and pay off at once.
 Status (2026-11-02): A, B, D and H exist for Windows (`make-fixture.py`,
 `winprobe.py`, `compare.py`, with scenes `editor`, `light`, `panels`,
-`splitters`, `tabs` and `settings-live`); C's in-app probe mode, E, F's lint
-and the KDE launchers are still to do. B's settings override is the scene's
+`splitters`, `tabs`, `settings-live`, `splits`, `surface`, `surface2`, and
+the M2 scenes `find`, `fold` and `wrap` still to be run); C's in-app probe
+mode, E, F's lint and the KDE launchers are still to do. B's settings override is the scene's
 `fleet_settings` object (written to Fleet's `settings.json` for the run and
 restored after); an Oak launch gets a fresh `OAK_CONFIG_DIR` so no layout or
 setting carries over between runs, and the `oak-settings` step rewrites that

@@ -11,8 +11,11 @@ mod assets;
 mod document;
 mod editor;
 mod file_tree;
+mod find;
+mod input;
 mod keymap;
 mod layout;
+mod popup;
 mod scrollbar;
 mod settings;
 mod theme;
@@ -33,6 +36,8 @@ struct Args {
     theme: Option<String>,
     zoom: Option<f32>,
     size: Option<(f32, f32)>,
+    /// `--scratch`: open a new scratch file, as Fleet's launcher does.
+    scratch: bool,
 }
 
 fn parse_args() -> Args {
@@ -41,12 +46,14 @@ fn parse_args() -> Args {
         theme: None,
         zoom: None,
         size: None,
+        scratch: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--theme" => args.theme = it.next(),
             "--zoom" => args.zoom = it.next().and_then(|z| z.parse().ok()),
+            "--scratch" => args.scratch = true,
             "--size" => {
                 args.size = it.next().and_then(|s| {
                     let (w, h) = s.split_once('x')?;
@@ -55,7 +62,7 @@ fn parse_args() -> Args {
             }
             "-h" | "--help" => {
                 println!(
-                    "usage: oak [path ...] [--theme dark|dark_purple|light|<file.json>] [--zoom 0.7..2.0] [--size WxH]"
+                    "usage: oak [path ...] [--theme dark|dark_purple|light|<file.json>] [--zoom 0.7..2.0] [--size WxH] [--scratch]"
                 );
                 std::process::exit(0);
             }
@@ -75,6 +82,7 @@ fn main() {
         zoom: args.zoom,
     };
     let (root, open) = workspace::resolve_args(&args.paths);
+    let scratch = args.scratch;
     let (width, height) = args.size.unwrap_or((1280., 800.));
 
     gpui_platform::application()
@@ -87,6 +95,7 @@ fn main() {
             }
             editor::bind_keys(cx);
             file_tree::bind_keys(cx);
+            input::bind_keys(cx);
             let keymap = keymap::load();
             keymap::bind(&keymap, cx);
             cx.bind_keys([
@@ -118,7 +127,7 @@ fn main() {
                     window_min_size: Some(size(px(480.), px(320.))),
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| Workspace::new(root, open, hints, window, cx)),
+                |window, cx| cx.new(|cx| Workspace::new(root, open, scratch, hints, window, cx)),
             )
             .expect("open the main window");
             cx.activate(true);

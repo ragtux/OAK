@@ -1,5 +1,6 @@
 //! A rope-backed text buffer with a linear undo history.
 
+use crate::indent::Indent;
 use ropey::Rope;
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -25,13 +26,15 @@ pub(crate) struct Change {
     pub inserted: String,
 }
 
-/// An undo step: the changes applied in order, with the cursor/selection to
-/// restore on either side. Stored as char offsets of the anchor and head.
+/// An undo step: the changes applied in order, with the selections to
+/// restore on either side, as `(anchor, head)` char offsets, the primary
+/// first. Empty when the step was not made through a cursor (a trim on
+/// save): the cursor then keeps its own, moved past the change.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Transaction {
     pub changes: Vec<Change>,
-    pub before: (usize, usize),
-    pub after: (usize, usize),
+    pub before: Vec<(usize, usize)>,
+    pub after: Vec<(usize, usize)>,
 }
 
 /// One applied change as positions only, for a view that holds offsets into
@@ -77,6 +80,9 @@ pub struct Buffer {
     edits: VecDeque<Edit>,
     /// The line ending the file came with, written back on save.
     crlf: bool,
+    /// How this document indents: the width of a level and tab stop, and
+    /// whether a level is written as a tab. Every edit command reads it.
+    pub indent: Indent,
 }
 
 impl Default for Buffer {
@@ -105,6 +111,7 @@ impl Buffer {
             saved_version: 0,
             edits: VecDeque::new(),
             crlf,
+            indent: Indent::default(),
         }
     }
 
@@ -112,12 +119,60 @@ impl Buffer {
     pub fn set_text(&mut self, text: &str) {
         let len = self.rope.len_chars();
         let mut tx = Transaction {
-            before: (0, 0),
-            after: (0, 0),
+            before: vec![(0, 0)],
+            after: vec![(0, 0)],
             ..Default::default()
         };
         self.replace_in(&mut tx, 0..len, text);
         self.push_transaction(tx);
+    }
+
+    pub fn set_indent(&mut self, indent: Indent) {
+        self.indent = indent;
+    }
+
+    /// Which line ending the file is written with (`editor/change-line-endings`).
+    pub fn set_crlf(&mut self, crlf: bool) {
+        self.crlf = crlf;
+    }
+
+    /// Removes the spaces and tabs at the end of every line except the rows
+    /// in `keep_rows` (the ones holding a caret, which Fleet leaves alone),
+    /// as one undo step. Whether anything changed.
+    pub fn trim_trailing_whitespace(&mut self, keep_rows: &[usize]) -> bool {
+        let mut tx = Transaction::default();
+        // Bottom up, so the offsets of rows not yet visited stay valid.
+        for row in (0..self.line_count()).rev() {
+            if keep_rows.contains(&row) {
+                continue;
+            }
+            let line = self.rope.line(row);
+            let len = self.line_len(row);
+            let trailing = (0..len)
+                .rev()
+                .take_while(|&i| matches!(line.char(i), ' ' | '\t'))
+                .count();
+            if trailing > 0 {
+                let end = self.rope.line_to_char(row) + len;
+                self.replace_in(&mut tx, end - trailing..end, "");
+            }
+        }
+        let changed = !tx.changes.is_empty();
+        self.push_transaction(tx);
+        changed
+    }
+
+    /// Adds the line break a non-empty file is missing at its end, as one
+    /// undo step. Whether it was missing.
+    pub fn ensure_final_newline(&mut self) -> bool {
+        let len = self.rope.len_chars();
+        if len == 0 || self.rope.char(len - 1) == '\n' {
+            return false;
+        }
+        let mut tx = Transaction::default();
+        self.replace_in(&mut tx, len..len, "\n");
+        self.push_transaction(tx);
+        true
     }
 
     pub fn rope(&self) -> &Rope {
@@ -284,8 +339,9 @@ impl Buffer {
         self.undo.last_mut()
     }
 
-    /// Reverts the last transaction; returns the selection to restore.
-    pub(crate) fn undo(&mut self) -> Option<(usize, usize)> {
+    /// Reverts the last transaction; returns the selections to restore (the
+    /// primary first; empty when the step recorded none).
+    pub(crate) fn undo(&mut self) -> Option<Vec<(usize, usize)>> {
         let tx = self.undo.pop()?;
         for change in tx.changes.iter().rev() {
             let inverse = Change {
@@ -295,17 +351,17 @@ impl Buffer {
             };
             self.apply(&inverse);
         }
-        let before = tx.before;
+        let before = tx.before.clone();
         self.redo.push(tx);
         Some(before)
     }
 
-    pub(crate) fn redo(&mut self) -> Option<(usize, usize)> {
+    pub(crate) fn redo(&mut self) -> Option<Vec<(usize, usize)>> {
         let tx = self.redo.pop()?;
         for change in &tx.changes {
             self.apply(change);
         }
-        let after = tx.after;
+        let after = tx.after.clone();
         self.undo.push(tx);
         Some(after)
     }
@@ -371,5 +427,40 @@ mod tests {
         assert!(b.uses_crlf());
         assert_eq!(b.text(), "a\nb\n");
         assert_eq!(b.text_for_file(), "a\r\nb\r\n");
+    }
+
+    #[test]
+    fn line_endings_can_be_changed() {
+        let mut b = Buffer::new("a\nb");
+        b.set_crlf(true);
+        assert!(b.uses_crlf());
+        assert_eq!(b.text_for_file(), "a\r\nb");
+        b.set_crlf(false);
+        assert_eq!(b.text_for_file(), "a\nb");
+    }
+
+    #[test]
+    fn trim_trailing_whitespace_keeps_the_caret_rows_and_undoes_in_one_step() {
+        let mut b = Buffer::new("a  \nb\t\nc   \n   ");
+        assert!(b.trim_trailing_whitespace(&[1]));
+        assert_eq!(b.text(), "a\nb\t\nc\n");
+        assert!(!b.trim_trailing_whitespace(&[1]), "nothing left to trim");
+        assert_eq!(b.undo(), Some(Vec::new()));
+        assert_eq!(b.text(), "a  \nb\t\nc   \n   ");
+        assert!(!b.can_undo());
+    }
+
+    #[test]
+    fn final_newline_is_added_once() {
+        let mut b = Buffer::new("a");
+        assert!(b.ensure_final_newline());
+        assert_eq!(b.text(), "a\n");
+        assert!(!b.ensure_final_newline());
+        assert!(
+            !Buffer::new("").ensure_final_newline(),
+            "an empty file stays empty"
+        );
+        b.undo();
+        assert_eq!(b.text(), "a");
     }
 }

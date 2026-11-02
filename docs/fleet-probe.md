@@ -325,6 +325,60 @@ guides at 438 as one device px of `#363739` with the caret block's at
 caret-line scrollbar mark at 178–180. The text origin moved from 60 to 62
 (`GUTTER_WIDTH`): glyph ink now starts at 438.7 against Fleet's 438–439.3.
 
+## Fifth pass: the rest of M2, built from batch 5 (2026-11-02)
+
+No new Fleet shots: the find bar, the folds and the sticky lines were built
+from the batch 5 rows above, and what those rows do not pin down is an
+estimate here until the `find`, `fold` and `wrap` scenes run against Fleet.
+Oak's side of the three scenes ran on 2026-11-02 (shots in
+`~/oak-probe/out/{find,fold,wrap}-oak-*.png`): the find field sits at
+88–116 with its right edge 16 from the island's, the `{…}` mark folds lines
+7–11 of `main.rs` to one row, the 300-column line wraps at the view's edge
+with the ruler at column 80, and `fn main() {` pins to the top once the
+view starts inside it.
+
+From batch 5, now constants (`theme.rs::metrics`):
+
+| Element | Fleet (batch 5) | Constant |
+| --- | --- | --- |
+| Find field | 416.7 × 28, right edge 16 from the island's, top 12 below the tab row | `FIND_BAR_WIDTH` 416.67, `FIND_BAR_HEIGHT` 28, `FIND_BAR_RIGHT` 16, `FIND_BAR_TOP` 12 |
+| Focus ring | 1.33 `inputField.focusBorder.default` inside 2 px `inputField.focusOutline.default` | `INPUT_FOCUS_BORDER` 4/3, `FOCUS_OUTLINE` 2 |
+| Field interior | text at +6; from the right: pad 8, close box 16, 8, separator, 7, toggles Aa W .* (20 wide, 2 apart, pitch 22), 6, separator, 8, ↓ and ↑ boxes 6 apart, 8, the counter | `FIND_BAR_PAD_LEFT` 6, `FIND_BAR_PAD_RIGHT` 8, `FIND_BAR_CLOSE_GAP` 8, `FIND_BAR_SEPARATOR_GAP_RIGHT` 7, `FIND_BAR_TOGGLE` 20, `FIND_BAR_TOGGLE_GAP` 2, `FIND_BAR_SEPARATOR_GAP_LEFT` 6, `FIND_BAR_ARROW_GAP` 6, `FIND_BAR_COUNTER_GAP` 8 (the gaps are back-solved from the glyph positions 1093, 1101, 1123, 1147.3, 1156.7–1203.3, 1224.7, 1236.7, 1258) |
+| Replace chevron | 16 box, glyph 10 left of the field | `FIND_BAR_CHEVRON_GAP` 5.33 (box to field) |
+| Replace field | 6 under the find field, `inputField.border.default`, "Replace" and "Replace All" at its right | `FIND_BAR_ROW_GAP` 6 |
+| Fold chevron | 16 box at 40 from the island's left, on hover; `chevronDown` open, `chevronRight` folded | `FOLD_CHEVRON_X` 40 |
+| Folded mark | `editor.foldedMark.background`, 3 cells wide, radius about 3, "…" in `editor.foldedMark.text` | `FOLDED_MARK_CELLS` 3, `FOLDED_MARK_RADIUS` 3 |
+| Sticky lines | the enclosing block heads at the top on the island's background, 1 device px `border` under them, a 3 px shadow fading below | `STICKY_SHADOW` 3 |
+| Caret-line scrollbar mark | the caret colour | now `editor.currentLine.scrollbarMark` (the same value in the dark theme) |
+
+Estimates introduced by this pass, the first targets for the three scenes:
+
+- `INPUT_RADIUS` 4 (the field's corners), `FIND_BAR_SEPARATOR_HEIGHT` 16,
+  `TEXT_BUTTON_PAD_X` 8, the toggle's corner radius (`BUTTON_RADIUS` 4),
+  the find field's typeface (the UI face) and the counter's colour
+  (`text.secondary`), the input caret at 1 px.
+- Soft wrap: continuation rows start at the text origin (`WRAP_INDENT` 0),
+  the wrap is at the last blank before the view's edge (less the scrollbar).
+- `editor.guides`: a 1 device px line in `editor.indentGuide` (no key names
+  the ruler's colour); `editor.renderWhitespace`: `·` and `→` glyphs in
+  `editor.whitespaceIndicator`.
+- `editor.lineNumbers: Off` keeps the gutter's width; `Relative` shows the
+  caret row's own number.
+- The caret blinks on a 500 ms half period (`CARET_BLINK_MS`; harness G);
+  the block caret is the cell at half opacity under the glyph, the
+  underline caret 2 px at the cell's bottom.
+- `editor.centerEditorHorizontally` and `distractionFreeMode` centre a
+  120-column editor area (`CENTERED_COLUMNS`).
+- The prompt popups (`goto/line`, `new-file`, `files/rename`, line endings,
+  paste history) borrow the Run & Debug popup's shape until batch 6:
+  600 wide (`PROMPT_WIDTH`), top at 64.67, 24 px rows, a 28 px field.
+- Settings defaults not read off Fleet's Settings tool (batch 8), marked in
+  `oak-settings`: `editor.autoDetectIndentation` true, `trimTrailingSpacesOnSave`
+  false, `autoSave` false and `autoSave.delay` 1000, `localBigFileMinimumThreshold`
+  20, `editor.stickyLinesMaxCount` 5, `editor.caretShape` Line,
+  `editor.caretSmoothAnimation` false, `editor.ligatures` true,
+  `editor.honorCamelHumps` true, `editor.useSelectionForSearch` true.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

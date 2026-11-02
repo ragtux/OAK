@@ -16,6 +16,9 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+mod editorconfig;
+pub use editorconfig::{EditorConfig, EndOfLine};
+
 /// Where the two files live on this machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Paths {
@@ -67,6 +70,65 @@ impl Paths {
 pub enum ClickMode {
     Single,
     Double,
+}
+
+/// Whether an indent is made of spaces or a tab (`editor.indentStyle`, and
+/// EditorConfig's `indent_style`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentStyle {
+    Spaces,
+    Tabs,
+}
+
+impl IndentStyle {
+    /// Reads Fleet's spelling (`spaces`/`tabs`) or EditorConfig's (`space`/`tab`),
+    /// in any case.
+    pub fn parse(s: &str) -> Option<IndentStyle> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "space" | "spaces" => Some(IndentStyle::Spaces),
+            "tab" | "tabs" => Some(IndentStyle::Tabs),
+            _ => None,
+        }
+    }
+}
+
+/// How the gutter numbers lines (`editor.lineNumbers`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineNumbers {
+    On,
+    Off,
+    Relative,
+}
+
+impl LineNumbers {
+    pub fn parse(s: &str) -> Option<LineNumbers> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "on" => Some(LineNumbers::On),
+            "off" => Some(LineNumbers::Off),
+            "relative" => Some(LineNumbers::Relative),
+            _ => None,
+        }
+    }
+}
+
+/// The caret's drawing (`editor.caretShape`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaretShape {
+    Line,
+    Block,
+    Underline,
+}
+
+impl CaretShape {
+    /// Fleet's names, plus `bar` and `vertical` for the line caret.
+    pub fn parse(s: &str) -> Option<CaretShape> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "line" | "bar" | "vertical" => Some(CaretShape::Line),
+            "block" => Some(CaretShape::Block),
+            "underline" | "underscore" => Some(CaretShape::Underline),
+            _ => None,
+        }
+    }
 }
 
 /// The merged settings: Oak's values over Fleet's, as one JSON object.
@@ -121,6 +183,11 @@ impl Settings {
 
     pub fn bool(&self, key: &str) -> Option<bool> {
         self.get(key).and_then(Value::as_bool)
+    }
+
+    /// A non-negative whole number (a JSON number or a numeric string).
+    pub fn usize(&self, key: &str) -> Option<usize> {
+        self.get(key).and_then(as_usize)
     }
 
     pub fn f64(&self, key: &str) -> Option<f64> {
@@ -243,6 +310,266 @@ impl Settings {
     pub fn close_empty_split(&self) -> bool {
         self.bool("closeEmptySplit").unwrap_or(true)
     }
+
+    // ---- the keys M2 reads ---------------------------------------------------
+
+    /// `editor.tabSize`: "The number of spaces corresponding to a tab". Fleet's
+    /// default is 4; zero is not a tab size and falls back to it.
+    pub fn editor_tab_size(&self) -> usize {
+        self.usize("editor.tabSize").filter(|n| *n > 0).unwrap_or(4)
+    }
+
+    /// `editor.indentStyle`: "Indent using spaces or tabs. EditorConfig may
+    /// override this option." Fleet's default is spaces.
+    pub fn editor_indent_style(&self) -> IndentStyle {
+        self.str("editor.indentStyle")
+            .and_then(IndentStyle::parse)
+            .unwrap_or(IndentStyle::Spaces)
+    }
+
+    /// `editor.autoDetectIndentation`: "Indent type and size is detected by the
+    /// file content. Overrides tab size and indentation style settings.
+    /// EditorConfig may override the detected settings." Default true (estimate).
+    pub fn editor_auto_detect_indentation(&self) -> bool {
+        self.bool("editor.autoDetectIndentation").unwrap_or(true)
+    }
+
+    /// `enableIndenter`: "Automatically indent code fragments on editing, for
+    /// example, after using a line break, closing a brace, inserting a snippet,
+    /// and so on". Fleet's default is true.
+    pub fn enable_indenter(&self) -> bool {
+        self.bool("enableIndenter").unwrap_or(true)
+    }
+
+    /// `trimTrailingSpacesOnSave`: "Remove whitespace at the end of the lines
+    /// when the file is saved. The lines that currently have carets on them are
+    /// not trimmed." Default false (estimate).
+    pub fn trim_trailing_spaces_on_save(&self) -> bool {
+        self.bool("trimTrailingSpacesOnSave").unwrap_or(false)
+    }
+
+    /// `autoSave`: "Automatically save the edited file". Default false (estimate).
+    pub fn auto_save(&self) -> bool {
+        self.bool("autoSave").unwrap_or(false)
+    }
+
+    /// `autoSave.delay`: "Automatically save the edited file after a specified
+    /// number of milliseconds since the last modification". Default 1000 (estimate).
+    pub fn auto_save_delay_ms(&self) -> u64 {
+        self.f64("autoSave.delay")
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| v as u64)
+            .unwrap_or(1000)
+    }
+
+    /// `createScratchOnNewFile`: "Always create a temporary file on invoking
+    /// the New File action". Fleet's default is false.
+    pub fn create_scratch_on_new_file(&self) -> bool {
+        self.bool("createScratchOnNewFile").unwrap_or(false)
+    }
+
+    /// `localBigFileMinimumThreshold`: "Open local files of this size (in MB)
+    /// and larger only after an additional confirmation". Default 20 MB (estimate).
+    pub fn local_big_file_minimum_threshold_mb(&self) -> f64 {
+        self.f64("localBigFileMinimumThreshold")
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(20.0)
+    }
+
+    /// `editor.softWrapEnabled`: "Enable soft wraps in the editor. When soft
+    /// wraps are on, the content of the lines that exceed the editor width will
+    /// be wrapped onto the next line without actually inserting line breaks in
+    /// the file." Fleet's default is false.
+    pub fn editor_soft_wrap_enabled(&self) -> bool {
+        self.bool("editor.softWrapEnabled").unwrap_or(false)
+    }
+
+    /// `editor.guideToSoftWrapBy`: "Soft-wrap text based on the guides
+    /// specified in the editor.guides setting". Fleet's default is false.
+    pub fn editor_guide_to_soft_wrap_by(&self) -> bool {
+        self.bool("editor.guideToSoftWrapBy").unwrap_or(false)
+    }
+
+    /// `editor.guides`: "Visual guides (rulers) in the editor. For example,
+    /// `[80, 100]` will add two guides at characters 80 and 100 relative to the
+    /// beginning of the line." A single integer is accepted too. Fleet's
+    /// default is no guides.
+    pub fn editor_guides(&self) -> Vec<usize> {
+        match self.get("editor.guides") {
+            Some(Value::Array(items)) => items.iter().filter_map(as_usize).collect(),
+            Some(v) => as_usize(v).into_iter().collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// `editor.showVisualGuides`: "Show visual guides in the editor". Fleet's
+    /// default is true.
+    pub fn editor_show_visual_guides(&self) -> bool {
+        self.bool("editor.showVisualGuides").unwrap_or(true)
+    }
+
+    /// `editor.showIndentGuides`: "Show indent guides in the editor". A fresh
+    /// Fleet draws them (`docs/fleet-probe.md`): default true.
+    pub fn editor_show_indent_guides(&self) -> bool {
+        self.bool("editor.showIndentGuides").unwrap_or(true)
+    }
+
+    /// `editor.showFoldings`: "Show folding areas on the gutter". Fleet's
+    /// default is true.
+    pub fn editor_show_foldings(&self) -> bool {
+        self.bool("editor.showFoldings").unwrap_or(true)
+    }
+
+    /// `editor.showScrollbarMarks`: "Show colored stripes on the vertical
+    /// scrollbar that indicate warnings, errors, TODOs, and so on". Fleet's
+    /// default is true.
+    pub fn editor_show_scrollbar_marks(&self) -> bool {
+        self.bool("editor.showScrollbarMarks").unwrap_or(true)
+    }
+
+    /// `editor.showStickyLines`: "Show current scope on the top of the editor".
+    /// A fresh Fleet showed sticky lines (`docs/fleet-probe.md`, batch 5):
+    /// default true.
+    pub fn editor_show_sticky_lines(&self) -> bool {
+        self.bool("editor.showStickyLines").unwrap_or(true)
+    }
+
+    /// `editor.stickyLinesMaxCount`: "Maximum number of sticky lines to show."
+    /// Default 5 (estimate).
+    pub fn editor_sticky_lines_max_count(&self) -> usize {
+        self.usize("editor.stickyLinesMaxCount").unwrap_or(5)
+    }
+
+    /// `editor.renderWhitespace`: "Show spaces and tabs in the editor". A
+    /// boolean, or a string: `none`/`off` (or empty) means off, any other
+    /// value on. Fleet's default is false.
+    pub fn editor_render_whitespace(&self) -> bool {
+        match self.get("editor.renderWhitespace") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::String(s)) => {
+                let s = s.trim();
+                !(s.is_empty()
+                    || s.eq_ignore_ascii_case("none")
+                    || s.eq_ignore_ascii_case("off")
+                    || s.eq_ignore_ascii_case("false"))
+            }
+            _ => false,
+        }
+    }
+
+    /// `editor.lineNumbers`: "Show line numbers in the gutter. Use "On" to
+    /// render line numbers as an absolute value. Use "Off" to not show any line
+    /// numbers. Use "Relative" to render line numbers as a distance in lines to
+    /// caret position". Fleet's default is On.
+    pub fn editor_line_numbers(&self) -> LineNumbers {
+        self.str("editor.lineNumbers")
+            .and_then(LineNumbers::parse)
+            .unwrap_or(LineNumbers::On)
+    }
+
+    /// `editor.caretShape`: "Caret shape": line, block or underline (`bar` and
+    /// `vertical` also mean line). Default line (estimate).
+    pub fn editor_caret_shape(&self) -> CaretShape {
+        self.str("editor.caretShape")
+            .and_then(CaretShape::parse)
+            .unwrap_or(CaretShape::Line)
+    }
+
+    /// `editor.caretBlinkingEnabled`: "Enable caret blinking in the editor".
+    /// Fleet's default is true.
+    pub fn editor_caret_blinking_enabled(&self) -> bool {
+        self.bool("editor.caretBlinkingEnabled").unwrap_or(true)
+    }
+
+    /// `editor.caretSmoothAnimation`: "Enable cursor smooth caret animation".
+    /// Default false (estimate).
+    pub fn editor_caret_smooth_animation(&self) -> bool {
+        self.bool("editor.caretSmoothAnimation").unwrap_or(false)
+    }
+
+    /// `editor.activeLineHighlightEnabled`: "Highlight active line". Fleet's
+    /// default is true.
+    pub fn editor_active_line_highlight_enabled(&self) -> bool {
+        self.bool("editor.activeLineHighlightEnabled")
+            .unwrap_or(true)
+    }
+
+    /// `editor.distractionFreeMode`: "Hide editor tabs and move the code closer
+    /// to the editor center". Fleet's default is false.
+    pub fn editor_distraction_free_mode(&self) -> bool {
+        self.bool("editor.distractionFreeMode").unwrap_or(false)
+    }
+
+    /// `editor.centerEditorHorizontally`: "Center editor area horizontally if
+    /// viewport is wider than editor area". Fleet's default is false.
+    pub fn editor_center_editor_horizontally(&self) -> bool {
+        self.bool("editor.centerEditorHorizontally")
+            .unwrap_or(false)
+    }
+
+    /// `editor.fontWeight`: "Editor text weight which will be used if no other
+    /// weight is given by highlighting. For example, a value of 500 will raise
+    /// the default font weight to medium, which is slightly heavier than normal
+    /// (regular)." Default 400, regular.
+    pub fn editor_font_weight(&self) -> f32 {
+        self.f64("editor.fontWeight")
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as f32)
+            .unwrap_or(400.0)
+    }
+
+    /// `editor.fontFeatures`: "OpenType features that should be activated in
+    /// the editor text. Use this to enable stylistic sets (ss01-ss20),
+    /// character variants (cv01-cv99), slashed zero (zero), fractions (frac),
+    /// and more." An array of feature tags, one tag (or several separated by
+    /// commas or spaces), or an object `{ "ss01": true }` whose true keys are
+    /// the features. Default none.
+    pub fn editor_font_features(&self) -> Vec<String> {
+        let tags = |s: &str| -> Vec<String> {
+            s.split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        match self.get("editor.fontFeatures") {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .flat_map(tags)
+                .collect(),
+            Some(Value::String(s)) => tags(s),
+            Some(Value::Object(map)) => map
+                .iter()
+                .filter(|(_, v)| v.as_bool() == Some(true))
+                .map(|(k, _)| k.clone())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `editor.ligatures`: "Enable font ligatures". Default true (estimate).
+    pub fn editor_ligatures(&self) -> bool {
+        self.bool("editor.ligatures").unwrap_or(true)
+    }
+
+    /// `editor.honorCamelHumps`: "Expand/shrink selection in identifiers and
+    /// literals respecting words written in camel or snake case". Default true
+    /// (estimate).
+    pub fn editor_honor_camel_humps(&self) -> bool {
+        self.bool("editor.honorCamelHumps").unwrap_or(true)
+    }
+
+    /// `editor.useSelectionForSearch`: "Use selected text as initial query for
+    /// Goto dialogs and editor search". Default true (estimate).
+    pub fn editor_use_selection_for_search(&self) -> bool {
+        self.bool("editor.useSelectionForSearch").unwrap_or(true)
+    }
+
+    /// `editor.showFileDetails`: "Show file details in the bottom part of the
+    /// editor". Default true (estimate).
+    pub fn editor_show_file_details(&self) -> bool {
+        self.bool("editor.showFileDetails").unwrap_or(true)
+    }
 }
 
 /// Fleet's documented range for `zoomLevel`.
@@ -257,6 +584,19 @@ fn click_mode(value: Option<&str>, default: ClickMode) -> ClickMode {
         Some("single") | Some("singleclick") | Some("single-click") => ClickMode::Single,
         Some("double") | Some("doubleclick") | Some("double-click") => ClickMode::Double,
         _ => default,
+    }
+}
+
+/// A non-negative whole number, written as a JSON number or a numeric string.
+fn as_usize(v: &Value) -> Option<usize> {
+    match v {
+        Value::Number(n) => n.as_u64().map(|n| n as usize).or_else(|| {
+            n.as_f64()
+                .filter(|f| f.is_finite() && *f >= 0.0 && f.fract() == 0.0)
+                .map(|f| f as usize)
+        }),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
     }
 }
 
@@ -381,6 +721,105 @@ mod tests {
         assert!(s.files_compact_directories());
         assert_eq!(s.files_open_file_mode(), ClickMode::Single);
         assert_eq!(s.files_exclude(), vec![".git".to_string()]);
+        assert_eq!(s.editor_tab_size(), 4);
+        assert_eq!(s.editor_indent_style(), IndentStyle::Spaces);
+        assert!(s.editor_auto_detect_indentation());
+        assert!(s.enable_indenter());
+        assert!(!s.trim_trailing_spaces_on_save());
+        assert!(!s.auto_save());
+        assert_eq!(s.auto_save_delay_ms(), 1000);
+        assert!(!s.create_scratch_on_new_file());
+        assert_eq!(s.local_big_file_minimum_threshold_mb(), 20.0);
+        assert!(!s.editor_soft_wrap_enabled());
+        assert!(!s.editor_guide_to_soft_wrap_by());
+        assert!(s.editor_guides().is_empty());
+        assert!(s.editor_show_visual_guides());
+        assert!(s.editor_show_indent_guides());
+        assert!(s.editor_show_foldings());
+        assert!(s.editor_show_scrollbar_marks());
+        assert!(s.editor_show_sticky_lines());
+        assert_eq!(s.editor_sticky_lines_max_count(), 5);
+        assert!(!s.editor_render_whitespace());
+        assert_eq!(s.editor_line_numbers(), LineNumbers::On);
+        assert_eq!(s.editor_caret_shape(), CaretShape::Line);
+        assert!(s.editor_caret_blinking_enabled());
+        assert!(!s.editor_caret_smooth_animation());
+        assert!(s.editor_active_line_highlight_enabled());
+        assert!(!s.editor_distraction_free_mode());
+        assert!(!s.editor_center_editor_horizontally());
+        assert_eq!(s.editor_font_weight(), 400.0);
+        assert!(s.editor_font_features().is_empty());
+        assert!(s.editor_ligatures());
+        assert!(s.editor_honor_camel_humps());
+        assert!(s.editor_use_selection_for_search());
+        assert!(s.editor_show_file_details());
+    }
+
+    #[test]
+    fn m2_keys_accept_fleet_spellings_and_shapes() {
+        let s = Settings::parse(
+            r#"{
+              "editor.tabSize": 2,
+              "editor.indentStyle": "Tabs",
+              "editor.lineNumbers": "relative",
+              "editor.caretShape": "BLOCK",
+              "editor.renderWhitespace": "all",
+              "editor.guides": [80, 100],
+              "editor.fontFeatures": ["ss01", "zero"],
+              "editor.fontWeight": 500,
+              "autoSave.delay": 250,
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(s.editor_tab_size(), 2);
+        assert_eq!(s.editor_indent_style(), IndentStyle::Tabs);
+        assert_eq!(s.editor_line_numbers(), LineNumbers::Relative);
+        assert_eq!(s.editor_caret_shape(), CaretShape::Block);
+        assert!(s.editor_render_whitespace());
+        assert_eq!(s.editor_guides(), vec![80, 100]);
+        assert_eq!(s.editor_font_features(), vec!["ss01", "zero"]);
+        assert_eq!(s.editor_font_weight(), 500.0);
+        assert_eq!(s.auto_save_delay_ms(), 250);
+
+        let s = Settings::parse(
+            r#"{
+              "editor.tabSize": 0,
+              "editor.indentStyle": "space",
+              "editor.lineNumbers": "Off",
+              "editor.caretShape": "bar",
+              "editor.renderWhitespace": "none",
+              "editor.guides": 120,
+              "editor.fontFeatures": { "ss01": true, "cv02": false, "frac": true }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(s.editor_tab_size(), 4, "zero is not a tab size");
+        assert_eq!(s.editor_indent_style(), IndentStyle::Spaces);
+        assert_eq!(s.editor_line_numbers(), LineNumbers::Off);
+        assert_eq!(s.editor_caret_shape(), CaretShape::Line);
+        assert!(!s.editor_render_whitespace());
+        assert_eq!(s.editor_guides(), vec![120]);
+        let mut features = s.editor_font_features();
+        features.sort();
+        assert_eq!(features, vec!["frac", "ss01"]);
+
+        let s = Settings::parse(
+            r#"{
+              "editor.caretShape": "underline",
+              "editor.renderWhitespace": true,
+              "editor.fontFeatures": "ss02",
+              "editor.lineNumbers": "nonsense"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(s.editor_caret_shape(), CaretShape::Underline);
+        assert!(s.editor_render_whitespace());
+        assert_eq!(s.editor_font_features(), vec!["ss02"]);
+        assert_eq!(
+            s.editor_line_numbers(),
+            LineNumbers::On,
+            "unknown falls back"
+        );
     }
 
     #[test]

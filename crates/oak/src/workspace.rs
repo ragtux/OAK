@@ -9,7 +9,9 @@ use crate::assets::{file_icon, icon};
 use crate::document::Document;
 use crate::editor::{EditorEvent, EditorView};
 use crate::file_tree::{FileTree, FileTreeEvent};
+use crate::find::{FindBar, FindBarEvent};
 use crate::layout::{Layout, PanelLayout};
+use crate::popup::{Prompt, PromptEvent, PromptKind};
 use crate::scrollbar::{scrollbar, EmptyView};
 use crate::settings::{self, AppSettings};
 use crate::theme::{metrics::EMPTY_PANEL_INSET, Metrics, Theme};
@@ -18,11 +20,15 @@ use crate::tooltip::Tooltip;
 use gpui::{
     canvas, deferred, div, point, prelude::*, px, App, Bounds, BoxShadow, Context, Div,
     DragMoveEvent, ElementId, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent,
-    MouseButton, Pixels, Point, Render, ScrollHandle, SharedString, Stateful, Window,
+    MouseButton, Pixels, Point, PromptLevel, Render, ScrollHandle, SharedString, Stateful, Window,
 };
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
+
+/// How many copied texts `editor/paste-from-history` offers.
+const CLIPBOARD_HISTORY: usize = 20;
 
 // ---- panels -------------------------------------------------------------------
 
@@ -215,15 +221,23 @@ struct Pane {
     active: Option<usize>,
     scroll: ScrollHandle,
     focus_handle: FocusHandle,
+    /// The split's find and replace bar, over its active editor.
+    find: Entity<FindBar>,
 }
 
 impl Pane {
-    fn new(cx: &mut App) -> Pane {
+    fn new(cx: &mut Context<Workspace>) -> Pane {
+        let find = cx.new(FindBar::new);
+        cx.subscribe(&find, |this, _, event: &FindBarEvent, cx| match event {
+            FindBarEvent::Closed => this.focus_active_editor(cx),
+        })
+        .detach();
         Pane {
             tabs: Vec::new(),
             active: None,
             scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
+            find,
         }
     }
 
@@ -346,6 +360,12 @@ pub struct Workspace {
     /// One document per open file, shared by every tab and split showing it.
     documents: Vec<Entity<Document>>,
     chooser: Option<Chooser>,
+    /// The prompt popup under the toolbar, when one is open.
+    prompt: Option<Entity<Prompt>>,
+    /// Texts copied or cut in the editor, most recent first (`editor/paste-from-history`).
+    clipboard_history: Vec<String>,
+    /// Bumped on every edit; an `autoSave` timer saves only when it still matches.
+    autosave_generation: u64,
     /// The tab being dragged, whose slot stays empty until the drop.
     dragging_tab: Option<(usize, usize)>,
     toggle_hints: [Option<SharedString>; 3],
@@ -383,6 +403,7 @@ impl Workspace {
     pub fn new(
         root: PathBuf,
         open: Vec<PathBuf>,
+        scratch: bool,
         toggle_hints: [Option<String>; 3],
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -420,6 +441,9 @@ impl Workspace {
             closed: Vec::new(),
             documents: Vec::new(),
             chooser: None,
+            prompt: None,
+            clipboard_history: Vec::new(),
+            autosave_generation: 0,
             dragging_tab: None,
             toggle_hints: toggle_hints.map(|h| h.map(Into::into)),
             focus_handle: cx.focus_handle(),
@@ -427,6 +451,9 @@ impl Workspace {
         };
         for path in open {
             this.open_path(path, false, cx);
+        }
+        if scratch {
+            this.open_scratch(cx);
         }
         if this.panes[0].active.is_some() {
             this.focus_active_editor(cx);
@@ -495,7 +522,10 @@ impl Workspace {
                 return None;
             }
         };
-        let doc = cx.new(|_| Document::new(Some(path.to_path_buf()), &text));
+        let doc = cx.new(|cx| {
+            let settings = &cx.global::<AppSettings>().settings;
+            Document::new(Some(path.to_path_buf()), &text, settings)
+        });
         self.documents.push(doc.clone());
         Some(doc)
     }
@@ -517,20 +547,77 @@ impl Workspace {
     ) -> Entity<EditorView> {
         let editor = cx.new(|cx| EditorView::new(document, cx));
         cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
-            if let EditorEvent::Changed = event {
-                // An edit promotes a preview tab to a real one.
-                for pane in &mut this.panes {
-                    for tab in &mut pane.tabs {
-                        if tab.editor == editor {
-                            tab.preview = false;
+            match event {
+                EditorEvent::Changed => {
+                    // An edit promotes a preview tab to a real one.
+                    for pane in &mut this.panes {
+                        for tab in &mut pane.tabs {
+                            if tab.editor == editor {
+                                tab.preview = false;
+                            }
                         }
                     }
+                    this.schedule_autosave(cx);
                 }
+                EditorEvent::Copied(text) => this.remember_copied(text),
+                EditorEvent::Saved => {}
             }
             cx.notify()
         })
         .detach();
         editor
+    }
+
+    /// `autoSave`: `autoSave.delay` ms after the last edit, every dirty
+    /// document is written.
+    fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
+        let settings = Self::settings(cx);
+        if !settings.auto_save() {
+            return;
+        }
+        let delay = Duration::from_millis(settings.auto_save_delay_ms());
+        self.autosave_generation += 1;
+        let generation = self.autosave_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.autosave_generation == generation {
+                    this.save_dirty(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn save_dirty(&mut self, cx: &mut Context<Self>) {
+        let editors: Vec<_> = self
+            .panes
+            .iter()
+            .flat_map(|p| p.tabs.iter().map(|t| t.editor.clone()))
+            .filter(|e| e.read(cx).is_dirty(cx))
+            .collect();
+        for editor in editors {
+            if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
+                eprintln!("oak: save failed: {e}");
+            }
+        }
+    }
+
+    fn remember_copied(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.clipboard_history.retain(|t| t != text);
+        self.clipboard_history.insert(0, text.to_string());
+        self.clipboard_history.truncate(CLIPBOARD_HISTORY);
+    }
+
+    /// `localBigFileMinimumThreshold`: a file this big asks before it opens.
+    fn is_big_file(path: &Path, cx: &App) -> bool {
+        let threshold = Self::settings(cx).local_big_file_minimum_threshold_mb();
+        std::fs::metadata(path)
+            .map(|m| m.len() as f64 >= threshold * 1024. * 1024.)
+            .unwrap_or(false)
     }
 
     /// Opens `path` in the active split: in a preview tab (replacing the
@@ -547,6 +634,44 @@ impl Workspace {
             self.after_activate(cx);
             return;
         }
+        if Self::is_big_file(&path, cx) {
+            // Fleet confirms before opening a file past the threshold.
+            let Some(window) = cx.windows().first().copied() else {
+                return;
+            };
+            let size_mb = std::fs::metadata(&path)
+                .map(|m| m.len() as f64 / 1024. / 1024.)
+                .unwrap_or(0.);
+            let message = format!(
+                "{} is {size_mb:.1} MB. Open it anyway?",
+                path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            );
+            let answer = window.update(cx, |_, window, cx| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &message,
+                    Some("Large files open without highlighting."),
+                    &["Open", "Cancel"],
+                    cx,
+                )
+            });
+            let Ok(answer) = answer else {
+                return;
+            };
+            cx.spawn(async move |this, cx| {
+                if answer.await == Ok(0) {
+                    let _ = this.update(cx, |this, cx| this.open_path_unchecked(path, preview, cx));
+                }
+            })
+            .detach();
+            return;
+        }
+        self.open_path_unchecked(path, preview, cx);
+    }
+
+    fn open_path_unchecked(&mut self, path: PathBuf, preview: bool, cx: &mut Context<Self>) {
         let Some(document) = self.document_for(&path, cx) else {
             return;
         };
@@ -895,19 +1020,327 @@ impl Workspace {
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_editor_now(window, cx);
     }
+    /// `new-file`: a scratch file when `createScratchOnNewFile` is on, else a
+    /// prompt for the name of a file in the Files tree's selected folder (the
+    /// active file's folder, or the root).
     fn new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
-        let document = cx.new(|_| Document::new(None, ""));
-        self.documents.push(document.clone());
-        let editor = self.new_editor(document, cx);
-        let p = self.active_pane;
-        let pane = &mut self.panes[p];
-        pane.tabs.push(Tab {
-            editor,
-            preview: false,
-        });
-        pane.active = Some(pane.tabs.len() - 1);
-        self.focus_editor_now(window, cx);
+        if Self::settings(cx).create_scratch_on_new_file() {
+            self.open_scratch(cx);
+            self.focus_editor_now(window, cx);
+            return;
+        }
+        let dir = self.target_dir(window, cx);
+        self.open_prompt(PromptKind::NewFile { dir }, "", Vec::new(), window, cx);
+    }
+
+    /// The folder a new file goes into: the Files tree's selection when the
+    /// tree has the focus, else the active file's folder, else the root.
+    fn target_dir(&self, window: &Window, cx: &App) -> PathBuf {
+        let tree = self.file_tree.read(cx);
+        if tree.focus_handle(cx).contains_focused(window, cx) {
+            if let Some(dir) = tree.selected_dir() {
+                return dir;
+            }
+        }
+        self.active_editor()
+            .and_then(|e| e.read(cx).path(cx))
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| self.root.clone())
+    }
+
+    /// Where scratch files live: `scratches/` in Oak's config folder.
+    fn scratch_dir() -> Option<PathBuf> {
+        oak_settings::oak_config_dir().map(|d| d.join("scratches"))
+    }
+
+    /// `--scratch` and `createScratchOnNewFile`: a fresh `scratch_N.txt`.
+    fn open_scratch(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = Self::scratch_dir() else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("oak: cannot create {}: {e}", dir.display());
+            return;
+        }
+        let path = (1..)
+            .map(|n| dir.join(format!("scratch_{n}.txt")))
+            .find(|p| !p.exists())
+            .expect("a free scratch name");
+        if let Err(e) = std::fs::write(&path, "") {
+            eprintln!("oak: cannot create {}: {e}", path.display());
+            return;
+        }
+        self.open_path(path, false, cx);
+    }
+
+    /// The file an action on "the current file" means: the Files tree's
+    /// selected row when the tree has the focus, else the active tab's file.
+    fn target_file(&self, window: &Window, cx: &App) -> Option<PathBuf> {
+        let tree = self.file_tree.read(cx);
+        if tree.focus_handle(cx).contains_focused(window, cx) {
+            return tree.selected_path();
+        }
+        self.active_editor().and_then(|e| e.read(cx).path(cx))
+    }
+
+    fn open_prompt(
+        &mut self,
+        kind: PromptKind,
+        initial: &str,
+        items: Vec<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prompt = cx.new(|cx| Prompt::new(kind, initial, items, cx));
+        cx.subscribe(&prompt, |this, prompt, event: &PromptEvent, cx| {
+            if this.prompt.as_ref() != Some(&prompt) {
+                return;
+            }
+            match event {
+                PromptEvent::Confirm { text, index } => {
+                    let kind = prompt.read(cx).kind.clone();
+                    this.prompt = None;
+                    this.confirm_prompt(kind, text.clone(), *index, cx);
+                }
+                PromptEvent::Cancel => {
+                    this.prompt = None;
+                    this.focus_active_editor(cx);
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+        prompt.read(cx).focus_handle(cx).focus(window, cx);
+        self.prompt = Some(prompt);
         cx.notify();
+    }
+
+    fn confirm_prompt(
+        &mut self,
+        kind: PromptKind,
+        text: String,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
+            PromptKind::GotoLine => {
+                let mut parts = text.split(':');
+                let row = parts.next().and_then(|s| s.trim().parse::<usize>().ok());
+                let column = parts
+                    .next()
+                    .and_then(|s| s.trim().parse::<usize>().ok())
+                    .unwrap_or(1);
+                if let (Some(row), Some(editor)) = (row, self.active_editor().cloned()) {
+                    editor.update(cx, |e, cx| {
+                        e.goto(row.saturating_sub(1), column.saturating_sub(1), cx)
+                    });
+                }
+            }
+            PromptKind::NewFile { dir } => {
+                let name = text.trim();
+                if !name.is_empty() {
+                    let path = dir.join(name);
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if path.exists() {
+                        eprintln!("oak: {} exists", path.display());
+                    } else if let Err(e) = std::fs::write(&path, "") {
+                        eprintln!("oak: cannot create {}: {e}", path.display());
+                    } else {
+                        self.file_tree.update(cx, |tree, cx| tree.reload(cx));
+                        self.open_path(path, false, cx);
+                    }
+                }
+            }
+            PromptKind::Rename { path } => {
+                let name = text.trim();
+                if !name.is_empty() {
+                    let to = path.with_file_name(name);
+                    if to != path {
+                        match std::fs::rename(&path, &to) {
+                            Ok(()) => self.path_renamed(&path, to, cx),
+                            Err(e) => eprintln!("oak: cannot rename {}: {e}", path.display()),
+                        }
+                    }
+                }
+            }
+            PromptKind::LineEndings => {
+                if let Some(editor) = self.active_editor().cloned() {
+                    editor.update(cx, |e, cx| e.set_crlf(index == 1, cx));
+                }
+            }
+            PromptKind::PasteHistory => {
+                if let (Some(text), Some(editor)) = (
+                    self.clipboard_history.get(index).cloned(),
+                    self.active_editor().cloned(),
+                ) {
+                    editor.update(cx, |e, cx| e.paste_text(&text, cx));
+                }
+            }
+        }
+        self.focus_active_editor(cx);
+    }
+
+    /// After a rename on disk: the document and its tabs follow, the tree reloads.
+    fn path_renamed(&mut self, from: &Path, to: PathBuf, cx: &mut Context<Self>) {
+        for doc in &self.documents {
+            let matches = doc.read(cx).path.as_deref() == Some(from);
+            if matches {
+                doc.update(cx, |d, cx| d.set_path(Some(to.clone()), cx));
+            }
+        }
+        self.file_tree.update(cx, |tree, cx| {
+            tree.reload(cx);
+            tree.select_path(&to);
+        });
+        cx.notify();
+    }
+
+    fn goto_line(&mut self, _: &GotoLine, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_editor().is_none() {
+            return;
+        }
+        self.open_prompt(PromptKind::GotoLine, "", Vec::new(), window, cx);
+    }
+
+    fn rename_file(&mut self, _: &RenameFile, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.target_file(window, cx) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.open_prompt(PromptKind::Rename { path }, &name, Vec::new(), window, cx);
+    }
+
+    /// `files/delete`: confirms, then removes the file and closes its tabs.
+    fn delete_file(&mut self, _: &DeleteFile, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.target_file(window, cx) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Delete {name}?"),
+            Some("The file is removed from disk."),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await == Ok(0) {
+                let _ = this.update(cx, |this, cx| this.delete_path(&path, cx));
+            }
+        })
+        .detach();
+    }
+
+    fn delete_path(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        if let Err(e) = result {
+            eprintln!("oak: cannot delete {}: {e}", path.display());
+            return;
+        }
+        for p in 0..self.panes.len() {
+            for ix in (0..self.panes[p].tabs.len()).rev() {
+                let under = self.panes[p].tabs[ix]
+                    .editor
+                    .read(cx)
+                    .path(cx)
+                    .is_some_and(|f| f == path || f.starts_with(path));
+                if under {
+                    self.panes[p].tabs.remove(ix);
+                    let pane = &mut self.panes[p];
+                    pane.active = if pane.tabs.is_empty() {
+                        None
+                    } else {
+                        Some(pane.active.unwrap_or(0).min(pane.tabs.len() - 1))
+                    };
+                }
+            }
+        }
+        self.closed.retain(|c| c != path);
+        self.prune_documents(cx);
+        self.file_tree.update(cx, |tree, cx| tree.reload(cx));
+        self.focus_active_editor(cx);
+        cx.notify();
+    }
+
+    fn change_line_endings(
+        &mut self,
+        _: &ChangeLineEndings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_editor().is_none() {
+            return;
+        }
+        self.open_prompt(
+            PromptKind::LineEndings,
+            "",
+            vec!["LF".into(), "CRLF".into()],
+            window,
+            cx,
+        );
+    }
+
+    fn paste_from_history(
+        &mut self,
+        _: &PasteFromHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_editor().is_none() || self.clipboard_history.is_empty() {
+            return;
+        }
+        let items = self
+            .clipboard_history
+            .iter()
+            .map(|t| {
+                let one_line: String = t.lines().next().unwrap_or("").chars().take(120).collect();
+                if t.contains('\n') {
+                    format!("{one_line} …").into()
+                } else {
+                    one_line.into()
+                }
+            })
+            .collect();
+        self.open_prompt(PromptKind::PasteHistory, "", items, window, cx);
+    }
+
+    // ---- find and replace ------------------------------------------------------
+
+    fn find(&mut self, _: &Find, window: &mut Window, cx: &mut Context<Self>) {
+        let bar = self.panes[self.active_pane].find.clone();
+        bar.update(cx, |bar, cx| bar.show(false, window, cx));
+    }
+    fn replace(&mut self, _: &Replace, window: &mut Window, cx: &mut Context<Self>) {
+        let bar = self.panes[self.active_pane].find.clone();
+        bar.update(cx, |bar, cx| bar.show(true, window, cx));
+    }
+    fn replace_one(&mut self, _: &ReplaceOne, _: &mut Window, cx: &mut Context<Self>) {
+        let bar = self.panes[self.active_pane].find.clone();
+        bar.update(cx, |bar, cx| bar.replace_one(cx));
+    }
+    fn replace_all(&mut self, _: &ReplaceAll, _: &mut Window, cx: &mut Context<Self>) {
+        let bar = self.panes[self.active_pane].find.clone();
+        bar.update(cx, |bar, cx| bar.replace_all(cx));
+    }
+    fn next_occurrence(&mut self, _: &NextOccurrence, _: &mut Window, cx: &mut Context<Self>) {
+        let bar = self.panes[self.active_pane].find.clone();
+        bar.update(cx, |bar, cx| bar.next(cx));
+    }
+    fn prev_occurrence(&mut self, _: &PrevOccurrence, _: &mut Window, cx: &mut Context<Self>) {
+        let bar = self.panes[self.active_pane].find.clone();
+        bar.update(cx, |bar, cx| bar.prev(cx));
     }
     fn quit(&mut self, _: &Quit, _: &mut Window, cx: &mut Context<Self>) {
         cx.quit();
@@ -1551,7 +1984,12 @@ impl Workspace {
     ) -> impl IntoElement {
         let pane = &self.panes[p];
         let body = match pane.active_tab() {
-            Some(tab) => div().flex_1().min_h_0().child(tab.editor.clone()),
+            Some(tab) => div()
+                .flex_1()
+                .min_h_0()
+                .relative()
+                .child(tab.editor.clone())
+                .child(pane.find.clone()),
             None => div()
                 .flex_1()
                 .min_h_0()
@@ -1578,9 +2016,11 @@ impl Workspace {
             .min_w_0()
             .flex()
             .flex_col()
-            .when(Self::settings(cx).editor_show_tabs(), |d| {
-                d.child(self.render_tab_row(p, theme, m, window, cx))
-            })
+            .when(
+                Self::settings(cx).editor_show_tabs()
+                    && !Self::settings(cx).editor_distraction_free_mode(),
+                |d| d.child(self.render_tab_row(p, theme, m, window, cx)),
+            )
             .child(body)
     }
 
@@ -1996,6 +2436,7 @@ impl Workspace {
             // Fleet's order: line ending, caret, encoding, language (Windows probe).
             right.push(if crlf { "CRLF".into() } else { "LF".into() });
             right.push(format!("{}:{}", caret.row + 1, caret.column + 1).into());
+            // Only UTF-8 text opens (`document_for`), so the encoding is fixed.
             right.push("UTF-8".into());
             right.push(
                 language
@@ -2004,6 +2445,7 @@ impl Workspace {
                     .into(),
             );
         }
+        let entity = cx.entity();
         let sep = |theme: &Theme| {
             div()
                 .px(px(7. * m.zoom))
@@ -2035,13 +2477,22 @@ impl Workspace {
                     })),
             )
             .child(div().flex_1())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(m.status_gap))
-                    .children(right.into_iter().map(|t| div().child(t))),
-            )
+            .child(div().flex().items_center().gap(px(m.status_gap)).children(
+                right.into_iter().enumerate().map(|(i, t)| {
+                    // The line ending opens `editor/change-line-endings`.
+                    let entity = entity.clone();
+                    div()
+                        .id(ElementId::NamedInteger("status".into(), i as u64))
+                        .when(i == 0, |d| {
+                            d.cursor_pointer().on_click(move |_, window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.change_line_endings(&ChangeLineEndings, window, cx)
+                                })
+                            })
+                        })
+                        .child(t)
+                }),
+            ))
     }
 }
 
@@ -2056,6 +2507,11 @@ impl Render for Workspace {
             .position(|pane| pane.focus_handle.contains_focused(window, cx))
         {
             self.active_pane = p;
+        }
+        // Each split's find bar searches the split's active editor.
+        for pane in &self.panes {
+            let editor = pane.active_tab().map(|t| t.editor.clone());
+            pane.find.update(cx, |bar, cx| bar.set_editor(editor, cx));
         }
         let root_name = self.file_tree.read(cx).root_name();
         let title = match self.active_editor() {
@@ -2125,6 +2581,7 @@ impl Render for Workspace {
                     .child(self.render_panel(Side::Right, &theme, &m, cx))
             });
         let chooser = self.render_chooser(&theme, &m, cx);
+        let prompt = self.prompt.clone();
         let drop_tab = cx.entity();
         div()
             .key_context("Workspace")
@@ -2164,6 +2621,17 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::edit_settings_file))
             .on_action(cx.listener(Self::edit_keymap_file))
             .on_action(cx.listener(Self::quit))
+            .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::replace))
+            .on_action(cx.listener(Self::replace_one))
+            .on_action(cx.listener(Self::replace_all))
+            .on_action(cx.listener(Self::next_occurrence))
+            .on_action(cx.listener(Self::prev_occurrence))
+            .on_action(cx.listener(Self::goto_line))
+            .on_action(cx.listener(Self::rename_file))
+            .on_action(cx.listener(Self::delete_file))
+            .on_action(cx.listener(Self::change_line_endings))
+            .on_action(cx.listener(Self::paste_from_history))
             .on_drag_move(
                 cx.listener(|this, e: &DragMoveEvent<SplitterDrag>, window, cx| {
                     let side = e.drag(cx).side;
@@ -2200,6 +2668,7 @@ impl Render for Workspace {
                 d.child(self.render_status_bar(&theme, &m, cx))
             })
             .children(chooser)
+            .children(prompt)
     }
 }
 

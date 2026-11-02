@@ -41,6 +41,17 @@ actions!(
         MinimizeWindow,
         EditSettingsFile,
         EditKeymapFile,
+        Find,
+        Replace,
+        ReplaceOne,
+        ReplaceAll,
+        NextOccurrence,
+        PrevOccurrence,
+        GotoLine,
+        RenameFile,
+        DeleteFile,
+        ChangeLineEndings,
+        PasteFromHistory,
     ]
 );
 
@@ -91,8 +102,21 @@ actions!(
         Paste,
         SelectAll,
         CommentLine,
+        CommentBlock,
         JoinLines,
         Cancel,
+        AddCaretAbove,
+        AddCaretBelow,
+        AddCaretsToLineEnds,
+        SelectNextOccurrence,
+        SelectAllOccurrences,
+        UnselectOccurrence,
+        ExpandSelection,
+        ShrinkSelection,
+        MoveToMatchingBracket,
+        ExpandFolding,
+        CollapseFolding,
+        ToggleCase,
     ]
 );
 

@@ -1,0 +1,37 @@
+{
+  "name": "fold",
+  "about": "M2: the gutter hovered for fold chevrons on main.rs, the struct block folded by a click on its chevron (line 7, the island starts at 376 so the box is at 416-432), the caret moved past the fold with the keyboard, then the block unfolded by a click on the {...} mark; last, scrolled into fn main for the sticky lines.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["hover", 424, 219, 900], ["shot", "fold-hover"],
+      ["click"], ["wait", 800], ["shot", "folded"],
+      ["key", "down"], ["key", "down"], ["key", "down"], ["wait", 500], ["shot", "folded-caret"],
+      ["move", 560, 219], ["click"], ["wait", 800], ["shot", "unfolded"],
+      ["move", 900, 400], ["wait", 300],
+      ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["hover", 424, 219, 900], ["shot", "fold-hover"],
+      ["click"], ["wait", 600], ["shot", "folded"],
+      ["key", "down"], ["key", "down"], ["key", "down"], ["wait", 500], ["shot", "folded-caret"],
+      ["move", 560, 219], ["click"], ["wait", 600], ["shot", "unfolded"],
+      ["move", 900, 400], ["wait", 300],
+      ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "chevron row (y=219)", "axis": "x", "at": 219, "from": 376, "to": 480, "edges": ["island left", "chevron box left", "chevron box right"]}
+  ],
+  "samples": [
+    {"name": "chevron hover wash", "at": [424, 219], "key": "editor.foldIndicator.background.hovered"}
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "name": "find",
+  "about": "M2: the find bar (Ctrl+F) empty and with a query, then the replace bar (Ctrl+H) with both fields filled, on main.rs. Fleet: main.rs opened through Goto; Oak: from the command line. The scans read the field's edges along a column through it and along its middle row (batch 5 gave 841.3-1258 x 88-116 for the field in Fleet, whose right window margin is 6 to Oak's 8).",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["key", "ctrl+f"], ["wait", 1000], ["shot", "find"],
+      ["type", "Record"], ["wait", 1200], ["shot", "find-typed"],
+      ["key", "enter"], ["wait", 600], ["shot", "find-next"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+h"], ["wait", 1000], ["shot", "replace"],
+      ["type", "Record"], ["wait", 600], ["key", "tab"], ["wait", 300], ["type", "Row"], ["wait", 800], ["shot", "replace-typed"],
+      ["key", "escape"], ["wait", 500]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["key", "ctrl+home"], ["wait", 300],
+      ["key", "ctrl+f"], ["wait", 800], ["shot", "find"],
+      ["type", "Record"], ["wait", 800], ["shot", "find-typed"],
+      ["key", "enter"], ["wait", 500], ["shot", "find-next"],
+      ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+h"], ["wait", 800], ["shot", "replace"],
+      ["type", "Record"], ["wait", 400], ["key", "tab"], ["wait", 300], ["type", "Row"], ["wait", 600], ["shot", "replace-typed"],
+      ["key", "escape"], ["wait", 500]
+    ]
+  },
+  "oak_args": ["{workspace}/src/main.rs"],
+  "scans": [
+    {"name": "find bar column (x=1000)", "axis": "y", "at": 1000, "from": 36, "to": 200, "edges": ["island top", "find bar top", "find bar bottom"]},
+    {"name": "find bar row (y=102)", "axis": "x", "at": 102, "from": 800, "to": 1280, "edges": ["field left", "field right", "island right"]}
+  ],
+  "samples": [
+    {"name": "focus border", "at": [1000, 88], "key": "inputField.focusBorder.default"},
+    {"name": "match box", "at": [520, 219], "key": "editor.search.results"}
+  ]
+}

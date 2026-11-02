@@ -646,6 +646,123 @@
     {
       "key": "ctrl-q",
       "action": "quit"
+    },
+    {
+      "mac": "cmd-alt-up",
+      "key": "ctrl-alt-up",
+      "action": "editor/add-caret-above"
+    },
+    {
+      "mac": "cmd-alt-down",
+      "key": "ctrl-alt-down",
+      "action": "editor/add-caret-below"
+    },
+    {
+      "key": "alt-shift-i",
+      "action": "editor/add-carets-to-ends-of-selected-lines"
+    },
+    {
+      "mac": "cmd-shift-l",
+      "key": "ctrl-shift-l",
+      "action": "select-all-occurrences"
+    },
+    {
+      "mac": "cmd-shift-d",
+      "key": "ctrl-shift-d",
+      "action": "unselect-occurrence"
+    },
+    {
+      "mac": "cmd-shift-u",
+      "key": "ctrl-shift-u",
+      "action": "toggle-case"
+    },
+    {
+      "mac": "cmd-shift-v",
+      "key": "ctrl-shift-v",
+      "action": "editor/paste-from-history"
+    },
+    {
+      "key": "ctrl-m",
+      "action": "editor/move-caret-to-matching-bracket"
+    },
+    {
+      "mac": "cmd-alt-rightbracket",
+      "key": "ctrl-shift-rightbracket",
+      "action": "editor/expand-folding"
+    },
+    {
+      "mac": "cmd-alt-leftbracket",
+      "key": "ctrl-shift-leftbracket",
+      "action": "editor/collapse-folding"
+    },
+    {
+      "mac": "cmd-alt-f",
+      "key": "ctrl-h",
+      "action": "replace"
+    },
+    {
+      "mac": "cmd-alt-return",
+      "key": "ctrl-alt-return",
+      "action": "replace-all"
+    },
+    {
+      "mac": "cmd-alt-numpadenter",
+      "key": "ctrl-alt-numpadenter",
+      "action": "replace-all"
+    },
+    {
+      "key": "alt-return",
+      "action": "replace-one"
+    },
+    {
+      "key": "alt-numpadenter",
+      "action": "replace-one"
+    },
+    {
+      "mac": "cmd-g",
+      "key": "ctrl-g",
+      "action": "next-occurrence"
+    },
+    {
+      "win": "f3",
+      "linux": "f3",
+      "action": "next-occurrence"
+    },
+    {
+      "mac": "cmd-shift-g",
+      "key": "ctrl-shift-g",
+      "action": "prev-occurrence"
+    },
+    {
+      "win": "shift-f3",
+      "linux": "shift-f3",
+      "action": "prev-occurrence"
+    },
+    {
+      "mac": "ctrl-r",
+      "key": "f2",
+      "action": "files/rename"
+    },
+    {
+      "mac": "cmd-backspace",
+      "key": "shift-delete",
+      "action": "files/delete"
+    },
+    {
+      "key": "return",
+      "action": "wrap-line"
+    },
+    {
+      "key": "numpadenter",
+      "action": "wrap-line"
+    },
+    {
+      "key": "shift-return",
+      "action": "wrap-line"
+    },
+    {
+      "key": "shift-numpadenter",
+      "action": "wrap-line"
     }
   ]
 }

@@ -1,0 +1,40 @@
+{
+  "name": "wrap",
+  "about": "M2 rendering settings, the ones batch 5 left: soft wrap on the 300-column line, rendered whitespace, an editor.guides ruler at 80, relative line numbers and a block caret. Fleet reads them from its settings.json for the run; Oak gets the same file through the oak-settings step (live reload). Both open long-line.txt from the fixture.",
+  "size": [1280, 800],
+  "pos": [100, 100],
+  "settle_ms": 6000,
+  "fleet_settings": {
+    "editor.softWrapEnabled": true,
+    "editor.renderWhitespace": true,
+    "editor.guides": [80],
+    "editor.lineNumbers": "Relative",
+    "editor.caretShape": "Block"
+  },
+  "steps": {
+    "fleet": [
+      ["wait", 2000], ["key", "escape"], ["wait", 500],
+      ["key", "ctrl+k"], ["wait", 800], ["type", "wide.txt"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
+      ["key", "ctrl+home"], ["key", "down"], ["key", "down"], ["wait", 600], ["shot", "wrapped"]
+    ],
+    "oak": [
+      ["wait", 1000],
+      ["oak-settings", {
+        "editor.softWrapEnabled": true,
+        "editor.renderWhitespace": true,
+        "editor.guides": [80],
+        "editor.lineNumbers": "Relative",
+        "editor.caretShape": "Block"
+      }],
+      ["wait", 1500],
+      ["key", "ctrl+home"], ["key", "down"], ["key", "down"], ["wait", 600], ["shot", "wrapped"]
+    ]
+  },
+  "oak_args": ["{workspace}/long/wide.txt"],
+  "scans": [
+    {"name": "ruler row (y=300)", "axis": "x", "at": 300, "from": 376, "to": 1280, "edges": ["island left", "ruler"]}
+  ],
+  "samples": [
+    {"name": "whitespace dot", "at": [470, 87], "key": "editor.whitespaceIndicator"}
+  ]
+}

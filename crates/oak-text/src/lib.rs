@@ -9,9 +9,12 @@
 pub mod analysis;
 mod buffer;
 mod editor;
+pub mod indent;
+pub mod search;
 
 pub use buffer::{Buffer, Edit, Point};
 pub use editor::{Cursor, Selection, TextEditor};
+pub use indent::Indent;
 
 /// Spaces per tab stop, the Fleet default ("Indent: 4 spaces").
 pub const TAB_WIDTH: usize = 4;

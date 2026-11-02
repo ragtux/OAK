@@ -4,7 +4,6 @@
 //! the brackets later.
 
 use crate::buffer::Buffer;
-use crate::TAB_WIDTH;
 use std::ops::Range;
 
 fn is_word(c: char) -> bool {
@@ -107,14 +106,15 @@ pub fn matching_bracket(buffer: &Buffer, offset: usize) -> Option<(usize, usize)
     None
 }
 
-/// The indentation of `line` in columns (a tab counts to the next tab stop),
-/// or `None` for a blank line.
-pub fn indent_of(line: &str) -> Option<usize> {
+/// The indentation of `line` in columns (a tab counts to the next stop of
+/// `width`), or `None` for a blank line.
+pub fn indent_of(line: &str, width: usize) -> Option<usize> {
+    let width = width.max(1);
     let mut column = 0;
     for c in line.chars() {
         match c {
             ' ' => column += 1,
-            '\t' => column += TAB_WIDTH - column % TAB_WIDTH,
+            '\t' => column += width - column % width,
             _ => return Some(column),
         }
     }
@@ -125,7 +125,7 @@ pub fn indent_of(line: &str) -> Option<usize> {
 /// smaller of its nearest non-blank neighbours', so guides run through the
 /// blank lines inside a block and stop between blocks.
 pub fn effective_indent(buffer: &Buffer, row: usize) -> usize {
-    let indent = |row: usize| indent_of(&buffer.line(row));
+    let indent = |row: usize| indent_of(&buffer.line(row), buffer.indent.width);
     if let Some(i) = indent(row) {
         return i;
     }
@@ -166,7 +166,8 @@ pub fn current_block(buffer: &Buffer, caret_row: usize) -> Option<(usize, Range<
     if depth == 0 {
         return None;
     }
-    let col = (depth - 1) / TAB_WIDTH * TAB_WIDTH;
+    let width = buffer.indent.width.max(1);
+    let col = (depth - 1) / width * width;
     let mut start = anchor;
     while start > 0 && anchor - start < REACH && effective_indent(buffer, start - 1) > col {
         start -= 1;
@@ -218,8 +219,24 @@ mod tests {
     fn guides_cross_blank_lines_inside_a_block() {
         let b = Buffer::new("fn a() {\n    x;\n\n    y;\n}\n\nfn b() {}");
         assert_eq!(guide_indents(&b, 0..7), vec![0, 4, 4, 4, 0, 0, 0]);
-        assert_eq!(indent_of("\tx"), Some(4));
-        assert_eq!(indent_of("   "), None);
+        assert_eq!(indent_of("\tx", 4), Some(4));
+        assert_eq!(indent_of("\tx", 2), Some(2));
+        assert_eq!(indent_of(" \t x", 4), Some(5));
+        assert_eq!(indent_of("   ", 4), None);
+    }
+
+    #[test]
+    fn guides_and_blocks_follow_the_buffer_indent_width() {
+        let mut b = Buffer::new("fn a() {\n  if x {\n    y;\n  }\n}\n");
+        b.set_indent(crate::Indent::spaces(2));
+        assert_eq!(guide_indents(&b, 0..5), vec![0, 2, 4, 2, 0]);
+        assert_eq!(current_block(&b, 2), Some((2, 2..3)));
+        assert_eq!(current_block(&b, 1), Some((2, 2..3)));
+        assert_eq!(current_block(&b, 3), Some((0, 1..4)));
+        let mut t = Buffer::new("a {\n\tb;\n}\n");
+        t.set_indent(crate::Indent::tabs(8));
+        assert_eq!(guide_indents(&t, 0..3), vec![0, 8, 0]);
+        assert_eq!(current_block(&t, 1), Some((0, 1..2)));
     }
 
     #[test]

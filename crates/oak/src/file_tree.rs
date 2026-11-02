@@ -207,6 +207,82 @@ impl FileTree {
         self.root.name()
     }
 
+    /// The selected row's path (the root's for the root row).
+    pub fn selected_path(&self) -> Option<PathBuf> {
+        self.selected
+            .and_then(|ix| self.rows.get(ix))
+            .map(|r| r.path.clone())
+    }
+
+    /// The folder the selection stands in: the row itself when it is a folder,
+    /// else its parent.
+    pub fn selected_dir(&self) -> Option<PathBuf> {
+        let row = self.selected.and_then(|ix| self.rows.get(ix))?;
+        if row.is_dir {
+            Some(row.path.clone())
+        } else {
+            row.path.parent().map(Path::to_path_buf)
+        }
+    }
+
+    /// Re-reads the folders after the disk changed (a file created, renamed
+    /// or deleted), keeping what was expanded and selected where it still exists.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let expanded: Vec<PathBuf> = self
+            .rows
+            .iter()
+            .filter(|r| r.is_dir && r.expanded && !r.index.is_empty())
+            .map(|r| r.path.clone())
+            .collect();
+        let selected = self.selected_path();
+        self.root.children = None;
+        self.root.load(&self.options);
+        for path in expanded {
+            self.expand_to(&path);
+        }
+        self.rebuild_rows();
+        if let Some(path) = selected {
+            if let Some(ix) = self.rows.iter().position(|r| r.path == path) {
+                self.selected = Some(ix);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Expands the folders down to `path` (itself included when it is a folder).
+    fn expand_to(&mut self, path: &Path) {
+        let Ok(rel) = path.strip_prefix(&self.root.path) else {
+            return;
+        };
+        let options = self.options.clone();
+        let mut node = &mut self.root;
+        let mut remaining: Vec<_> = rel.components().collect();
+        while !remaining.is_empty() {
+            node.load(&options);
+            let Some(children) = node.children.as_mut() else {
+                return;
+            };
+            let found = children.iter().position(|child| {
+                child.names.len() <= remaining.len()
+                    && child
+                        .names
+                        .iter()
+                        .zip(remaining.iter())
+                        .all(|(name, comp)| comp.as_os_str() == name.as_str())
+            });
+            let Some(i) = found else {
+                return;
+            };
+            let n = children[i].names.len();
+            remaining.drain(..n);
+            node = &mut children[i];
+            if node.is_dir {
+                node.load(&options);
+                node.expanded = true;
+            }
+        }
+    }
+
     /// Re-reads the settings; a change in what is shown reloads the folder.
     fn refresh_options(&mut self, cx: &App) {
         let options = Options::from(&cx.global::<AppSettings>().settings);

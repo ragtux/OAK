@@ -9,3 +9,4 @@ publish.workspace = true
 
 [dependencies]
 ropey.workspace = true
+regex.workspace = true

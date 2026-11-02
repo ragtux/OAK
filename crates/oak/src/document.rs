@@ -1,11 +1,12 @@
-//! One open file: its buffer, language and highlight spans, shared by every
-//! editor view that shows it (a tab in each split). Views keep their own
-//! cursor and scroll; edits made through any of them land here, and every
-//! view observes the document to repaint.
+//! One open file: its buffer, language, highlight spans, syntax tree and
+//! folds, shared by every editor view that shows it (a tab in each split).
+//! Views keep their own cursor and scroll; edits made through any of them
+//! land here, and every view observes the document to repaint.
 
 use gpui::{Context, EventEmitter};
-use oak_syntax::{Highlighter, Language, Span};
-use oak_text::Buffer;
+use oak_settings::{EditorConfig, EndOfLine, IndentStyle, Settings};
+use oak_syntax::{Fold, Highlighter, Language, Span, SyntaxTree};
+use oak_text::{Buffer, Indent};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -15,28 +16,55 @@ pub enum DocumentEvent {
     Saved,
 }
 
+/// What the indentation was derived from, to notice a settings change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IndentSource {
+    tab_size: usize,
+    style: IndentStyle,
+    auto_detect: bool,
+}
+
 pub struct Document {
     pub path: Option<PathBuf>,
     pub buffer: Buffer,
     pub language: Option<Language>,
+    /// The `.editorconfig` values for the path, read when the file opened.
+    pub editorconfig: EditorConfig,
     highlighter: Highlighter,
     spans: Vec<Span>,
     spans_version: Option<u64>,
+    tree: Option<SyntaxTree>,
+    tree_version: Option<u64>,
+    folds: Vec<Fold>,
+    folds_version: Option<u64>,
+    indent_source: Option<IndentSource>,
 }
 
 impl EventEmitter<DocumentEvent> for Document {}
 
 impl Document {
-    pub fn new(path: Option<PathBuf>, text: &str) -> Self {
+    pub fn new(path: Option<PathBuf>, text: &str, settings: &Settings) -> Self {
         let language = path.as_deref().and_then(Language::from_path);
-        Document {
+        let editorconfig = path
+            .as_deref()
+            .map(EditorConfig::for_path)
+            .unwrap_or_default();
+        let mut doc = Document {
             path,
             buffer: Buffer::new(text),
             language,
+            editorconfig,
             highlighter: Highlighter::new(),
             spans: Vec::new(),
             spans_version: None,
-        }
+            tree: None,
+            tree_version: None,
+            folds: Vec::new(),
+            folds_version: None,
+            indent_source: None,
+        };
+        doc.refresh_indent(settings);
+        doc
     }
 
     pub fn title(&self) -> String {
@@ -51,6 +79,57 @@ impl Document {
         self.buffer.is_dirty()
     }
 
+    /// The file moved (`files/rename`): the language follows the new name.
+    pub fn set_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.language = path.as_deref().and_then(Language::from_path);
+        self.editorconfig = path
+            .as_deref()
+            .map(EditorConfig::for_path)
+            .unwrap_or_default();
+        self.path = path;
+        self.spans_version = None;
+        self.tree = None;
+        self.tree_version = None;
+        self.folds_version = None;
+        cx.emit(DocumentEvent::Changed);
+        cx.notify();
+    }
+
+    /// The indentation the buffer edits with: `editor.tabSize` and
+    /// `editor.indentStyle`, overridden by `.editorconfig`, overridden by what
+    /// the file itself uses when `editor.autoDetectIndentation` is on.
+    pub fn refresh_indent(&mut self, settings: &Settings) {
+        let source = IndentSource {
+            tab_size: settings.editor_tab_size(),
+            style: settings.editor_indent_style(),
+            auto_detect: settings.editor_auto_detect_indentation(),
+        };
+        if self.indent_source.as_ref() == Some(&source) {
+            return;
+        }
+        let mut indent = match source.style {
+            IndentStyle::Tabs => Indent::tabs(source.tab_size),
+            IndentStyle::Spaces => Indent::spaces(source.tab_size),
+        };
+        let ec = &self.editorconfig;
+        if let Some(width) = ec.indent_size.or(ec.tab_width) {
+            indent.width = width.max(1);
+        }
+        if let Some(style) = ec.indent_style {
+            indent.use_tabs = style == IndentStyle::Tabs;
+        }
+        if source.auto_detect {
+            if let Some(detected) = Indent::detect(&self.buffer.text()) {
+                indent = detected;
+                if detected.use_tabs {
+                    indent.width = ec.tab_width.unwrap_or(source.tab_size).max(1);
+                }
+            }
+        }
+        self.buffer.set_indent(indent);
+        self.indent_source = Some(source);
+    }
+
     /// Runs an edit on the buffer and tells every view.
     pub fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Buffer)) {
         let before = self.buffer.version();
@@ -61,11 +140,45 @@ impl Document {
         }
     }
 
-    pub fn save(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
-        let Some(path) = &self.path else {
+    /// `editor/change-line-endings`: the file is written back with the other
+    /// ending; the text in memory stays LF.
+    pub fn set_crlf(&mut self, crlf: bool, cx: &mut Context<Self>) {
+        if self.buffer.uses_crlf() != crlf {
+            self.buffer.set_crlf(crlf);
+            cx.emit(DocumentEvent::Changed);
+            cx.notify();
+        }
+    }
+
+    /// Writes the file. `trimTrailingSpacesOnSave` (and `.editorconfig`'s
+    /// `trim_trailing_whitespace`) strips line ends first, except on the rows
+    /// holding carets; `insert_final_newline` adds the trailing newline.
+    pub fn save(
+        &mut self,
+        caret_rows: &[usize],
+        settings: &Settings,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let Some(path) = self.path.clone() else {
             return Ok(());
         };
-        std::fs::write(path, self.buffer.text_for_file())?;
+        let trim = self
+            .editorconfig
+            .trim_trailing_whitespace
+            .unwrap_or_else(|| settings.trim_trailing_spaces_on_save());
+        let final_newline = self.editorconfig.insert_final_newline.unwrap_or(false);
+        if let Some(eol) = self.editorconfig.end_of_line {
+            self.buffer.set_crlf(eol == EndOfLine::CrLf);
+        }
+        self.edit(cx, |buffer| {
+            if trim {
+                buffer.trim_trailing_whitespace(caret_rows);
+            }
+            if final_newline {
+                buffer.ensure_final_newline();
+            }
+        });
+        std::fs::write(&path, self.buffer.text_for_file())?;
         self.buffer.mark_saved();
         cx.emit(DocumentEvent::Saved);
         cx.notify();
@@ -85,5 +198,39 @@ impl Document {
             self.spans_version = Some(version);
         }
         &self.spans
+    }
+
+    /// The syntax tree for the current text (none for plain text).
+    pub fn syntax(&mut self) -> Option<&SyntaxTree> {
+        let version = self.buffer.version();
+        if self.tree_version != Some(version) {
+            let text = self.buffer.text();
+            match (&mut self.tree, self.language) {
+                (Some(tree), Some(lang)) if tree.language() == lang => tree.reparse(&text),
+                (slot, Some(lang)) => *slot = SyntaxTree::parse(lang, &text),
+                (slot, None) => *slot = None,
+            }
+            self.tree_version = Some(version);
+        }
+        self.tree.as_ref()
+    }
+
+    /// The folds as last computed (`folds` refreshes them each frame).
+    pub fn cached_folds(&self) -> &[Fold] {
+        &self.folds
+    }
+
+    /// The foldable regions of the current text, from the syntax tree.
+    pub fn folds(&mut self) -> &[Fold] {
+        let version = self.buffer.version();
+        if self.folds_version != Some(version) {
+            let text = self.buffer.text();
+            self.folds = match self.syntax() {
+                Some(tree) => tree.folds(&text),
+                None => Vec::new(),
+            };
+            self.folds_version = Some(version);
+        }
+        &self.folds
     }
 }

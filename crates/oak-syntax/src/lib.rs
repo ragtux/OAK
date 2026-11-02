@@ -10,6 +10,9 @@ use std::ops::Range;
 use std::path::Path;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
 
+pub mod structure;
+pub use structure::{enclosing_heads, Fold, SyntaxTree};
+
 /// The languages Oak ships grammars for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Language {
@@ -47,6 +50,22 @@ impl Language {
             Language::Rust => Some("// "),
             Language::Toml => Some("# "),
             Language::Json | Language::Markdown => None,
+        }
+    }
+
+    /// The block-comment delimiters, for a block-comment toggle.
+    pub fn block_comment(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Language::Rust => Some(("/*", "*/")),
+            Language::Markdown => Some(("<!--", "-->")),
+            Language::Json | Language::Toml => None,
+        }
+    }
+
+    /// Whether typing an opening bracket or quote inserts its closer.
+    pub fn auto_pairs(self) -> bool {
+        match self {
+            Language::Rust | Language::Json | Language::Toml | Language::Markdown => true,
         }
     }
 

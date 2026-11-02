@@ -36,6 +36,7 @@ tree-sitter-json = "0.24"
 tree-sitter-toml-ng = "0.7"
 tree-sitter-md = "0.5"
 tempfile = "3"
+regex = "1"
 
 # Cargo.lock pins libc to 0.2.189: gpui -> http_client -> async-tar -> xattr 0.2.3 reads `libc::ENOATTR`,
 # which libc 0.2.190 removed on Linux. Drop the pin once async-tar moves to xattr 1.x.

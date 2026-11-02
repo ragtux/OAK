@@ -148,6 +148,46 @@ pub mod metrics {
     pub const BREAKPOINT_HINT_SIZE: f32 = 10.;
     /// The shadow under sticky lines (batch 5, estimate).
     pub const STICKY_SHADOW: f32 = 3.;
+    /// The fold chevron's box is 16 (`ICON_SIZE`); the folded mark `{…}` is 3
+    /// character cells wide with a radius of about 3 (batch 5).
+    pub const FOLDED_MARK_CELLS: f32 = 3.;
+    pub const FOLDED_MARK_RADIUS: f32 = 3.;
+    /// The find bar (batch 5): a 416.67 × 28 field 16 from the island's right
+    /// edge and 12 below the tab row; a 1.33 focus border inside a 2 px focus
+    /// outline; the replace field 6 below it. Inside the field, from the left:
+    /// text at 6; from the right: 8 pad, the 16 px close box, 8, a separator,
+    /// 6, three 20 px toggles 2 apart, 7, a separator, 8, the ↓ and ↑ boxes 6
+    /// apart, 8, the match counter. The chevron that opens the replace row sits
+    /// in a 16 px box 5.33 left of the field (its glyph 10 from the field).
+    pub const FIND_BAR_WIDTH: f32 = 416.67;
+    pub const FIND_BAR_HEIGHT: f32 = 28.;
+    pub const FIND_BAR_RIGHT: f32 = 16.;
+    pub const FIND_BAR_TOP: f32 = 12.;
+    pub const FIND_BAR_ROW_GAP: f32 = 6.;
+    pub const FIND_BAR_PAD_LEFT: f32 = 6.;
+    pub const FIND_BAR_PAD_RIGHT: f32 = 8.;
+    pub const FIND_BAR_CLOSE_GAP: f32 = 8.;
+    pub const FIND_BAR_SEPARATOR_GAP_LEFT: f32 = 6.;
+    pub const FIND_BAR_SEPARATOR_GAP_RIGHT: f32 = 7.;
+    pub const FIND_BAR_TOGGLE: f32 = 20.;
+    pub const FIND_BAR_TOGGLE_GAP: f32 = 2.;
+    pub const FIND_BAR_ARROW_GAP: f32 = 6.;
+    pub const FIND_BAR_COUNTER_GAP: f32 = 8.;
+    pub const FIND_BAR_CHEVRON_GAP: f32 = 5.33;
+    /// Estimates: the field's corner radius and its separators' height, and a
+    /// text button's horizontal padding ("Replace", "Replace All").
+    pub const INPUT_RADIUS: f32 = 4.;
+    pub const INPUT_FOCUS_BORDER: f32 = 4. / 3.;
+    pub const FIND_BAR_SEPARATOR_HEIGHT: f32 = 16.;
+    pub const TEXT_BUTTON_PAD_X: f32 = 8.;
+    /// Soft-wrapped continuation rows start at the text origin (estimate: not
+    /// probed; batch 5 left soft wrap, whitespace and the guides for a scene each).
+    pub const WRAP_INDENT: f32 = 0.;
+    /// A centred editor (`editor.centerEditorHorizontally`) keeps this many
+    /// columns of text width (estimate).
+    pub const CENTERED_COLUMNS: f32 = 120.;
+    /// The caret blinks on a 500 ms half period (estimate; harness G).
+    pub const CARET_BLINK_MS: u64 = 500;
     /// The thumb sits flush with the island's right edge (Windows probe).
     pub const SCROLLBAR_THUMB: f32 = 6.;
     pub const SCROLLBAR_THUMB_MIN: f32 = 24.;
@@ -287,6 +327,29 @@ scaled_metrics!(
     breakpoint_hint_x = BREAKPOINT_HINT_X,
     breakpoint_hint_size = BREAKPOINT_HINT_SIZE,
     sticky_shadow = STICKY_SHADOW,
+    folded_mark_cells = FOLDED_MARK_CELLS,
+    folded_mark_radius = FOLDED_MARK_RADIUS,
+    find_bar_width = FIND_BAR_WIDTH,
+    find_bar_height = FIND_BAR_HEIGHT,
+    find_bar_right = FIND_BAR_RIGHT,
+    find_bar_top = FIND_BAR_TOP,
+    find_bar_row_gap = FIND_BAR_ROW_GAP,
+    find_bar_pad_left = FIND_BAR_PAD_LEFT,
+    find_bar_pad_right = FIND_BAR_PAD_RIGHT,
+    find_bar_close_gap = FIND_BAR_CLOSE_GAP,
+    find_bar_separator_gap_left = FIND_BAR_SEPARATOR_GAP_LEFT,
+    find_bar_separator_gap_right = FIND_BAR_SEPARATOR_GAP_RIGHT,
+    find_bar_toggle = FIND_BAR_TOGGLE,
+    find_bar_toggle_gap = FIND_BAR_TOGGLE_GAP,
+    find_bar_arrow_gap = FIND_BAR_ARROW_GAP,
+    find_bar_counter_gap = FIND_BAR_COUNTER_GAP,
+    find_bar_chevron_gap = FIND_BAR_CHEVRON_GAP,
+    input_radius = INPUT_RADIUS,
+    input_focus_border = INPUT_FOCUS_BORDER,
+    find_bar_separator_height = FIND_BAR_SEPARATOR_HEIGHT,
+    text_button_pad_x = TEXT_BUTTON_PAD_X,
+    wrap_indent = WRAP_INDENT,
+    centered_columns = CENTERED_COLUMNS,
     scrollbar_thumb = SCROLLBAR_THUMB,
     scrollbar_thumb_min = SCROLLBAR_THUMB_MIN,
     popup_scrollbar_thumb = POPUP_SCROLLBAR_THUMB,
@@ -407,7 +470,15 @@ pub struct Theme {
     pub line_number: Hsla,
     pub line_number_current: Hsla,
     pub whitespace_indicator: Hsla,
+    /// `editor.foldIndicator.*`: the gutter chevron and its hover wash.
     pub fold_icon: Hsla,
+    pub fold_icon_hovered: Hsla,
+    pub fold_bg_hovered: Hsla,
+    /// `editor.foldedMark.*`: the `{…}` box on a folded line.
+    pub folded_mark_bg: Hsla,
+    pub folded_mark_text: Hsla,
+    /// `editor.currentLine.scrollbarMark`.
+    pub current_line_mark: Hsla,
     pub selection: Hsla,
     pub selection_focused: Hsla,
     pub search_match_bg: Hsla,
@@ -448,7 +519,32 @@ pub struct Theme {
     pub button_secondary_border: Hsla,
     pub button_secondary_text: Hsla,
     pub toggle_on_bg: Hsla,
+    pub toggle_on_bg_hovered: Hsla,
+    pub toggle_on_border: Hsla,
     pub toggle_on_text: Hsla,
+    // toggleButton.off.*
+    pub toggle_off_bg: Hsla,
+    pub toggle_off_bg_hovered: Hsla,
+    pub toggle_off_bg_pressed: Hsla,
+    pub toggle_off_border: Hsla,
+    pub toggle_off_text: Hsla,
+    pub toggle_off_text_hovered: Hsla,
+    // ghostButton.off.text.*
+    pub ghost_text: Hsla,
+    pub ghost_text_hovered: Hsla,
+    // inputField.*
+    pub input_bg: Hsla,
+    pub input_bg_hovered: Hsla,
+    pub input_border: Hsla,
+    pub input_border_hovered: Hsla,
+    pub input_focus_border: Hsla,
+    pub input_focus_outline: Hsla,
+    pub input_text: Hsla,
+    pub input_hint: Hsla,
+    pub input_caret: Hsla,
+    pub input_selection: Hsla,
+    // search.*
+    pub search_counter_bg: Hsla,
     pub smart_mode_enabled: Hsla,
     pub link: Hsla,
 
@@ -637,6 +733,20 @@ impl Theme {
                 "editor.foldIndicator.icon.default",
                 Color::rgb(0x7A, 0x7F, 0x86),
             ),
+            fold_icon_hovered: c(
+                "editor.foldIndicator.icon.hovered",
+                Color::rgb(0x7A, 0x7F, 0x86),
+            ),
+            fold_bg_hovered: c(
+                "editor.foldIndicator.background.hovered",
+                text_primary.with_alpha(0x16),
+            ),
+            folded_mark_bg: c(
+                "editor.foldedMark.background",
+                text_primary.with_alpha(0x1B),
+            ),
+            folded_mark_text: c("editor.foldedMark.text", Color::rgb(0x89, 0x8E, 0x94)),
+            current_line_mark: c("editor.currentLine.scrollbarMark", text_primary),
             selection: selection_attr("editor.selection")
                 .unwrap_or_else(|| to_hsla(Color::rgb(0x4C, 0x51, 0x57))),
             selection_focused: selection_attr("editor.selection.focused")
@@ -704,7 +814,49 @@ impl Theme {
                 "toggleButton.on.background.default",
                 Color::rgb(0x08, 0x70, 0xE4),
             ),
+            toggle_on_bg_hovered: c(
+                "toggleButton.on.background.hovered",
+                Color::rgb(0x18, 0x68, 0xCB),
+            ),
+            toggle_on_border: c("toggleButton.on.border.default", transparent),
             toggle_on_text: c("toggleButton.on.text.default", Color::rgb(0xFF, 0xFF, 0xFF)),
+            toggle_off_bg: c("toggleButton.off.background.default", transparent),
+            toggle_off_bg_hovered: c(
+                "toggleButton.off.background.hovered",
+                text_primary.with_alpha(0x12),
+            ),
+            toggle_off_bg_pressed: c(
+                "toggleButton.off.background.pressed",
+                text_primary.with_alpha(0x16),
+            ),
+            toggle_off_border: c(
+                "toggleButton.off.border.default",
+                text_primary.with_alpha(0x21),
+            ),
+            toggle_off_text: c("toggleButton.off.text.default", text_primary),
+            toggle_off_text_hovered: c("toggleButton.off.text.hovered", text_primary),
+            ghost_text: c("ghostButton.off.text.default", text_primary),
+            ghost_text_hovered: c("ghostButton.off.text.hovered", text_primary),
+            input_bg: c("inputField.background.default", transparent),
+            input_bg_hovered: c("inputField.background.hovered", transparent),
+            input_border: c("inputField.border.default", text_primary.with_alpha(0x21)),
+            input_border_hovered: c("inputField.border.hovered", text_primary.with_alpha(0x43)),
+            input_focus_border: c(
+                "inputField.focusBorder.default",
+                Color::rgb(0x2A, 0x7D, 0xEB),
+            ),
+            input_focus_outline: c(
+                "inputField.focusOutline.default",
+                Color::rgb(0x22, 0x42, 0x71),
+            ),
+            input_text: c("inputField.text.default", text_primary),
+            input_hint: c("inputField.hint.default", Color::rgb(0x89, 0x8E, 0x94)),
+            input_caret: c("inputField.caret.default", text_primary),
+            input_selection: c(
+                "inputField.selectionBackground.default",
+                Color::rgb(0x22, 0x42, 0x71),
+            ),
+            search_counter_bg: c("search.counter.background", text_primary.with_alpha(0x2C)),
             smart_mode_enabled: c("smartMode.background.enabled", Color::rgb(0x2A, 0x7D, 0xEB)),
             link: first(&["link.text.default"], Color::rgb(0x4B, 0x8D, 0xEC)),
             syntax,
