@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 458 180" width="458" height="180" role="img" aria-label="WEEP">
+  <!-- The WEEP mark: the boxed block wordmark of the original WEEP.CC logo, ink on paper, drawn as plain polygons so it needs no font. -->
+  <rect x="5" y="5" width="448" height="170" fill="#fff" stroke="#000" stroke-width="10"/>
+  <g transform="translate(40 40)" fill="#000" fill-rule="evenodd">
+    <path d="M0 0H24L38 66L51 0H69L82 66L96 0H120L97 100H71L60 46L49 100H23Z"/>
+    <path d="M134 0H204V20H158V40H198V60H158V80H204V100H134Z"/>
+    <path d="M218 0H288V20H242V40H282V60H242V80H288V100H218Z"/>
+    <path d="M302 0H346A32 32 0 0 1 346 64H326V100H302Z M326 20H344A12 12 0 0 1 344 44H326Z"/>
+  </g>
+</svg>
