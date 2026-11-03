@@ -2218,6 +2218,7 @@ impl Workspace {
         &self,
         theme: &Theme,
         m: &Metrics,
+        self_entity: Entity<Workspace>,
         cx: &App,
     ) -> Vec<AnyElement> {
         let mut out = Vec::new();
@@ -2227,7 +2228,7 @@ impl Workspace {
         if let Some(popup) = &self.run_popup {
             out.push(popup.clone().into_any_element());
         }
-        out.extend(self.smart_overlay());
+        out.extend(self.smart_overlays(theme, m, self_entity.clone()));
         if let Some(menu) = &self.menu {
             out.push(menu.clone().into_any_element());
         }

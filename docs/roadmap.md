@@ -442,9 +442,16 @@ button's menu (unknown), the hovered error's tooltip against Fleet, a click
 on the gutter icon against Fleet, the "..." icon's size, paths in the
 output as links, and LSP diagnostics (M7).
 
-### M7 Smart Mode via LSP (XL; first pass built 2026-11-03, batch 12 not run)
+### M7 Smart Mode via LSP (XL; first pass built 2026-11-03, batch 12 half run)
 
-Built in one pass without Fleet (`docs/fleet-probe.md`, thirteenth pass):
+Built in one pass without Fleet, then corrected the same night from the
+`smart` scene played into the user's Fleet (`docs/fleet-probe.md`,
+thirteenth pass): the completion popup, its documentation pane, the
+parameter info card, the Smart Mode card under the lightning and the status
+bar's symbol crumbs now follow Fleet's measurements; the declaration,
+usages and diagnostics surfaces stay estimates (the Fleet run derailed on
+the Jump-to prompt before them). Fleet's Rust Smart Mode turned out to be
+rust-analyzer as well, so Oak and Fleet answer from the same server.
 the `oak-lsp` crate speaks the Language Server Protocol to a server on its
 pipes (JSON-RPC framing on two threads, the handshake, typed requests whose
 answers come back with their ids, the server's own requests answered or
@@ -495,10 +502,14 @@ Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
 - Probes: batch 12 as the `smart` scene (written, not yet run on either
   editor).
 
-Left for later: the inline rename (`editor.rename.current|entries` boxes
+Left for later: inlay hints (`textDocument/inlayHint`: Fleet shows
+parameter names and types inside the line, which needs the display map to
+widen lines), the run triangle in the gutter at `fn main` (a code lens),
+the inline rename (`editor.rename.current|entries` boxes
 and `rename.autoRenameOnTyping`; Oak renames through a prompt), code
 vision (`editor.showCodeVision`: a row above declarations needs the display
-map), the navigation bar (`editor.showNavBar`), `insert-snippet` (Fleet's
+map), `goto/line` as Fleet's "Jump to" card in the Goto frame (an M3
+estimate the pass corrected on paper), `insert-snippet` (Fleet's
 `snippets.json` format is unread), `complete-statement`,
 `show-quick-fixes-preview`, `go-to-next|prev-history-item` (what Fleet's
 history items are is unprobed), the inline completion keys (AI), incremental

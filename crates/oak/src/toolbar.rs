@@ -62,15 +62,17 @@ pub struct ToolbarState {
     pub toggle_hints: [Option<SharedString>; 3],
     /// Unread notifications: a dot on the bell (estimate: batch 7).
     pub unread_notifications: usize,
-    /// M7: the lightning button's state and its tooltip's second line.
+    /// M7: the lightning button's state, and whether its card is open
+    /// (the button then fills with the state's colour).
     pub smart: SmartIndicator,
-    pub smart_detail: SharedString,
+    pub smart_card_open: bool,
 }
 
-/// What the lightning button shows (`smartMode.*`): off is the plain
-/// icon, on the icon on `smartMode.background.enabled`, starting adds the
-/// `smartMode.border.loading` ring, an error paints
-/// `smartMode.background.error` (estimates: batch 12 has not run).
+/// What the lightning button shows (thirteenth pass): the icon in the
+/// state's colour (the primary icon colour off, `smartMode.background.enabled`
+/// on or starting, `smartMode.background.error` when a server failed), and
+/// while its card is open the button filled with that colour under a bright
+/// icon. The tooltip reads "Smart Mode".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmartIndicator {
     Off,
@@ -229,31 +231,18 @@ pub fn render(
         )
         .child(div().flex_1().min_w_0())
         .child({
-            // The lightning (M7): its tooltip names the state, a click opens
-            // the Smart Mode menu.
+            // The lightning (M7): a click turns Smart Mode on or opens its card.
             let on_smart = on_smart.clone();
-            let (bg, ring, fg, label) = match state.smart {
-                SmartIndicator::Off => (None, None, theme.icon_primary, "Smart Mode is off"),
-                SmartIndicator::Starting => (
-                    None,
-                    Some(theme.smart_mode_loading),
-                    theme.icon_primary,
-                    "Smart Mode is starting",
-                ),
-                SmartIndicator::On => (
-                    Some(theme.smart_mode_enabled),
-                    None,
-                    theme.text_bright,
-                    "Smart Mode is on",
-                ),
-                SmartIndicator::Error => (
-                    Some(theme.smart_mode_error),
-                    None,
-                    theme.text_bright,
-                    "Smart Mode failed",
-                ),
+            let open = state.smart_card_open;
+            let tint = match state.smart {
+                SmartIndicator::Off => theme.icon_primary,
+                SmartIndicator::Starting | SmartIndicator::On => theme.smart_mode_enabled,
+                SmartIndicator::Error => theme.smart_mode_error,
             };
-            let detail = state.smart_detail.clone();
+            let fill = match state.smart {
+                SmartIndicator::Off => theme.ghost_pressed,
+                _ => tint,
+            };
             div()
                 .id("smart-mode")
                 .size(px(m.toolbar_button))
@@ -264,23 +253,22 @@ pub fn render(
                 .rounded(px(m.smart_mode_radius))
                 .cursor_pointer()
                 .occlude()
-                .when_some(bg, |d, bg| d.bg(bg))
-                .when_some(ring, |d, ring| {
-                    d.border(px(m.smart_mode_ring)).border_color(ring)
-                })
-                .when(bg.is_none(), |d| {
+                .when(open, |d| d.bg(fill))
+                .when(!open, |d| {
                     d.hover(|s| s.bg(theme.ghost_hovered))
                         .active(|s| s.bg(theme.ghost_pressed))
                 })
-                .map(|d| {
-                    if detail.is_empty() {
-                        d.tooltip(Tooltip::text(label))
-                    } else {
-                        d.tooltip(Tooltip::with_detail(label, detail))
-                    }
-                })
+                .tooltip(Tooltip::text("Smart Mode"))
                 .on_click(move |event, window, cx| on_smart(event.position(), window, cx))
-                .child(icon("expui/actions/lightning", m.icon_size, fg))
+                .child(icon(
+                    "expui/actions/lightning",
+                    m.icon_size,
+                    if open && state.smart != SmartIndicator::Off {
+                        theme.text_bright
+                    } else {
+                        tint
+                    },
+                ))
         })
         .child(
             icon_button("run", "expui/run/run", theme, m)

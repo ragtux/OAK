@@ -256,9 +256,10 @@ impl Settings {
     }
 
     /// `editor.showNavBar`: "Show the navigation bar in the bottom part of
-    /// the editor" (default estimate: off, as the probe shots show no bar).
+    /// the editor": the symbols around the caret after the path in the
+    /// status bar, on by default (thirteenth pass).
     pub fn editor_show_nav_bar(&self) -> bool {
-        self.bool("editor.showNavBar").unwrap_or(false)
+        self.bool("editor.showNavBar").unwrap_or(true)
     }
 
     /// `editor.showCodeVision` ("Show code interlines", on by default).

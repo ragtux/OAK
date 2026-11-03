@@ -1,167 +1,687 @@
 {
   "name": "smart",
   "about": "Batch 12: Smart Mode. src/main.rs with the server attached (the lightning, semantic colours), the lightning's tooltip and menu, the completion popup after `index.` on a new line, the parameter info after `len(`, the documentation popup (Ctrl+Shift+I) and the declaration jump (Ctrl+B, then Alt+Left back) on `index`, the usages popup (Ctrl+U) on `Record`, then misc/broken.rs for the server's diagnostics in the badge and the widget. Fleet's side needs Smart Mode on for the fixture (the Trust dialog accepted and the backend downloaded) before the run; the scan lines are Oak's estimates until the Fleet shots exist.",
-  "size": [1280, 800],
-  "pos": [100, 100],
+  "size": [
+    1280,
+    800
+  ],
+  "pos": [
+    100,
+    100
+  ],
   "settle_ms": 6000,
   "steps": {
     "fleet": [
-      ["wait", 2000],
-      ["key", "ctrl+k"],
-      ["wait", 800],
-      ["type", "main.rs"],
-      ["wait", 1500],
-      ["key", "enter"],
-      ["wait", 15000],
-      ["shot", "main"],
-      ["hover", 994, 18, 1200],
-      ["shot", "lightning-hover"],
-      ["click"],
-      ["wait", 1200],
-      ["shot", "lightning-menu"],
-      ["key", "escape"],
-      ["wait", 500],
-      ["key", "ctrl+l"],
-      ["wait", 800],
-      ["type", "29:5"],
-      ["key", "enter"],
-      ["wait", 800],
-      ["key", "end"],
-      ["key", "enter"],
-      ["type", "index."],
-      ["wait", 2500],
-      ["shot", "completion"],
-      ["key", "ctrl+shift+i"],
-      ["wait", 1500],
-      ["shot", "completion-docs"],
-      ["key", "escape"],
-      ["wait", 300],
-      ["type", "len("],
-      ["wait", 2000],
-      ["shot", "parameter-info"],
-      ["key", "escape"],
-      ["key", "ctrl+z"],
-      ["key", "ctrl+z"],
-      ["key", "ctrl+z"],
-      ["key", "ctrl+z"],
-      ["wait", 500],
-      ["key", "ctrl+l"],
-      ["wait", 800],
-      ["type", "29:23"],
-      ["key", "enter"],
-      ["wait", 800],
-      ["key", "ctrl+shift+i"],
-      ["wait", 2000],
-      ["shot", "documentation"],
-      ["key", "escape"],
-      ["wait", 300],
-      ["key", "ctrl+b"],
-      ["wait", 2000],
-      ["shot", "declaration"],
-      ["key", "alt+left"],
-      ["wait", 1000],
-      ["shot", "back"],
-      ["key", "ctrl+l"],
-      ["wait", 800],
-      ["type", "29:42"],
-      ["key", "enter"],
-      ["wait", 800],
-      ["key", "ctrl+u"],
-      ["wait", 2500],
-      ["shot", "usages"],
-      ["key", "escape"],
-      ["wait", 500],
-      ["key", "ctrl+k"],
-      ["wait", 800],
-      ["type", "broken.rs"],
-      ["wait", 1500],
-      ["key", "enter"],
-      ["wait", 6000],
-      ["shot", "broken"],
-      ["hover", 1242, 91, 1200],
-      ["click"],
-      ["wait", 1500],
-      ["shot", "problems"],
-      ["key", "escape"]
+      [
+        "wait",
+        2000
+      ],
+      [
+        "key",
+        "ctrl+k"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "type",
+        "main.rs"
+      ],
+      [
+        "wait",
+        1500
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        15000
+      ],
+      [
+        "shot",
+        "main"
+      ],
+      [
+        "hover",
+        994,
+        18,
+        1200
+      ],
+      [
+        "shot",
+        "lightning-hover"
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        1200
+      ],
+      [
+        "shot",
+        "lightning-menu"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        500
+      ],
+      [
+        "key",
+        "ctrl+l"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "type",
+        "29:5"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "key",
+        "end"
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "type",
+        "index."
+      ],
+      [
+        "wait",
+        2500
+      ],
+      [
+        "shot",
+        "completion"
+      ],
+      [
+        "key",
+        "ctrl+shift+i"
+      ],
+      [
+        "wait",
+        1500
+      ],
+      [
+        "shot",
+        "completion-docs"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        300
+      ],
+      [
+        "type",
+        "len("
+      ],
+      [
+        "wait",
+        2000
+      ],
+      [
+        "shot",
+        "parameter-info"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "wait",
+        500
+      ],
+      [
+        "key",
+        "ctrl+l"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "type",
+        "29:23"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "key",
+        "ctrl+shift+i"
+      ],
+      [
+        "wait",
+        2000
+      ],
+      [
+        "shot",
+        "documentation"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        300
+      ],
+      [
+        "key",
+        "ctrl+b"
+      ],
+      [
+        "wait",
+        2000
+      ],
+      [
+        "shot",
+        "declaration"
+      ],
+      [
+        "key",
+        "alt+left"
+      ],
+      [
+        "wait",
+        1000
+      ],
+      [
+        "shot",
+        "back"
+      ],
+      [
+        "key",
+        "ctrl+l"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "type",
+        "29:42"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "key",
+        "ctrl+u"
+      ],
+      [
+        "wait",
+        2500
+      ],
+      [
+        "shot",
+        "usages"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        500
+      ],
+      [
+        "key",
+        "ctrl+k"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "type",
+        "broken.rs"
+      ],
+      [
+        "wait",
+        1500
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        6000
+      ],
+      [
+        "shot",
+        "broken"
+      ],
+      [
+        "hover",
+        1242,
+        91,
+        1200
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        1500
+      ],
+      [
+        "shot",
+        "problems"
+      ],
+      [
+        "key",
+        "escape"
+      ]
     ],
     "oak": [
-      ["wait", 2000],
-      ["key", "ctrl+k"],
-      ["wait", 600],
-      ["type", "main.rs"],
-      ["wait", 800],
-      ["key", "enter"],
-      ["wait", 15000],
-      ["shot", "main"],
-      ["hover", 994, 18, 1200],
-      ["shot", "lightning-hover"],
-      ["click"],
-      ["wait", 1000],
-      ["shot", "lightning-menu"],
-      ["key", "escape"],
-      ["wait", 500],
-      ["key", "ctrl+l"],
-      ["wait", 600],
-      ["type", "29:5"],
-      ["key", "enter"],
-      ["wait", 600],
-      ["key", "end"],
-      ["key", "enter"],
-      ["type", "index."],
-      ["wait", 2500],
-      ["shot", "completion"],
-      ["key", "ctrl+shift+i"],
-      ["wait", 1500],
-      ["shot", "completion-docs"],
-      ["key", "escape"],
-      ["wait", 300],
-      ["type", "len("],
-      ["wait", 2000],
-      ["shot", "parameter-info"],
-      ["key", "escape"],
-      ["key", "ctrl+z"],
-      ["key", "ctrl+z"],
-      ["key", "ctrl+z"],
-      ["key", "ctrl+z"],
-      ["wait", 500],
-      ["key", "ctrl+l"],
-      ["wait", 600],
-      ["type", "29:23"],
-      ["key", "enter"],
-      ["wait", 600],
-      ["key", "ctrl+shift+i"],
-      ["wait", 2000],
-      ["shot", "documentation"],
-      ["key", "escape"],
-      ["wait", 300],
-      ["key", "ctrl+b"],
-      ["wait", 2000],
-      ["shot", "declaration"],
-      ["key", "alt+left"],
-      ["wait", 1000],
-      ["shot", "back"],
-      ["key", "ctrl+l"],
-      ["wait", 600],
-      ["type", "29:42"],
-      ["key", "enter"],
-      ["wait", 600],
-      ["key", "ctrl+u"],
-      ["wait", 2500],
-      ["shot", "usages"],
-      ["key", "escape"],
-      ["wait", 500],
-      ["key", "ctrl+k"],
-      ["wait", 600],
-      ["type", "broken.rs"],
-      ["wait", 800],
-      ["key", "enter"],
-      ["wait", 6000],
-      ["shot", "broken"],
-      ["hover", 1242, 91, 1200],
-      ["click"],
-      ["wait", 1200],
-      ["shot", "problems"],
-      ["key", "escape"]
+      [
+        "wait",
+        2000
+      ],
+      [
+        "key",
+        "ctrl+k"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "type",
+        "main.rs"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        15000
+      ],
+      [
+        "shot",
+        "main"
+      ],
+      [
+        "hover",
+        994,
+        18,
+        1200
+      ],
+      [
+        "shot",
+        "lightning-hover"
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        1000
+      ],
+      [
+        "shot",
+        "lightning-menu"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        500
+      ],
+      [
+        "key",
+        "ctrl+l"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "type",
+        "29:5"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "key",
+        "end"
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "type",
+        "index."
+      ],
+      [
+        "wait",
+        2500
+      ],
+      [
+        "shot",
+        "completion"
+      ],
+      [
+        "key",
+        "ctrl+shift+i"
+      ],
+      [
+        "wait",
+        1500
+      ],
+      [
+        "shot",
+        "completion-docs"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        300
+      ],
+      [
+        "type",
+        "len("
+      ],
+      [
+        "wait",
+        2000
+      ],
+      [
+        "shot",
+        "parameter-info"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "key",
+        "ctrl+z"
+      ],
+      [
+        "wait",
+        500
+      ],
+      [
+        "key",
+        "ctrl+l"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "type",
+        "29:23"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "key",
+        "ctrl+shift+i"
+      ],
+      [
+        "wait",
+        2000
+      ],
+      [
+        "shot",
+        "documentation"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        300
+      ],
+      [
+        "key",
+        "ctrl+b"
+      ],
+      [
+        "wait",
+        2000
+      ],
+      [
+        "shot",
+        "declaration"
+      ],
+      [
+        "key",
+        "alt+left"
+      ],
+      [
+        "wait",
+        1000
+      ],
+      [
+        "shot",
+        "back"
+      ],
+      [
+        "key",
+        "ctrl+l"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "type",
+        "29:42"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "key",
+        "ctrl+u"
+      ],
+      [
+        "wait",
+        2500
+      ],
+      [
+        "shot",
+        "usages"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        500
+      ],
+      [
+        "key",
+        "ctrl+k"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "type",
+        "broken.rs"
+      ],
+      [
+        "wait",
+        800
+      ],
+      [
+        "key",
+        "enter"
+      ],
+      [
+        "wait",
+        6000
+      ],
+      [
+        "shot",
+        "broken"
+      ],
+      [
+        "hover",
+        1242,
+        91,
+        1200
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        1200
+      ],
+      [
+        "shot",
+        "problems"
+      ],
+      [
+        "key",
+        "escape"
+      ]
     ]
   },
   "scans": [
@@ -171,7 +691,10 @@
       "at": 18,
       "from": 940,
       "to": 1040,
-      "edges": ["button left", "button right"]
+      "edges": [
+        "button left",
+        "button right"
+      ]
     },
     {
       "name": "badge row (y=91)",
@@ -179,13 +702,21 @@
       "at": 91,
       "from": 1150,
       "to": 1280,
-      "edges": ["badge left", "badge right", "scrollbar", "island right"]
+      "edges": [
+        "badge left",
+        "badge right",
+        "scrollbar",
+        "island right"
+      ]
     }
   ],
   "samples": [
     {
       "name": "lightning on",
-      "at": [994, 18],
+      "at": [
+        994,
+        18
+      ],
       "key": "smartMode.background.enabled"
     }
   ]

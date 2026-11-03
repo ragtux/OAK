@@ -2793,13 +2793,15 @@ impl Workspace {
         let mut crumbs: Vec<SharedString> = Vec::new();
         let mut right: Vec<SharedString> = Vec::new();
         if let Some(editor) = self.active_editor().cloned() {
-            let (path, title, crlf, caret, language) = editor.update(cx, |e, cx| {
+            let nav_bar = Self::settings(cx).editor_show_nav_bar();
+            let (path, title, crlf, caret, language, chain) = editor.update(cx, |e, cx| {
                 (
                     e.path(cx),
                     e.title(cx),
                     e.uses_crlf(cx),
                     e.cursor_position(cx),
                     e.language(cx),
+                    if nav_bar { e.nav_chain(cx) } else { Vec::new() },
                 )
             });
             if let Some(path) = &path {
@@ -2811,6 +2813,9 @@ impl Workspace {
             } else {
                 crumbs.push(title.into());
             }
+            // `editor.showNavBar`: the symbols around the caret follow the path
+            // (thirteenth pass: "src / main.rs / Record").
+            crumbs.extend(chain.into_iter().map(SharedString::from));
             // Fleet's order: line ending, caret, encoding, language (Windows probe).
             right.push(if crlf { "CRLF".into() } else { "LF".into() });
             right.push(format!("{}:{}", caret.row + 1, caret.column + 1).into());
@@ -2901,7 +2906,8 @@ impl Render for Workspace {
             self.last_title = title;
         }
         let entity = cx.entity();
-        let (smart, smart_detail) = self.smart_indicator();
+        let (smart, _) = self.smart_indicator();
+        let smart_card_open = self.smart.card_open;
         let toolbar = toolbar::render(
             toolbar::ToolbarState {
                 workspace_name: root_name.into(),
@@ -2914,7 +2920,7 @@ impl Render for Workspace {
                 toggle_hints: workbench::toggle_hints(cx),
                 unread_notifications: self.notifications.read(cx).unread(),
                 smart,
-                smart_detail,
+                smart_card_open,
             },
             &theme,
             &m,
@@ -2932,7 +2938,7 @@ impl Render for Workspace {
                     entity.update(cx, |this, cx| this.show_branches(at, window, cx))
                 }
             },
-            move |at, _, cx| entity.update(cx, |this, cx| this.show_smart_menu(at, cx)),
+            move |_, _, cx| entity.update(cx, |this, cx| this.lightning_clicked(cx)),
         );
         let left = self.panels[0].open;
         let bottom = self.panels[1].open;
@@ -3127,7 +3133,7 @@ impl Render for Workspace {
             })
             .children(chooser)
             .children(prompt)
-            .children(self.render_workbench_overlays(&theme, &m, cx))
+            .children(self.render_workbench_overlays(&theme, &m, cx.entity(), cx))
     }
 }
 

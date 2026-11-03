@@ -79,6 +79,8 @@ pub struct SmartState {
     /// The quick fixes fetched for the expanded problem: its index, titles.
     pub(super) fixes: Option<(usize, Vec<String>)>,
     fixes_for: Option<usize>,
+    /// `show-documentation` toggled the pane; it stays for later popups.
+    docs_wanted: bool,
     auto_epoch: u64,
     auto_task: Option<Task<()>>,
     /// The char under the pointer, for the documentation on hover.
@@ -91,28 +93,14 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// The expui icon for a completion item's kind (estimates: Fleet draws
-/// its own set).
-fn kind_icon(kind: Option<CompletionItemKind>) -> &'static str {
+/// The disc a completion row shows before its label: Fleet paints a
+/// coloured circle with a letter for callables (an "m" for a method, an
+/// "f" for a function, both red) and nothing for the rest (thirteenth pass).
+fn kind_disc(kind: Option<CompletionItemKind>) -> Option<&'static str> {
     match kind {
-        Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::CONSTRUCTOR) => {
-            "expui/nodes/function"
-        }
-        Some(CompletionItemKind::METHOD) => "expui/nodes/method",
-        Some(CompletionItemKind::FIELD) => "expui/nodes/field",
-        Some(CompletionItemKind::PROPERTY) => "expui/nodes/property",
-        Some(CompletionItemKind::VARIABLE) => "expui/nodes/variable",
-        Some(CompletionItemKind::CLASS) | Some(CompletionItemKind::STRUCT) => "expui/nodes/class",
-        Some(CompletionItemKind::INTERFACE) => "expui/nodes/interface",
-        Some(CompletionItemKind::MODULE) => "expui/nodes/module",
-        Some(CompletionItemKind::ENUM) => "expui/nodes/enum",
-        Some(CompletionItemKind::ENUM_MEMBER) | Some(CompletionItemKind::CONSTANT) => {
-            "expui/nodes/constant"
-        }
-        Some(CompletionItemKind::TYPE_PARAMETER) => "expui/nodes/parameter",
-        Some(CompletionItemKind::FILE) | Some(CompletionItemKind::FOLDER) => "expui/nodes/folder",
-        Some(CompletionItemKind::KEYWORD) => "expui/nodes/tag",
-        _ => "expui/nodes/unknown",
+        Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::CONSTRUCTOR) => Some("f"),
+        Some(CompletionItemKind::METHOD) => Some("m"),
+        _ => None,
     }
 }
 
@@ -187,7 +175,7 @@ impl EditorView {
             scroll_top: 0,
             docs: None,
             docs_for: None,
-            docs_shown: false,
+            docs_shown: self.smart.docs_wanted,
         });
         self.refilter_completions(cx);
         if let (Some(label), Some(popup)) = (keep_selected, self.smart.completion.as_mut()) {
@@ -264,13 +252,14 @@ impl EditorView {
     }
 
     /// `show-documentation` while the completion popup is open toggles its
-    /// documentation pane; `false` when no popup is open (the workspace then
-    /// asks for the hover at the caret).
+    /// documentation pane, which then stays for later popups; `false` when
+    /// no popup is open (the workspace then asks for the hover at the caret).
     pub fn toggle_completion_docs(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(popup) = self.smart.completion.as_mut() else {
             return false;
         };
         popup.docs_shown = !popup.docs_shown;
+        self.smart.docs_wanted = popup.docs_shown;
         if popup.docs_shown {
             self.request_docs(cx);
         }
@@ -692,6 +681,35 @@ impl EditorView {
         Some(doc.buffer.line_to_char(row) + col)
     }
 
+    /// The names of the blocks around the caret, outer first, for the
+    /// status bar's crumbs (`editor.showNavBar`: Fleet appends the symbol
+    /// chain after the path, with or without a server, thirteenth pass).
+    pub fn nav_chain(&mut self, cx: &mut App) -> Vec<String> {
+        let row = self.cursor_position(cx).row;
+        self.document.update(cx, |doc, _| {
+            let text = doc.buffer.text();
+            let folds = doc.folds().to_vec();
+            let heads = oak_syntax::enclosing_heads(&folds, row);
+            let Some(tree) = doc.syntax() else {
+                return Vec::new();
+            };
+            let symbols = tree.symbols(&text);
+            let mut chain: Vec<String> = Vec::new();
+            for head in heads {
+                if let Some(s) = symbols.iter().find(|s| s.row == head) {
+                    chain.push(s.name.clone());
+                }
+            }
+            // The caret on a symbol's own row counts too.
+            if let Some(s) = symbols.iter().find(|s| s.row == row) {
+                if chain.last() != Some(&s.name) {
+                    chain.push(s.name.clone());
+                }
+            }
+            chain
+        })
+    }
+
     // ---- geometry ----------------------------------------------------------------
 
     /// A char's cell, relative to the editor element's origin.
@@ -824,6 +842,7 @@ impl EditorView {
             self.adjust_range(p.start..p.start, p.version, cx).start
         };
         let anchor = self.char_bounds(start, window, cx);
+        let font_size = self.tm.font_size;
         let popup = self.smart.completion.as_mut().expect("open");
         let max_rows = m.completion_max_rows as usize;
         if popup.selected < popup.scroll_top {
@@ -839,7 +858,11 @@ impl EditorView {
         if y + height > bounds.size.height && anchor.origin.y - gap - height >= px(0.) {
             y = anchor.origin.y - gap - height;
         }
-        let mut x = anchor.origin.x.min(bounds.size.width - width).max(px(0.));
+        // The labels line up with the completed word; the frame starts the
+        // disc column before it.
+        let mut x = (anchor.origin.x - px(m.completion_label_x))
+            .min(bounds.size.width - width)
+            .max(px(0.));
         // The documentation pane sits beside the popup on the right, else on
         // the left; when neither side has room, the popup moves left.
         let docs_width = px(m.completion_docs_width);
@@ -855,6 +878,7 @@ impl EditorView {
             Some(x + width + docs_gap)
         };
         let selected = popup.selected;
+        let disc_box = m.completion_label_x - m.completion_pad - m.completion_icon_x;
         let rows: Vec<AnyElement> = popup
             .filtered
             .iter()
@@ -871,7 +895,6 @@ impl EditorView {
                     .and_then(|d| d.description.clone())
                     .or_else(|| item.detail.clone());
                 let label_chars: Vec<char> = item.label.chars().collect();
-                // Runs of matched and unmatched chars.
                 let mut runs: Vec<(String, bool)> = Vec::new();
                 for (i, c) in label_chars.iter().enumerate() {
                     let matched = f.positions.contains(&i);
@@ -889,6 +912,7 @@ impl EditorView {
                     || item.tags.as_ref().is_some_and(|t| {
                         t.contains(&oak_lsp::lsp_types::CompletionItemTag::DEPRECATED)
                     });
+                let disc = kind_disc(item.kind);
                 div()
                     .id(ElementId::NamedInteger(
                         "completion-row".into(),
@@ -902,6 +926,8 @@ impl EditorView {
                     .pr(px(m.completion_pad_right))
                     .rounded(px(m.popup_row_radius))
                     .cursor_pointer()
+                    .font_family(theme.mono_font.clone())
+                    .text_size(px(font_size))
                     .when(is_selected, |d| d.bg(theme.list_bg_focused))
                     .when(!is_selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -910,13 +936,29 @@ impl EditorView {
                         }
                         this.accept_completion(cx);
                     }))
-                    .child(div().flex_shrink_0().mr(px(m.completion_icon_gap)).child(
-                        crate::assets::icon(
-                            kind_icon(item.kind),
-                            m.icon_size,
-                            theme.icon_secondary,
-                        ),
-                    ))
+                    .child(
+                        div()
+                            .w(px(disc_box))
+                            .h(px(m.completion_icon))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .children(disc.map(|letter| {
+                                div()
+                                    .size(px(m.completion_icon))
+                                    .line_height(px(m.completion_icon))
+                                    .rounded_full()
+                                    .bg(theme.icon_red)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .font_family(theme.ui_font.clone())
+                                    .text_size(px(m.completion_icon * 0.7))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_bright)
+                                    .child(letter)
+                            })),
+                    )
                     .child(
                         div()
                             .flex()
@@ -938,17 +980,15 @@ impl EditorView {
                                 div()
                                     .text_color(theme.list_text_secondary)
                                     .child(SharedString::from(d))
+                            }))
+                            .children(description.map(|d| {
+                                div()
+                                    .ml(px(m.completion_detail_gap))
+                                    .truncate()
+                                    .text_color(theme.list_text_secondary)
+                                    .child(SharedString::from(d))
                             })),
                     )
-                    .child(div().flex_1().min_w(px(m.completion_icon_gap)))
-                    .children(description.map(|d| {
-                        div()
-                            .flex_shrink_0()
-                            .max_w(px(m.completion_width * 0.45))
-                            .truncate()
-                            .text_color(theme.list_text_secondary)
-                            .child(SharedString::from(d))
-                    }))
                     .into_any_element()
             })
             .collect();
@@ -960,16 +1000,17 @@ impl EditorView {
             .flex_col()
             .children(rows)
             .into_any_element()];
-        if popup.docs_shown {
-            let lines = popup.docs.clone().unwrap_or_else(|| {
+        if let (Some(docs_x), Some(docs)) = (docs_x, popup.docs.clone()) {
+            // "No documentation" is Fleet's wording for an item without any.
+            let lines = if docs.is_empty() {
                 vec![Line {
-                    text: "Loading documentation...".into(),
+                    text: "No documentation".into(),
                     code: false,
                     separator: false,
                 }]
-            });
-            let docs_x = docs_x.unwrap_or(x);
-            // The pane fits above the editor's bottom edge.
+            } else {
+                docs
+            };
             let docs_y = y.min((bounds.size.height - px(m.smart_popup_max_height)).max(px(0.)));
             out.push(
                 Self::frame(theme, m, point(docs_x, docs_y))
@@ -1024,6 +1065,9 @@ impl EditorView {
             .collect()
     }
 
+    /// The parameter info card: a "Documentation Ctrl+Shift+I" strip in
+    /// `popup.footer.background` over one row per signature, its bottom on
+    /// the caret's row (thirteenth pass).
     fn render_signature(
         &mut self,
         theme: &Theme,
@@ -1035,9 +1079,11 @@ impl EditorView {
     ) -> Vec<AnyElement> {
         let caret = self.caret(cx);
         let anchor = self.char_bounds(caret, window, cx);
+        let font_size = self.tm.font_size;
+        let chord = crate::keymap::hint_for(cx, "show-documentation");
         let help = &self.smart.signature.as_ref().expect("open").help;
         let active_sig = help.active_signature.unwrap_or(0) as usize;
-        let lines: Vec<AnyElement> = help
+        let rows: Vec<AnyElement> = help
             .signatures
             .iter()
             .enumerate()
@@ -1047,7 +1093,6 @@ impl EditorView {
                     .active_parameter
                     .or(help.active_parameter)
                     .map(|p| p as usize);
-                // The active parameter's char range in the label.
                 let label_chars: Vec<char> = sig.label.chars().collect();
                 let range = active_param
                     .and_then(|p| sig.parameters.as_ref()?.get(p).cloned())
@@ -1060,7 +1105,6 @@ impl EditorView {
                                 .map(|start| start..start + s_chars.len())
                         }
                         oak_lsp::lsp_types::ParameterLabel::LabelOffsets([s, e]) => {
-                            // UTF-16 offsets into the label.
                             let to_char = |u: u32| {
                                 let mut units = 0u32;
                                 for (i, c) in label_chars.iter().enumerate() {
@@ -1084,10 +1128,12 @@ impl EditorView {
                     None => (sig.label.clone(), String::new(), String::new()),
                 };
                 div()
+                    .h(px(m.signature_row))
                     .flex()
                     .items_center()
-                    .line_height(px(m.smart_popup_line))
+                    .px(px(m.smart_popup_pad_x))
                     .font_family(theme.mono_font.clone())
+                    .text_size(px(font_size))
                     .whitespace_nowrap()
                     .text_color(if is_active {
                         theme.popup_text
@@ -1107,16 +1153,28 @@ impl EditorView {
                     .into_any_element()
             })
             .collect();
-        let height = px(lines.len() as f32 * m.smart_popup_line + 2. * m.smart_popup_pad_y + 2.);
-        let y = Self::place_above(anchor, height, bounds, lh, px(m.completion_gap_y));
+        let header = div()
+            .h(px(m.signature_header))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(m.problems_hint_chord_gap))
+            .px(px(m.smart_popup_pad_x))
+            .bg(theme.popup_footer_bg)
+            .text_color(theme.text_secondary)
+            .whitespace_nowrap()
+            .child("Documentation")
+            .children(chord.map(|c| div().text_color(theme.popup_text).child(c)));
+        let height = px(m.signature_header + rows.len() as f32 * m.signature_row + 2.);
+        let y = Self::place_above(anchor, height, bounds, lh, px(0.));
         let x = anchor.origin.x.max(px(0.));
         vec![Self::frame(theme, m, point(x, y))
             .max_w(px(m.smart_popup_max_width).min(bounds.size.width - x))
-            .px(px(m.smart_popup_pad_x))
-            .py(px(m.smart_popup_pad_y))
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .children(lines)
+            .child(header)
+            .children(rows)
             .into_any_element()]
     }
 

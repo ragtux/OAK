@@ -89,6 +89,10 @@ pub(super) struct SmartMode {
     completion_server: Option<usize>,
     list: Option<Entity<ListPopup>>,
     list_targets: Vec<(PathBuf, Range<usize>)>,
+    /// The Smart Mode card under the lightning is open, and its focus
+    /// handle (made on first use) so Escape closes it.
+    pub card_open: bool,
+    card_focus: Option<FocusHandle>,
 }
 
 impl SmartMode {
@@ -105,6 +109,8 @@ impl SmartMode {
             completion_server: None,
             list: None,
             list_targets: Vec::new(),
+            card_open: false,
+            card_focus: None,
         }
     }
 }
@@ -185,43 +191,196 @@ impl Workspace {
         (state, details.join("\n").into())
     }
 
-    /// The lightning's menu: the state, then Enable or Disable, and a
-    /// restart while servers run (estimate: Fleet's popup was not shot).
-    pub(super) fn show_smart_menu(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
-        let (state, detail) = self.smart_indicator();
-        let status = match state {
-            SmartIndicator::Off => "Smart Mode is off".to_string(),
-            SmartIndicator::Starting => "Smart Mode is starting".to_string(),
-            SmartIndicator::On => "Smart Mode is on".to_string(),
-            SmartIndicator::Error => "Smart Mode failed".to_string(),
-        };
-        let ws = cx.entity();
-        let mut entries = vec![MenuEntry::disabled(status)];
-        if !detail.is_empty() {
-            for line in detail.split('\n') {
-                entries.push(MenuEntry::disabled(line.to_string()));
-            }
-        }
-        entries.push(MenuEntry::Separator);
-        let label = if self.smart.enabled {
-            "Disable Smart Mode"
+    /// A click on the lightning: Smart Mode turns on when it was off, and
+    /// the card under the button opens (thirteenth pass: Fleet enables on
+    /// the click and shows "Enabling Smart Mode..." with a Disable button).
+    pub(super) fn lightning_clicked(&mut self, cx: &mut Context<Self>) {
+        if !self.smart.enabled {
+            self.toggle_smart_mode(cx);
+            self.smart.card_open = true;
         } else {
-            "Enable Smart Mode"
-        };
-        let toggle = ws.clone();
-        entries.push(MenuEntry::custom(label, move |_, cx| {
-            toggle.update(cx, |this, cx| this.toggle_smart_mode(cx));
-        }));
-        if self.smart.enabled {
-            entries.push(MenuEntry::custom(
-                "Restart Language Servers",
-                move |_, cx| {
-                    ws.update(cx, |this, cx| this.restart_servers(cx));
-                },
-            ));
+            self.smart.card_open = !self.smart.card_open;
         }
-        let focus = self.active_editor().map(|e| e.read(cx).focus_handle(cx));
-        self.open_menu(entries, at, focus, cx);
+        if self.smart.card_open {
+            let handle = self
+                .smart
+                .card_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            self.focus_later(handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// The card under the lightning, in the Notifications popup's frame: a
+    /// title, a line of text, the Disable (or Enable) button, then the
+    /// servers' errors when there are any.
+    fn render_smart_card(
+        &self,
+        theme: &Theme,
+        m: &Metrics,
+        ws: Entity<Workspace>,
+    ) -> Option<AnyElement> {
+        if !self.smart.card_open {
+            return None;
+        }
+        const DESCRIPTION: &str =
+            "Analyzes code to provide completion, error detection, fixes, and refactorings";
+        let (state, detail) = self.smart_indicator();
+        let (title, text) = match state {
+            SmartIndicator::Off => ("Smart Mode is off", DESCRIPTION),
+            SmartIndicator::Starting => ("Enabling Smart Mode...", DESCRIPTION),
+            SmartIndicator::On => ("Smart Mode is on", DESCRIPTION),
+            SmartIndicator::Error => (
+                "Smart Mode is partially on",
+                "Some of Smart Mode functionality didn't start properly",
+            ),
+        };
+        let errors: Vec<SharedString> = if state == SmartIndicator::Error {
+            detail
+                .split('\n')
+                .filter(|l| !l.is_empty())
+                .map(|l| SharedString::from(l.to_string()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let label: SharedString = if self.smart.enabled {
+            "Disable".into()
+        } else {
+            "Enable".into()
+        };
+        let close = ws.clone();
+        let escape = ws.clone();
+        let focus = self.smart.card_focus.clone()?;
+        let button = crate::dialog::button(
+            "smart-card-button",
+            label,
+            crate::dialog::ButtonKind::Secondary,
+            false,
+            theme,
+            m,
+        )
+        .on_click(move |_, _, cx| {
+            ws.update(cx, |this, cx| {
+                this.toggle_smart_mode(cx);
+                this.smart.card_open = this.smart.enabled;
+                cx.notify();
+            })
+        });
+        Some(
+            deferred(
+                div()
+                    .id("smart-card")
+                    .occlude()
+                    .absolute()
+                    .right(px(m.notifications_right))
+                    .top(px(m.toolbar_height + m.notifications_top_gap))
+                    .w(px(m.notifications_width))
+                    .flex()
+                    .flex_col()
+                    .rounded(px(m.popup_radius))
+                    .border_1()
+                    .border_color(theme.popup_border)
+                    .bg(theme.popup_bg)
+                    .font_family(theme.ui_font.clone())
+                    .text_size(px(m.ui_font_size))
+                    .text_color(theme.popup_text)
+                    .shadow(vec![BoxShadow {
+                        color: theme.shadow_medium,
+                        offset: point(px(0.), px(m.popup_shadow_offset_y)),
+                        blur_radius: px(m.popup_shadow_blur),
+                        spread_radius: px(0.),
+                    }])
+                    .track_focus(&focus)
+                    .key_context("Popup")
+                    .on_action(move |_: &PopupCancel, _, cx| {
+                        escape.update(cx, |this, cx| {
+                            this.smart.card_open = false;
+                            this.focus_active_editor(cx);
+                            cx.notify();
+                        })
+                    })
+                    .on_mouse_down_out(move |_, _, cx| {
+                        close.update(cx, |this, cx| {
+                            this.smart.card_open = false;
+                            this.focus_active_editor(cx);
+                            cx.notify();
+                        })
+                    })
+                    .child(
+                        div()
+                            .px(px(m.smart_card_pad_x))
+                            .pt(px(m.smart_card_pad_top))
+                            .pb(px(m.smart_card_pad_bottom))
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .line_height(px(m.smart_popup_line))
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .text_color(theme.text_secondary)
+                                    .line_height(px(m.smart_popup_line))
+                                    .child(text),
+                            )
+                            .child(div().mt(px(m.smart_card_button_gap)).flex().child(button)),
+                    )
+                    .when(!errors.is_empty(), |d| {
+                        d.child(div().h(px(1.)).flex_shrink_0().bg(theme.popup_separator))
+                            .child(
+                                div()
+                                    .px(px(m.smart_card_pad_x))
+                                    .py(px(m.smart_card_pad_top))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(m.smart_card_button_gap))
+                                    .children(errors.into_iter().map(|e| {
+                                        div()
+                                            .flex()
+                                            .items_start()
+                                            .gap(px(m.notifications_icon_gap))
+                                            .child(
+                                                div()
+                                                    .size(px(m.icon_size))
+                                                    .flex_shrink_0()
+                                                    .relative()
+                                                    .child(
+                                                        icon(
+                                                            "oak/circle",
+                                                            m.icon_size,
+                                                            theme.icon_red,
+                                                        )
+                                                        .absolute()
+                                                        .left_0()
+                                                        .top_0(),
+                                                    )
+                                                    .child(
+                                                        icon(
+                                                            "oak/exclamation",
+                                                            m.icon_size,
+                                                            theme.problems_error_tag_text,
+                                                        )
+                                                        .absolute()
+                                                        .left_0()
+                                                        .top_0(),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .line_height(px(m.smart_popup_line))
+                                                    .child(e),
+                                            )
+                                    })),
+                            )
+                    }),
+            )
+            .into_any_element(),
+        )
     }
 
     pub(super) fn toggle_smart_mode(&mut self, cx: &mut Context<Self>) {
@@ -235,17 +394,6 @@ impl Workspace {
             }
         } else {
             self.stop_servers(cx);
-        }
-        self.smart_refresh_editors(cx);
-        cx.notify();
-    }
-
-    pub(super) fn restart_servers(&mut self, cx: &mut Context<Self>) {
-        self.stop_servers(cx);
-        self.smart.failed.clear();
-        let docs = self.documents.clone();
-        for doc in docs {
-            self.smart_document_opened(&doc, cx);
         }
         self.smart_refresh_editors(cx);
         cx.notify();
@@ -1331,8 +1479,18 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn smart_overlay(&self) -> Option<AnyElement> {
-        self.smart.list.clone().map(|l| l.into_any_element())
+    pub(super) fn smart_overlays(
+        &self,
+        theme: &Theme,
+        m: &Metrics,
+        ws: Entity<Workspace>,
+    ) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        if let Some(list) = &self.smart.list {
+            out.push(list.clone().into_any_element());
+        }
+        out.extend(self.render_smart_card(theme, m, ws));
+        out
     }
 
     // ---- edits ----------------------------------------------------------------------

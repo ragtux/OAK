@@ -243,35 +243,44 @@ pub mod metrics {
     pub const PROBLEMS_HINT_TOP: f32 = 4.;
     pub const PROBLEMS_HINT_GAP: f32 = 6.67;
     pub const PROBLEMS_HINT_CHORD_GAP: f32 = 3.33;
-    /// M7, Smart Mode (batch 12 has not run; every value here is an
-    /// estimate until it does). The completion popup under the caret: 420
-    /// wide, up to 10 rows of 24 with a 16 px kind icon 8 in and 6 before
-    /// the label, the detail right-aligned 8 from the edge, 4 of padding, 2
-    /// under the caret's row; the documentation pane beside it 360 wide.
-    /// The parameter info and documentation popups above the caret: 8 x 6
-    /// of padding, 18 px lines, at most 616 wide (the tooltip's). The
-    /// lightning button's loading ring is 1.33 (the island border's width).
-    pub const COMPLETION_WIDTH: f32 = 420.;
+    /// M7, Smart Mode (batch 12, thirteenth pass, Fleet 1.48 on Windows at
+    /// 1.5): the completion popup 1.33 under the caret's row, 397.33 wide,
+    /// 4.67 of padding, 24 px rows in the editor face, the kind disc 8.67 in
+    /// and the label 35.33 in (on the completed word's first char), the
+    /// detail 8 after the label; the documentation pane 6.67 to its right,
+    /// 330 wide. The parameter info card touches the row above the caret:
+    /// a 32 px "Documentation" strip over 32 px signature rows, 14.67 of side
+    /// padding. The Smart Mode card takes the Notifications popup's frame
+    /// with 16.67 of side padding, the title 10.67 under its top and the
+    /// button 10.67 under the text. Estimates: the documentation popup's
+    /// size, the pane's height, the card's bottom padding. The strip's
+    /// padding and the card's title offset were read off Oak's own shots
+    /// against Fleet's (ink 14 in, title 24 under the card's top).
+    pub const COMPLETION_WIDTH: f32 = 397.33;
     pub const COMPLETION_ROW: f32 = 24.;
     pub const COMPLETION_MAX_ROWS: f32 = 10.;
-    pub const COMPLETION_PAD: f32 = 4.;
-    pub const COMPLETION_ICON_X: f32 = 8.;
-    pub const COMPLETION_ICON_GAP: f32 = 6.;
+    pub const COMPLETION_PAD: f32 = 4.67;
+    pub const COMPLETION_ICON_X: f32 = 8.67;
+    pub const COMPLETION_ICON: f32 = 16.;
+    pub const COMPLETION_LABEL_X: f32 = 35.33;
+    pub const COMPLETION_DETAIL_GAP: f32 = 8.;
     pub const COMPLETION_PAD_RIGHT: f32 = 8.;
-    pub const COMPLETION_GAP_Y: f32 = 2.;
-    pub const COMPLETION_DOCS_WIDTH: f32 = 360.;
-    pub const COMPLETION_DOCS_GAP: f32 = 4.;
-    pub const SMART_POPUP_PAD_X: f32 = 8.;
+    pub const COMPLETION_GAP_Y: f32 = 1.33;
+    pub const COMPLETION_DOCS_WIDTH: f32 = 330.;
+    pub const COMPLETION_DOCS_GAP: f32 = 6.67;
+    pub const SMART_POPUP_PAD_X: f32 = 9.33;
     pub const SMART_POPUP_PAD_Y: f32 = 6.;
     pub const SMART_POPUP_LINE: f32 = 18.;
     pub const SMART_POPUP_MAX_WIDTH: f32 = 616.;
     pub const SMART_POPUP_MAX_HEIGHT: f32 = 320.;
+    pub const SIGNATURE_HEADER: f32 = 32.;
+    pub const SIGNATURE_ROW: f32 = 32.;
     pub const SMART_MODE_RING: f32 = 1.33;
     pub const SMART_MODE_RADIUS: f32 = 4.;
-    /// The navigation bar under the editor (`editor.showNavBar`): a 24 px
-    /// row of crumbs 8 in, `/` between them (estimate).
-    pub const NAV_BAR_HEIGHT: f32 = 24.;
-    pub const NAV_BAR_PAD_X: f32 = 8.;
+    pub const SMART_CARD_PAD_X: f32 = 16.67;
+    pub const SMART_CARD_PAD_TOP: f32 = 14.67;
+    pub const SMART_CARD_BUTTON_GAP: f32 = 10.67;
+    pub const SMART_CARD_PAD_BOTTOM: f32 = 12.;
     /// The error underline: 2 px (`problem.error`'s thickness) ending 0.67
     /// above the row's bottom; one cell wide for a zero-width problem.
     pub const PROBLEM_UNDERLINE: f32 = 2.;
@@ -843,7 +852,9 @@ scaled_metrics!(
     completion_max_rows = COMPLETION_MAX_ROWS,
     completion_pad = COMPLETION_PAD,
     completion_icon_x = COMPLETION_ICON_X,
-    completion_icon_gap = COMPLETION_ICON_GAP,
+    completion_icon = COMPLETION_ICON,
+    completion_label_x = COMPLETION_LABEL_X,
+    completion_detail_gap = COMPLETION_DETAIL_GAP,
     completion_pad_right = COMPLETION_PAD_RIGHT,
     completion_gap_y = COMPLETION_GAP_Y,
     completion_docs_width = COMPLETION_DOCS_WIDTH,
@@ -855,8 +866,12 @@ scaled_metrics!(
     smart_popup_max_height = SMART_POPUP_MAX_HEIGHT,
     smart_mode_ring = SMART_MODE_RING,
     smart_mode_radius = SMART_MODE_RADIUS,
-    nav_bar_height = NAV_BAR_HEIGHT,
-    nav_bar_pad_x = NAV_BAR_PAD_X,
+    signature_header = SIGNATURE_HEADER,
+    signature_row = SIGNATURE_ROW,
+    smart_card_pad_x = SMART_CARD_PAD_X,
+    smart_card_pad_top = SMART_CARD_PAD_TOP,
+    smart_card_button_gap = SMART_CARD_BUTTON_GAP,
+    smart_card_pad_bottom = SMART_CARD_PAD_BOTTOM,
     problem_underline = PROBLEM_UNDERLINE,
     problem_underline_bottom = PROBLEM_UNDERLINE_BOTTOM,
     run_popup_title_height = RUN_POPUP_TITLE_HEIGHT,

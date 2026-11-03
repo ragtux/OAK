@@ -822,6 +822,34 @@ ten seconds on this machine (the lightning's ring and tooltip meanwhile);
 steps restore a typed `index.` plus `len(` and the new line (typing groups
 by transaction).
 
+### Fleet's side (the same night, `attach` into the open Fleet)
+
+The scene then ran into the user's open Fleet twice (`smart-fleet-*.png`).
+The first run found Smart Mode off: the hover gave the tooltip "Smart Mode"
+alone, and the click on the lightning *turned Smart Mode on* and opened a
+card reading "Enabling Smart Mode..." over "Analyzes code to provide
+completion, error detection, fixes, and refactorings" with a secondary
+"Disable" button; Fleet's Rust support turned out to be rust-analyzer too
+(its own copy, whose proc-macro server does not match the machine's
+toolchain, so the lightning settled in the error state with a notification
+"LSP (rust-analyzer): Failed spawning proc-macro server..."). The second
+run, with Smart Mode on, caught the completion popup, the parameter info
+card with the documentation pane and the Smart Mode card; the Jump-to
+prompt swallowed a stray space afterwards, so the declaration, usages and
+diagnostics shots are not Fleet's and stay estimates. Logical px at 1.5.
+
+| element | Fleet | Oak after the pass |
+|---|---|---|
+| lightning, off | the plain icon; hover: the ghost wash and a tooltip "Smart Mode" | the same |
+| lightning, error | the icon alone in `smartMode.background.error` (`#E1465E`, 8 px of stroke at x 980.67–987.33); while its card is open the 28 px button filled with that colour under a bright icon | the same; on and starting take `smartMode.background.enabled` the same way (no healthy shot: estimate) |
+| Smart Mode card | the Notifications popup's frame (318.67 wide, right 6.67, top 36.67): the title semibold ("Enabling Smart Mode...", "Smart Mode is partially on"), the text in secondary, a 24 px secondary "Disable" button at 971.33–1030.67 x 77.33–101.33 (16.67 in, 10.67 under the text), a separator, then each error as a red icon and two lines of text | the same, "Smart Mode is on/off" for the other states (estimates); the Enable button when off |
+| completion popup | 1.33 under the caret's row, 397.33 wide (483.33–880.67), 4.67 of padding; 24 px rows in the editor face: a 14 px red disc with a letter 13.33 in (an "m" for a method, an "f" for a function; `self::`, `crate::`, types and keywords have none), the label 35.33 in (on the completed word's first char), the signature after it in a dimmer colour; the selected row in `listItem.background.focused` inset 4.67 | the same within 0.7 (`COMPLETION_*`) |
+| documentation pane | 6.67 right of the popup, 330 wide, its top on the popup's; "No documentation" for an item without any; shown after Ctrl+Shift+I and kept for the next popups | the same (the pane's text layout an estimate) |
+| parameter info | a card whose bottom sits on the caret's row and whose left edge is the call's parenthesis: a 32 px strip in `popup.footer.background` (`#323438`) reading "Documentation Ctrl+Shift+I" in secondary text, then a 32 px row with `fn len(&self) → usize` in the editor face, 14.67 of side padding, 186.67 wide for that text; the completion popup opens under the row at the same time (`(` is a trigger) | the same (`SIGNATURE_*`, `SMART_POPUP_PAD_X`); Oak's row text is the server's label, Fleet draws `->` as an arrow ligature |
+| status bar | "src / main.rs / Record" with the caret in `struct Record`: the enclosing symbols follow the path (`editor.showNavBar`, on by default, with or without a server) | the same from the syntax tree's blocks and the file's symbols |
+| inlay hints | parameter names (`k:`, `v:`, `id:`, `name:`) and types (`: <Range<i32> as IntoIterator>::Item`, `r: &Record`) in italic secondary text inside the line; a green run triangle in the gutter at `fn main` | not drawn (left for later: the display map must widen lines) |
+| Jump to | `goto/line` is a card in the Goto frame titled "Jump to" with a 28 px field and, for a bad value, "doesn't match the (+/-)line:(+/-)column pattern" under a dot | Oak's prompt sits under the toolbar (an M3 estimate to correct) |
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws
