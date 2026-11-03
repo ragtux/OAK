@@ -41,3 +41,7 @@ site-media:
         else cp -f "$f" site/sites/weep/assets/img/app/; fi; \
     done
     @echo "site/sites/weep/assets/img/app refreshed from docs/img/app"
+
+# Windows: release build, checks and dist/weep-<version>-windows-<arch>.zip
+package-windows:
+    pwsh -NoProfile -File tools/windows/package.ps1

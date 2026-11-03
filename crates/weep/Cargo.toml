@@ -29,3 +29,7 @@ serde.workspace = true
 serde_json.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
+
+[build-dependencies]
+# The Windows icon and version resource (build.rs); the same crate gpui embeds its manifest with.
+embed-resource = "3"

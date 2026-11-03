@@ -65,10 +65,23 @@ pub struct Repo {
     pub root: PathBuf,
 }
 
+/// `git <args>` in `dir`. On Windows git is a console program and a release WEEP is
+/// not (no console to share), so without CREATE_NO_WINDOW every call would flash a
+/// console window of its own in front of the editor.
+fn git_command(dir: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(dir);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
+    let output = git_command(dir, args)
         .output()
         .with_context(|| format!("git {}", args.join(" ")))?;
     if !output.status.success() {
@@ -606,9 +619,7 @@ fn trash_file(path: &Path) -> Result<()> {
 /// Runs git for its report (push and pull write theirs to stderr), failing
 /// with that report when the command does.
 fn git_report(dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
+    let output = git_command(dir, args)
         .output()
         .with_context(|| format!("git {}", args.join(" ")))?;
     let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();

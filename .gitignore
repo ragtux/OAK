@@ -8,3 +8,9 @@ tools/fleet-probe/out/
 
 # Python bytecode from the probe scripts
 __pycache__/
+
+# Release zips from tools/windows/package.ps1
+/dist/
+
+# macOS directory metadata
+.DS_Store

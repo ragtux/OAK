@@ -6,6 +6,11 @@
 //! their tabs, the status bar. Settings come from `~/.config/weep/settings.json`
 //! over Fleet's own file; `--theme` and `--zoom` override them for the run.
 
+// A release build on Windows is a GUI program, so launching it from Explorer opens
+// no console window; `attach_parent_console` keeps `--help` and the diagnostics on
+// stderr when it is started from a terminal. Debug builds stay console programs.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod actions;
 mod assets;
 mod dialog;
@@ -156,7 +161,26 @@ fn mac_app_menu(cx: &mut App) {
     ])]);
 }
 
+/// Writes stdout and stderr to the terminal WEEP was started from, if any. A GUI
+/// program gets no console of its own; streams already redirected to a file or a
+/// pipe keep their handles. From Explorer there is no parent console and this
+/// does nothing.
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_parent_console() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: AttachConsole takes no pointers; failure (no parent console) is harmless.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 fn main() {
+    #[cfg(all(windows, not(debug_assertions)))]
+    attach_parent_console();
     let args = parse_args();
     let overrides = settings::Overrides {
         theme: args

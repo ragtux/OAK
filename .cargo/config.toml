@@ -1,0 +1,9 @@
+# Windows: link the C runtime statically, so weep.exe runs on a machine without the
+# Visual C++ Redistributable (no VCRUNTIME140.dll). The `cc` builds (tree-sitter's
+# grammars and the like) follow this flag and compile with /MT to match.
+# A RUSTFLAGS environment variable replaces these flags rather than adding to them.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

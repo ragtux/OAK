@@ -6375,6 +6375,7 @@ name = "weep"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "embed-resource",
  "futures",
  "gpui",
  "gpui_platform",
