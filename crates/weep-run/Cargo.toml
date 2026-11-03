@@ -1,0 +1,15 @@
+[package]
+name = "weep-run"
+description = "WEEP's run configurations: Fleet's .fleet/run.json and the processes it starts, free of gpui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,6 +1,6 @@
 {
   "name": "tabs",
-  "about": "Batch 3: a preview tab from a single click in Files, four tabs open, a tab hovered (then its tooltip), a modified tab, an overflowing tab row, a tab mid-drag, and a split. Fleet opens files through Goto; Oak has no Goto yet (M3), so three files come from the command line, the preview tab is clicked last and the main.rs tab is clicked to focus it, which puts the preview tab at the end of the row rather than the start. The tree rows for the later double-clicks are the positions after data and src expanded for the opened files.",
+  "about": "Batch 3: a preview tab from a single click in Files, four tabs open, a tab hovered (then its tooltip), a modified tab, an overflowing tab row, a tab mid-drag, and a split. Fleet opens files through Goto; WEEP has no Goto yet (M3), so three files come from the command line, the preview tab is clicked last and the main.rs tab is clicked to focus it, which puts the preview tab at the end of the row rather than the start. The tree rows for the later double-clicks are the positions after data and src expanded for the opened files.",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
@@ -128,7 +128,7 @@
       ["wait", 1500],
       ["shot", "split"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["move", 100, 529],
       ["click"],
@@ -195,7 +195,7 @@
       ["shot", "split"]
     ]
   },
-  "oak_args": ["{workspace}/README.md", "{workspace}/data/config.json", "{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/README.md", "{workspace}/data/config.json", "{workspace}/src/main.rs"],
   "scans": [],
   "samples": [
     {"name": "hovered/preview tab fill", "at": [430, 46], "key": "tab.background.hovered"}

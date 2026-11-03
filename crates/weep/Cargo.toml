@@ -1,0 +1,31 @@
+[package]
+name = "weep"
+description = "WEEP: a native Rust/GPUI code editor in the shape of JetBrains Fleet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "weep"
+path = "src/main.rs"
+
+[dependencies]
+weep-text.workspace = true
+weep-syntax.workspace = true
+weep-theme.workspace = true
+weep-keymap.workspace = true
+weep-settings.workspace = true
+weep-search.workspace = true
+weep-git.workspace = true
+weep-terminal.workspace = true
+weep-run.workspace = true
+weep-lsp.workspace = true
+futures.workspace = true
+trash.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true

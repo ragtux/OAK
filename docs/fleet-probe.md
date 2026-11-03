@@ -1,6 +1,6 @@
 # What was read off Fleet, and how
 
-Oak's shell is written to measurements of JetBrains Fleet 1.48.261 on this
+WEEP's shell is written to measurements of JetBrains Fleet 1.48.261 on this
 machine (KDE Plasma on Wayland, NVIDIA RTX 3060), taken on 2026-11-01. This
 note records where each number and colour came from, so the next pass can
 redo it against a newer Fleet instead of trusting this one.
@@ -11,13 +11,13 @@ Fleet is closed source, but its distribution is a plain tarball
 (`Fleet-1.48.261.tar.gz`, also unpacked under the Nix store as
 `jetbrains-fleet`) and most of what the shell needs is in it as data:
 
-| What | Where in the distribution | How Oak uses it |
+| What | Where in the distribution | How WEEP uses it |
 | --- | --- | --- |
-| Themes: `dark`, `dark_purple`, `light` | `fleet/themes/*.json` in `lib/app/code-cache/*/fleet.themes-1.48.261.jar` | the file format is Oak's theme format (`oak-theme`); the values of the keys Oak paints from are the bundled themes in `crates/oak/assets/themes` |
-| Default keymap | `fleet/keymap/fleet.json` in `fleet.plugins.keymap.frontend-1.48.261.jar` | the file format is Oak's keymap format (`oak-keymap`); the chords for the actions Oak has are `crates/oak/assets/keymap/default.json` |
-| Fonts | `lib/app/fonts/Inter`, `lib/app/fonts/JetBrainsMono` (both SIL OFL) | bundled as `crates/oak/assets/fonts` (Inter's static faces come from the Inter release, JetBrains Mono from the Fleet tarball with its OFL.txt) |
-| Icons | 934 SVGs under `frontend/icons/{dark,light}/...` in `fleet.frontend.resources-1.48.261.jar` | **not copied**: their names and geometry (16 px, 1 px strokes, `#E0E1E4` on dark) told which open-source set to use; Oak draws from JetBrains' Apache-licensed `expui` set plus its own drawings |
-| The user's settings | `~/.config/JetBrains/Fleet/settings.json` (`"theme"`, `"zoomLevel"`) | Oak defaults to the theme named there, so it opens looking like the user's Fleet |
+| Themes: `dark`, `dark_purple`, `light` | `fleet/themes/*.json` in `lib/app/code-cache/*/fleet.themes-1.48.261.jar` | the file format is WEEP's theme format (`weep-theme`); the values of the keys WEEP paints from are the bundled themes in `crates/weep/assets/themes` |
+| Default keymap | `fleet/keymap/fleet.json` in `fleet.plugins.keymap.frontend-1.48.261.jar` | the file format is WEEP's keymap format (`weep-keymap`); the chords for the actions WEEP has are `crates/weep/assets/keymap/default.json` |
+| Fonts | `lib/app/fonts/Inter`, `lib/app/fonts/JetBrainsMono` (both SIL OFL) | bundled as `crates/weep/assets/fonts` (Inter's static faces come from the Inter release, JetBrains Mono from the Fleet tarball with its OFL.txt) |
+| Icons | 934 SVGs under `frontend/icons/{dark,light}/...` in `fleet.frontend.resources-1.48.261.jar` | **not copied**: their names and geometry (16 px, 1 px strokes, `#E0E1E4` on dark) told which open-source set to use; WEEP draws from JetBrains' Apache-licensed `expui` set plus its own drawings |
+| The user's settings | `~/.config/JetBrains/Fleet/settings.json` (`"theme"`, `"zoomLevel"`) | WEEP defaults to the theme named there, so it opens looking like the user's Fleet |
 
 The theme file has four tables: `meta`, `palette` (named colours), `colors`
 (about 684 UI keys such as `tab.background.selectedFocused`, each a hex
@@ -40,7 +40,7 @@ user's settings), established from the window's logged logical size
 rendered width and confirmed by the 14-unit hamburger icon rendering 38 px
 wide and Inter's x-height at 13 px rendering 20 px.
 
-| Element | Measured (device px) | Logical | Oak constant |
+| Element | Measured (device px) | Logical | WEEP constant |
 | --- | --- | --- | --- |
 | Toolbar (window content top to island top) | 98 | 35.5 | `TOOLBAR_HEIGHT` 36, content centred |
 | Toolbar icon buttons, centre to centre | 88 | 32 | `TOOLBAR_BUTTON` 28 + `TOOLBAR_GAP` 4 |
@@ -78,8 +78,8 @@ below is device px ÷ 1.5. The harness is `tools/fleet-probe/winprobe.py`
 (launch, place the client area at 1280 × 800 logical, drive by `SendInput`,
 grab the client area) with `make-fixture.py` for the workspace,
 `scenes/editor.json` for the steps and `compare.py` for the scan lines; the
-same scene ran unattended against Fleet and against Oak, and the deltas are
-`compare.py`'s. Shots live outside the repo in `~/oak-probe/out/`.
+same scene ran unattended against Fleet and against WEEP, and the deltas are
+`compare.py`'s. Shots live outside the repo in `~/weep-probe/out/`.
 
 What differs from the KDE pass:
 
@@ -92,20 +92,20 @@ What differs from the KDE pass:
   on the window's centre (640), not between the icon groups. Rows 0–1 of
   the client area (2 device px) are the frame's accent line (`#4C4A48`),
   drawn by the system over the toolbar. gpui's Windows window also has a
-  client-area title bar and draws no caption buttons, so Oak must draw
+  client-area title bar and draws no caption buttons, so WEEP must draw
   them (M1).
 - The island margins at this scale are not symmetric: left 7.3 (11 device),
   right 6.0 (9 device), between islands 8.0 (12), top 36.0 (54), bottom
   28.0 (42). Why the right margin is 2 device px narrower than the left is
-  not known; Oak keeps 8 on both sides until a shot at another window size
+  not known; WEEP keeps 8 on both sides until a shot at another window size
   says more (batch 2).
 
 Measured along `compare.py`'s scan lines, logical px:
 
-| Element | Fleet | Oak before | Oak after | Constant |
+| Element | Fleet | WEEP before | WEEP after | Constant |
 | --- | --- | --- | --- | --- |
 | Toolbar bottom / island top | 36.0 | 36.0 | 36.0 | `TOOLBAR_HEIGHT` 36 |
-| Logo glyph centre | 16.7 (16 px glyph) | 20.0 | 18.0 (Oak's glyph is 20 px in the same 24 px box) | `TOOLBAR_PAD_X` 4 (was 6) |
+| Logo glyph centre | 16.7 (16 px glyph) | 20.0 | 18.0 (WEEP's glyph is 20 px in the same 24 px box) | `TOOLBAR_PAD_X` 4 (was 6) |
 | Toolbar button centres (menu, panels) | 50.0, 82.0, 114.0, 146.3 | 52, 84, 116, 148 | 50, 82, 114, 146 | `TOOLBAR_BUTTON` 28 + `TOOLBAR_GAP` 4 |
 | Last panel button centre to separator | 22.7 | 24.3 | 22.3 | `TOOLBAR_SEPARATOR_MARGIN` 4 (was 6) |
 | Tools grid, collaborator centres | 191.7, 224.0 | 196.7, 229.0 | 190.7, 223.0 | same |
@@ -121,11 +121,11 @@ Measured along `compare.py`'s scan lines, logical px:
 | Editor tab top, bottom (border outer) | 42.0, 70.0 | 42.0, 70.0 | same | `EDITOR_TAB_HEIGHT` 28 in a 40 band |
 | Editor tab border | 1.33 (2 device px) | 0.67 (1 device px) | 0.67 | not yet: gpui `border_1` is 1 device px at 1.5 |
 | Editor tab width for `main.rs` | 91.3 (383.3–474.7) | 106.7 | 91.3 (382.7–474.0) | `EDITOR_TAB_PAD_LEFT` 4, `EDITOR_TAB_ICON_GAP` 5, `EDITOR_TAB_CLOSE_GAP` 2, `EDITOR_TAB_PAD_RIGHT` 2 (was 8 / 6 / 6 / 8) |
-| Tab icon glyph, title, close glyph (from tab left) | 5.3–19.3, 25.3–72.7, 77.3–84.7 | 12–20, 30.7–74.7, 86–94 | 8–16, 25.3–69.3, 76.7–84.7 | title is 3 px wider in Fleet: its label is a heavier weight; Oak's icon glyph is 8 px wide against Fleet's 14 |
+| Tab icon glyph, title, close glyph (from tab left) | 5.3–19.3, 25.3–72.7, 77.3–84.7 | 12–20, 30.7–74.7, 86–94 | 8–16, 25.3–69.3, 76.7–84.7 | title is 3 px wider in Fleet: its label is a heavier weight; WEEP's icon glyph is 8 px wide against Fleet's 14 |
 | Editor line pitch (current-line wash) | 22.0 (76.0–98.0) | 20.7 | 22.0 | `EDITOR_LINE_HEIGHT` 22 (was 21) |
 | Line-number right edge, text start (from island left) | 35.3, 62.0 | 35.3, 61.3 | same | `GUTTER_NUMBER_RIGHT` 36, `GUTTER_WIDTH` 60 (62 since batch 5: the 61.3 was glyph ink, the selection and the boxes put the origin at 62) |
 | Scrollbar thumb: width, right edge, top | 6.0, flush at 1274, 76.0 | 6.0, 2 px in, 76.0 | 6.0, flush, 76.0 | `SCROLLBAR_THUMB` 6, no inset |
-| Scrollbar thumb length (38-line file) | 523.3 | 334.7 | 334.7 | not yet: Fleet's scroll range past the end is shorter than Oak's page |
+| Scrollbar thumb length (38-line file) | 523.3 | 334.7 | 334.7 | not yet: Fleet's scroll range past the end is shorter than WEEP's page |
 | Island bottom / status bar height | 772.0 / 28.0 | 773.3 / 26.7 | 772.0 / 28.0 | `STATUS_BAR_HEIGHT` 28 (was 27) |
 | Status bar left text start | 15.3 | 16.7 | 16.7 | `STATUS_PAD_X` 8 |
 | Status bar right text end | 1268.0 | 1263.3 | 1268.0 | `STATUS_PAD_RIGHT` 4 |
@@ -137,20 +137,20 @@ window background `#090909`, island `#18191B`, selected panel tab
 `#28292B`, selected tree row `#363739`, selected tab fill `#142F4D` with
 border `#0E4F98`, scrollbar thumb `#363739`.
 
-Behaviour the shots showed that Oak does not do yet (all M1–M3 items,
+Behaviour the shots showed that WEEP does not do yet (all M1–M3 items,
 listed so the next pass can check them off):
 
 - Opening a file selects it in the Files tree (`files.selectOpenedFile`),
-  and the root row loses its selection; Oak keeps the root row selected.
+  and the root row loses its selection; WEEP keeps the root row selected.
 - The status bar reads, left: the path relative to the root with the
   symbol under the caret appended (`src / main.rs / Record`), no root
-  name; right: `LF`, then `1:1`, then `UTF-8`, then `Rust`. Oak prints the
+  name; right: `LF`, then `1:1`, then `UTF-8`, then `Rust`. WEEP prints the
   root name first and puts `1:1` before `LF`.
 - The root row's label is clipped at the island's edge with no ellipsis;
-  Oak clips at the row's inset.
+  WEEP clips at the row's inset.
 - A green "no problems" check sits in the editor island's top-right corner.
 - File icons are per type (Rust gear, Markdown, git, EditorConfig, plain
-  text lines); Oak's placeholders are letters.
+  text lines); WEEP's placeholders are letters.
 - The Trust dialog: Escape leaves Smart Mode off, which is the state every
   probe wants.
 
@@ -247,41 +247,41 @@ then the symbol under the caret) on the left; `LF · 7:12 · UTF-8 · Rust` on
 the right. The symbol needs Smart Mode and tree-sitter later; the order is
 M1's.
 
-### Oak after this pass
+### WEEP after this pass
 
-The same scenes ran against Oak (`winprobe.py run <scene> oak`, each launch
-in a fresh `OAK_CONFIG_DIR`). `compare.py` on the `editor` and `light`
+The same scenes ran against WEEP (`winprobe.py run <scene> weep`, each launch
+in a fresh `WEEP_CONFIG_DIR`). `compare.py` on the `editor` and `light`
 scenes: every island, tab-row and status-bar edge within 1 px, every colour
-sample equal; the remaining differences on the scan lines are glyphs (Oak's
+sample equal; the remaining differences on the scan lines are glyphs (WEEP's
 file monograms and logo are narrower than Fleet's icons, so edges inside
-text runs differ). Read off the Oak shots with the same ink projection:
+text runs differ). Read off the WEEP shots with the same ink projection:
 
-| Element | Fleet | Oak | Constant |
+| Element | Fleet | WEEP | Constant |
 | --- | --- | --- | --- |
 | Panel tab labels (Files, Search, Git, History, +) | 20–48.7, 66–109.3, 130.7–147.3, 168–212.7, 234–245.3 | 20.7–49.3, 67.3–109.3, 130–147.3, 168–211.3, 228.7–242 | `PANEL_TAB_PAD_X` 9, `PANEL_TAB_SELECTED_PAD_X` 6, `PANEL_TAB_PLUS_GAP` 4 (was one 6 px pad) |
 | Selected editor tab box, title, close glyph | 381.3–474.7, 408.7–456, 461.3–468 | 382–475.3, 408.7–454.7, 460.7–467.3 | `EDITOR_TAB_CLOSE_GAP` 1 (was 2); the selected title is semibold; the 1.33 border lies outside the 4 / 2 padding |
 | Tree row pitch | 26 | 26 | the row is 26 with the 24 px wash inside it (a margin on a `uniform_list` item was dropped) |
-| Tooltip box for a pointer at (430, 56) | 431.3–1043 × 72–122.7 | 430.7–1030 × 72.7–107.3 (one line: Oak's path was shorter) | `TOOLTIP_OFFSET_Y` 16, `TOOLTIP_MAX_WIDTH` 616 |
+| Tooltip box for a pointer at (430, 56) | 431.3–1043 × 72–122.7 | 430.7–1030 × 72.7–107.3 (one line: WEEP's path was shorter) | `TOOLTIP_OFFSET_Y` 16, `TOOLTIP_MAX_WIDTH` 616 |
 | `+` chooser | 233.3 × 73.3, 166 wide | 230 × 70, 166 wide | `POPUP_OFFSET_X` 8 (the popup's left edge on the glyph's), `POPUP_OFFSET_Y` 2 |
 | Caption buttons, hover | 46.67 each, close `#C42B1C` with a white glyph | same | `CAPTION_BUTTON_WIDTH`, `CAPTION_GLYPH` |
 | Bottom island (window 800) | 472–772 under the editor only | same | `BOTTOM_PANEL_HEIGHT` 300; the bottom panel sits between the side panels |
 | Right island | 914–1274 | 914–1274 | `RIGHT_PANEL_WIDTH` 360 |
 | Empty panel group | icon 24, title 16/20, text 13/16, button 24 × 92.7, inset 15 % | same | `EMPTY_PANEL_*`, `BUTTON_PAD_X` 6, `BUTTON_ICON_GAP` 4, `BUTTON_CHEVRON_BOX` 12 |
-| Scrollbar thumb right edge | 1274 | 1272 | not yet: Fleet's right window margin is 6, Oak keeps 8 on both sides |
+| Scrollbar thumb right edge | 1274 | 1272 | not yet: Fleet's right window margin is 6, WEEP keeps 8 on both sides |
 
-Oak's side of the `tabs` scene differs in its steps (no Goto until M3):
+WEEP's side of the `tabs` scene differs in its steps (no Goto until M3):
 three files come from the command line and the preview tab is clicked last,
 so it ends the row rather than starting it, and a double-click's first click
 replaces the preview tab, so the overflow shot has no preview tab. The
-`settings-live` scene (Oak only) changed `theme`, `zoomLevel` and
-`editor.fontSize` on disk while Oak ran: the window followed within a second
+`settings-live` scene (WEEP only) changed `theme`, `zoomLevel` and
+`editor.fontSize` on disk while WEEP ran: the window followed within a second
 (toolbar 36 → 54 at zoom 1.5, line 22 → 27 at 16 px), and `zoom-out` wrote
-`zoomLevel` back to the file. Fleet's zoom step is still unmeasured: Oak
+`zoomLevel` back to the file. Fleet's zoom step is still unmeasured: WEEP
 uses 0.1.
 
 Still different after this pass, for the next one: Fleet's file-type icons
-are filled drawings where Oak paints monograms; Fleet's logo glyph is 16 px
-in its 24 px box where Oak's is 20; the green "no problems" badge (M6); the
+are filled drawings where WEEP paints monograms; Fleet's logo glyph is 16 px
+in its 24 px box where WEEP's is 20; the green "no problems" badge (M6); the
 overflow glyph a narrow panel's tab row shows before its `+`; the right
 window margin of 6; the panel tab padding model (which tab is selected
 changes the row by about 1 px); and the tab tooltip's delay, which gpui
@@ -313,10 +313,10 @@ replace bar is Ctrl+H), which gave the Run & Debug popup as a bonus for M6.
 Not settled by this pass: caret blink timing (harness G), soft wrap, rendered
 whitespace and the `editor.guides` ruler, which need a `fleet_settings`
 scene each. Fleet's scrollbar thumb is about 2 % shorter than track² /
-content (523 against Oak's 536 for 36 + 4 lines in a 694 px track) while its
-marks scale by track / content; Oak keeps the simple formula.
+content (523 against WEEP's 536 for 36 + 4 lines in a 694 px track) while its
+marks scale by track / content; WEEP keeps the simple formula.
 
-Oak after batch 5 (the `surface` scene replayed, read off with the same
+WEEP after batch 5 (the `surface` scene replayed, read off with the same
 scans): the selection rows land on Fleet's to 0.67 px (438–921.3, 438–441.3,
 438–680, 438–441.3, 438–446 against 445.3), the brace boxes at 578–586 and
 438–446, the `Record` occurrence box at 500.7–547.3 (Fleet 500–547.3), the
@@ -330,8 +330,8 @@ caret-line scrollbar mark at 178–180. The text origin moved from 60 to 62
 No new Fleet shots: the find bar, the folds and the sticky lines were built
 from the batch 5 rows above, and what those rows do not pin down is an
 estimate here until the `find`, `fold` and `wrap` scenes run against Fleet.
-Oak's side of the three scenes ran on 2026-11-02 (shots in
-`~/oak-probe/out/{find,fold,wrap}-oak-*.png`): the find field sits at
+WEEP's side of the three scenes ran on 2026-11-02 (shots in
+`~/weep-probe/out/{find,fold,wrap}-weep-*.png`): the find field sits at
 88–116 with its right edge 16 from the island's, the `{…}` mark folds lines
 7–11 of `main.rs` to one row, the 300-column line wraps at the view's edge
 with the ruler at column 80, and `fn main() {` pins to the top once the
@@ -373,7 +373,7 @@ Estimates introduced by this pass, the first targets for the three scenes:
   paste history) borrow the Run & Debug popup's shape until batch 6:
   600 wide (`PROMPT_WIDTH`), top at 64.67, 24 px rows, a 28 px field.
 - Settings defaults not read off Fleet's Settings tool (batch 8), marked in
-  `oak-settings`: `editor.autoDetectIndentation` true, `trimTrailingSpacesOnSave`
+  `weep-settings`: `editor.autoDetectIndentation` true, `trimTrailingSpacesOnSave`
   false, `autoSave` false and `autoSave.delay` 1000, `localBigFileMinimumThreshold`
   20, `editor.stickyLinesMaxCount` 5, `editor.caretShape` Line,
   `editor.caretSmoothAnimation` false, `editor.ligatures` true,
@@ -395,7 +395,7 @@ Fleet's local storage on this machine (`%APPDATA%\JetBrains\Fleet\localStorage`,
 per-workspace `frontend/db.1.48.0.json` and `layout-recovery.6.json`) is a
 durable snapshot of its entity store, and three entities describe the M3 tools:
 
-| Entity | Fields and values seen | Oak |
+| Entity | Fields and values seen | WEEP |
 | --- | --- | --- |
 | `fleet.frontend.ui.gotoPanel.GotoPanelViewState` | `isPreviewHidden` false, `isPreviewHorizontal` false, `splitRatioHorizontal` 0.33, `splitRatioVertical` 0.5, `queryHistoryMap` `{"Goto": ["main.rs"]}` | the preview shows by default, beside the list, the list taking 0.33 of the width (`GOTO_LIST_SHARE`); `gotoPreviewHidden` persisted per workspace in `layout.json` |
 | `fleet.frontend.navigation.RecentNavigationEntity` | `title`, `iconKey` (`icons.file-types.rust`), `key` (a file address), `location` (document + caret offsets), `timestamp` (a counter), `reachable` | the recent files, most recent first, lead the empty Everything and Files lists; kept in `layout.json` as `recent` |
@@ -446,33 +446,33 @@ its Text Search tab, not the Search tool in the panel.
 | Rows | 28 tall; labels 14.67 in (6 px popup padding, 8 px row padding); shortcuts in `text.secondary` right-aligned 14.67 from the edge; a `›` in `text.secondary` on a submenu row | `MENU_ROW_HEIGHT` 28, `MENU_ROW_PAD_X` 8, `POPUP_PAD` 6 |
 | Separator | a 12 px block: the 1 px `popup.separator` with 5.5 above and below | `MENU_SEPARATOR_PAD` 5.5 |
 | Width | the longest row: the tree's menu 230.67, the editor's 232, a tab's 170.67, the main menu 139 | measured from the labels at render; `MENU_MIN_WIDTH` 140 |
-| Tree menu | New File..., New Folder..., sep, Find in Files..., Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › | Oak: the same, with Cut, Copy, Paste and Git greyed (the file clipboard and M4); the seventh pass added Open in Split and dropped Find in Files from a file's menu |
-| Tab menu | Close Ctrl+F4, Close Other Tabs, Close All Tabs, Close Saved Tabs, sep, Split Right Ctrl+\, Split Down, Pin, sep, Open In › | Oak: without Split Down and Pin |
-| Editor menu | Quick Fixes... Alt+Enter, sep, AI Actions ›, Refactor ›, Go To ›, Reformat Code Alt+Shift+F, sep, Git ›, sep, Cut, Copy, Paste, sep, Plugins › (greyed) | Oak: Go To ›, sep, Cut, Copy, Paste (the rest are M4 and M7) |
-| Main menu | File, Edit, View, Goto, Code, Run, Git, Window, Help, every row a submenu | Oak: the nine, Run and Git holding a greyed row |
+| Tree menu | New File..., New Folder..., sep, Find in Files..., Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › | WEEP: the same, with Cut, Copy, Paste and Git greyed (the file clipboard and M4); the seventh pass added Open in Split and dropped Find in Files from a file's menu |
+| Tab menu | Close Ctrl+F4, Close Other Tabs, Close All Tabs, Close Saved Tabs, sep, Split Right Ctrl+\, Split Down, Pin, sep, Open In › | WEEP: without Split Down and Pin |
+| Editor menu | Quick Fixes... Alt+Enter, sep, AI Actions ›, Refactor ›, Go To ›, Reformat Code Alt+Shift+F, sep, Git ›, sep, Cut, Copy, Paste, sep, Plugins › (greyed) | WEEP: Go To ›, sep, Cut, Copy, Paste (the rest are M4 and M7) |
+| Main menu | File, Edit, View, Goto, Code, Run, Git, Window, Help, every row a submenu | WEEP: the nine, Run and Git holding a greyed row |
 
 `compare.py` on the `goto` pairs after the rebuild: the popup's top, the
 field, the selected row and the popup's fill within 0.7 px; the preview box
 first landed 12.7 px low because its share had been taken of the whole
 height under the list's top, where Fleet halves what is left after the 8 px
-gap (`splitRatioVertical` 0.5): `GOTO_PREVIEW_SHARE` is now 0.5 of that, which puts Oak's box top at 459.3
+gap (`splitRatioVertical` 0.5): `GOTO_PREVIEW_SHARE` is now 0.5 of that, which puts WEEP's box top at 459.3
 against Fleet's 462 (Fleet's own preview is 1.7 short of an exact half).
 
 The M2 scenes `find`, `fold` and `wrap` ran against Fleet the same way. What
 they add to the fifth pass, for the M2 follow-up: the find field's edges sit
-2 px left of Oak's because Fleet's right window margin is 6 (the M1
+2 px left of WEEP's because Fleet's right window margin is 6 (the M1
 leftover); with the field open on a file scrolled to its top and a query
 typed, Fleet's text moved down 52 px (line 1 from 87 to 139) while the
-empty field and the replace form left it in place, a behaviour Oak does not
+empty field and the replace form left it in place, a behaviour WEEP does not
 have yet; the hovered gutter line carries a red breakpoint hint (#55262F at
-398–408.7) and the fold chevron's hover wash reads #2A2C2F where Oak paints
+398–408.7) and the fold chevron's hover wash reads #2A2C2F where WEEP paints
 #53565A (`editor.foldIndicator.background.hovered` resolves differently or
-Oak draws it over a lighter base); every foldable line shows its chevron
-while the gutter is hovered, as Oak's does. The `wrap` scene (run with its
+WEEP draws it over a lighter base); every foldable line shows its chevron
+while the gutter is hovered, as WEEP's does. The `wrap` scene (run with its
 `fleet_settings` through `attach`) confirms `WRAP_INDENT` 0: the
 continuation rows of the 300-column line start at the text origin, the
 current-line wash covers all three rows of the wrapped line, and the
-`editor.guides` ruler stands at column 80 (x 1061.3, Oak 1062.7).
+`editor.guides` ruler stands at column 80 (x 1061.3, WEEP 1062.7).
 
 Still estimated after this pass: the preview box's radius (6) and its
 breadcrumb line (24); the outline's indent (24); the confirm dialog (twice the
@@ -480,7 +480,7 @@ scene's click on a tree row left the keyboard in Fleet's editor, so
 Shift+Delete cut a line there instead, undone each time; Fleet's tree takes
 the focus on some other event, to be found before the dialog can be shot);
 toasts and the Notifications tool, which no probe step triggers; the Search
-tool in the panel, which no chord opens. The Fleet shots carried over to Oak
+tool in the panel, which no chord opens. The Fleet shots carried over to WEEP
 with no change to the bundled themes: every colour read off them resolved to
 a key already in use.
 
@@ -504,17 +504,17 @@ everything below lives in it:
 | scope row | 18 under the field: a 28 px "Global" chip (57.33 wide, 8.67 padding, white semibold text, filled `#0870E440` = `tab.background.selectedFocused` with the tab's focused border), the workspace name 16 after it in secondary text, "Plugins" as a `link.text` at the column's right |
 | separator | 1 px `separator.default`, 8.67 under the scope row |
 | section tree | 200 wide at the column's left; first row 30 under the separator; rows 34 with a 32 px `listItem.background.selected` wash (`#363739` in the shot); labels 35.33 in, a chevron at 15.33 for sections with groups; children 16.67 further in. Sections: General, Editor (Font, Appearance, Code, Tabs, Caret, New File), Tools (Gradle, Files, Run and Debug, Git, Terminal, Docker), Application (Appearance, Status Bar, Window), then AI |
-| content column | 26 right of the tree, 494.67 wide (690.67–1185.33); the section title 20 px semibold (glyph box 14.67 against Oak's 17.33 at 24) on a 32 line, 24 under the separator; 12 to the card; a 6 px scrollbar at 1179.33–1185.33 once scrolled |
+| content column | 26 right of the tree, 494.67 wide (690.67–1185.33); the section title 20 px semibold (glyph box 14.67 against WEEP's 17.33 at 24) on a 32 line, 24 under the separator; 12 to the card; a 6 px scrollbar at 1179.33–1185.33 once scrolled |
 | card | `background.secondary` (`#252629`, `#242528` at the shot's gradient edge), radius 8 (estimate), 9.33 px top padding (first control 17.33 under the card's top; the bottom padding is taken as the same, estimate), 494.67 wide; the next section's title 20.67 under the card |
 | row | 40 pitch; the label 26.67 in (`#E0E1E4`); the control 24 high ending at 1145.33 (40 before the card's right edge) and starting 108 after the label column or 10 after a longer label ("Show whitespace" ends 826.67, its dropdown starts 836.67); dropdowns are `dropdown.background`/`dropdown.border` (`#38393B` fill in the shot) ending in a chevron, text and number fields `inputField.*` (transparent, 1 px border); the keymap row has a pencil (`edit-keymap-file`) 10 from the card's right edge |
-| group title | 15 px semibold (F stem 10.67 against Oak's 11.33 at 16) on a 32 line, 8.67 under the card's padding or a 16 px spacer after the previous group's last row, 1.33 above its first row (page 3: card top to first control centre 71.33, row centre to title centre 60.67, title centre to next row centre 37.33) |
+| group title | 15 px semibold (F stem 10.67 against WEEP's 11.33 at 16) on a 32 line, 8.67 under the card's padding or a 16 px spacer after the previous group's last row, 1.33 above its first row (page 3: card top to first control centre 71.33, row centre to title centre 60.67, title centre to next row centre 37.33) |
 | checkbox | 16 × 16, `checkbox.on.background` (`#0870E4`) with a white tick or `checkbox.off.*`; the label 8 after; rows 40 pitch plus 17 per description line (page 2: 40, 57.33, 74 for none, one, two lines) |
 | modified value | `settings.modified.indicator` (`#CDA261` seen as a 6.67 px mark at the row's left when a value differs from Fleet's default) |
 | search | typing filters every page: the tree shows a count badge per section, the Global button shows the total, matches are highlighted with `search.match.*` |
 
 The defaults read off the pages, now in `settings_schema.rs` (one row per
 page item, with the key `documentation.yaml` gives it) and corrected in
-`oak-settings`: `autoSave` is "On focus change" (true), `trimTrailingSpacesOnSave`
+`weep-settings`: `autoSave` is "On focus change" (true), `trimTrailingSpacesOnSave`
 true, `createScratchOnNewFile` true, `editor.caretSmoothAnimation` true,
 `editor.honorCamelHumps` false, `files.toggleFolderMode` "Double click",
 `editor.lineSpacing` 1.7, `editor.tabLimit` 10, `editor.hoverTooltipDelayMs`
@@ -524,22 +524,22 @@ Rows whose key the documentation does not name (the AI page, inlay hints,
 the scrollbar toggles, shell integration, the collaboration username) are
 not in the schema.
 
-The first Oak shot against Fleet's (`compare.py` on the `settings` pair):
-the card's controls land within 0.7 px; Oak's column was 8 px high (its
+The first WEEP shot against Fleet's (`compare.py` on the `settings` pair):
+the card's controls land within 0.7 px; WEEP's column was 8 px high (its
 pane body starts under a shorter tab strip, so the field's offset is 40 in
-Oak for Fleet's 32), its card padding 16 for Fleet's 9.33, its titles 24
+WEEP for Fleet's 32), its card padding 16 for Fleet's 9.33, its titles 24
 and 16 for Fleet's 20 and 15, and Page Down did not scroll. After the fixes
 the field bottom, scope row, separator, tree selection, card edges and the
 Editor card's controls pair within 0.7 px; the General card's controls sit
 1.3–2 px low (the 9.33 px card padding rounds up at 1.5 device px per px).
 
-Oak's Settings tool (`settings_view.rs`) is the same tab: the column, field,
+WEEP's Settings tool (`settings_view.rs`) is the same tab: the column, field,
 scope row, tree and cards at these values, dropdowns as a popup list,
-checkboxes and number/text fields writing the key to Oak's `settings.json`
+checkboxes and number/text fields writing the key to WEEP's `settings.json`
 at once through `settings::set_value`, "Edit in settings.json" links for the
 list-valued keys, and the search with per-section counts and highlights.
-Not built: the Plugins page, the modified-value mark (Oak has no record of
-which value the user set), the AI page, the workspace scope (Oak writes the
+Not built: the Plugins page, the modified-value mark (WEEP has no record of
+which value the user set), the AI page, the workspace scope (WEEP writes the
 global file only).
 
 ### The dialogs scene
@@ -550,11 +550,11 @@ global file only).
   popup's border and shadow; a 32 px header ("Notifications" 10.67 in,
   two 24 px icon buttons at the right: settings and clear), a 1 px
   separator, then the rows or a 105.33 px "You don't have any unread
-  notifications". Oak's `notifications/toggle` now opens this popup;
+  notifications". WEEP's `notifications/toggle` now opens this popup;
   the panel's Notifications tool is gone from the right island.
 - **Rename** is inline in the tree: the row turns into a text field with
   the name selected up to the extension, the focus ring (`inputField.focusBorder`)
-  around icon and field; no dialog. Oak now does the same
+  around icon and field; no dialog. WEEP now does the same
   (`FileTree::start_rename`; the prompt stays for a file the tree cannot show).
 - **The confirm dialog** (Delete) was not captured: the Delete row in the
   tree's context menu did not open it under the driver. The scene now
@@ -564,39 +564,39 @@ global file only).
   pill in the popup colours (`#252629`, border, shadow) centred over the
   editor, 374.67 × 34.67 with its top 4.67 under the tab strip; the text 12
   in, 12 to the 24 px `button.primary` buttons Overwrite (77.33 wide) and
-  Reload (59.33), 12.67 apart, 11.33 of padding after. Oak polls its open
+  Reload (59.33), 12.67 apart, 11.33 of padding after. WEEP polls its open
   files once a second: a clean document follows the disk, an edited one
   shows this pill (`Workspace::render_banner`). Driven by hand (edit, append
-  to the file on disk, wait a poll): Oak's pill lands at 638–1011.3 × 81.3–114.7
+  to the file on disk, wait a poll): WEEP's pill lands at 638–1011.3 × 81.3–114.7
   against Fleet's 638–1012 × 80.7–115.3, the buttons at 86–110 as Fleet's,
-  12.67 apart (the 1 px transparent border of Oak's shared button had made
+  12.67 apart (the 1 px transparent border of WEEP's shared button had made
   each 2.67 wider; the pill drops it).
 - **`autoSave`** reads "On focus change" on Fleet's General page, so its
-  values are not only true and false; Oak keeps `autoSave: true` as a save
+  values are not only true and false; WEEP keeps `autoSave: true` as a save
   `autoSave.delay` ms after the last edit until the other values are read
   (the probe writes `autoSave: false` into its config folder when a test
   needs a dirty document to stay dirty).
 - **The tree menu** for a file: New File..., New Folder..., sep, Open in
   Split, Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut,
   Copy, Copy Path, Copy Relative Path, Paste, sep, Git ›. No "Find in
-  Files..." (that is the folder menu's) and no hidden-files toggle. Oak's
+  Files..." (that is the folder menu's) and no hidden-files toggle. WEEP's
   menu now matches, with Cut, Copy, Paste and Git greyed until M4 and
-  "Open in Split" as Oak's own `open-in-split` (Fleet gives the row no id).
+  "Open in Split" as WEEP's own `open-in-split` (Fleet gives the row no id).
 
 ### M2 follow-ups seen in this pass
 
 - Fleet's find bar pushes the text down 52 px only once a query is typed;
-  an empty field and the replace form do not move it. Oak now does the
+  an empty field and the replace form do not move it. WEEP now does the
   same (`FIND_BAR_PUSH`, the pane pads the editor while the query is set).
 - Fold hover: Fleet draws a plain chevron (no wash box) and fills the
   breakpoint hint as a red circle (`#50252D` over the island, Fleet's red
-  at about 28 %; no theme key names it). Oak now draws the circle and no
+  at about 28 %; no theme key names it). WEEP now draws the circle and no
   wash.
-- The editor island's right margin is 6, the other three 8; Oak now uses
+- The editor island's right margin is 6, the other three 8; WEEP now uses
   `ISLAND_MARGIN_RIGHT` for the column (the status bar still spans the
   full 8).
 - Wrap: `WRAP_INDENT` 0 confirmed; the ruler at column 80 is at x 1061.3
-  in Fleet and 1062.7 in Oak.
+  in Fleet and 1062.7 in WEEP.
 
 ## Eighth pass: M4 begun from the shots on hand (2026-11-02)
 
@@ -615,7 +615,7 @@ tree already shows how Fleet colours git status. Read off
 | tabs | titles stay `tab.text.*` whatever the status (`notes.txt`, `README.md` open beside `main.rs`) |
 | branch | the toolbar's branch tag is the M1 title, unchanged |
 
-Oak's `oak-git` crate shells out to `git` as Fleet does (`rev-parse
+WEEP's `weep-git` crate shells out to `git` as Fleet does (`rev-parse
 --show-toplevel`, `rev-parse --abbrev-ref HEAD`, `status --porcelain=v1
 -z --untracked-files=all`), the tree colours names and draws the badges
 from these keys (deleted and conflict rows use the matching
@@ -641,33 +641,33 @@ Fleet carried out at once.
 | element | measured |
 |---|---|
 | `autoSave` | the General page's dropdown holds Off, On focus change, After delay; choosing each writes `"autoSave": "Off"`, `"OnFocus"`, `"AfterDelay"` to Fleet's `settings.json` (read off the file after each pick). Default `OnFocus`. |
-| modified value | a 2 px bar at the card's left edge (690.67–692.67), 24 tall and centred on the row, `#BD8128` (not `settings.modified.indicator`'s `#CDA261`; no key matches, so Oak uses that key as the nearest, an estimate) |
+| modified value | a 2 px bar at the card's left edge (690.67–692.67), 24 tall and centred on the row, `#BD8128` (not `settings.modified.indicator`'s `#CDA261`; no key matches, so WEEP uses that key as the nearest, an estimate) |
 | dropdown list | opens under the control: left 2.33 outside the control, 4.67 wider, top 3.33 under the control's bottom; `popup.background`, 4.67 padding, rows 26.67 apart with a 24 px wash inset 4 for the chosen row in `listItem.background.focused` (`#194474` over the popup) |
 | shortcut overlay | with `showShortcuts` on, a pill 146.67 × 56 centred on the window (567.33–714 at 1280), its bottom 64 above the window's edge, radius about 8; `#B8B9B9` with the chord in `#090909` at about 18 px (cap height 13.3). Neither `shortcut.background` (`#FFFFFF21`) nor `shortcut.text` gives these, so the colours are read off the shot (estimate) |
 | History tool | a "Search commits" field 13.33–361.33 × 76–100 (24 tall), a filter row at y 118 of three chips with chevrons ("main", the folder or file, "all users"; 22–66.67, 80.67–272, 285.33–352.67), then commit rows: a 6.67 px grey dot at x 25.33 (`#69696B`, taken as `text.tertiary`, estimate), the summary at x 44 in `#E0E1E4` on the row's first line (centre 150), the author and date on a secondary second line (centre 169); `git/file-history` opens a second History tab filtered to the file (the folder chip reads the file's name, the tab gets a close box) |
-| Delete | "Delete..." on a file removes it at once; no dialog appeared in three runs, so Oak drops its confirmation and sends the file to the system trash (the folder case was not tried, estimate) |
+| Delete | "Delete..." on a file removes it at once; no dialog appeared in three runs, so WEEP drops its confirmation and sends the file to the system trash (the folder case was not tried, estimate) |
 | folder menu | New File..., New Folder..., sep, Find in Files... Ctrl+Shift+F, Open In ›, sep, Rename... F2, Delete... Shift+Delete, sep, Cut, Copy, Copy Path, Copy Relative Path, Paste, sep, Git › (no Open in Split) |
-| Text Search, idle | with nothing typed the popup is its fields only: it ends 16.67 under the folder row (64.67–188 at 1280 × 800); Oak had kept the empty list and preview, and its folder and mask fields had collapsed (gpui's `flex_none` keeps the zero flex basis `flex_1` sets, so `.w()` was ignored until a basis was given) |
+| Text Search, idle | with nothing typed the popup is its fields only: it ends 16.67 under the folder row (64.67–188 at 1280 × 800); WEEP had kept the empty list and preview, and its folder and mask fields had collapsed (gpui's `flex_none` keeps the zero flex basis `flex_1` sets, so `.w()` was ignored until a basis was given) |
 
-Oak after this pass: `autoSave` is the three-valued `AutoSave` (`OnFocus` saves
+WEEP after this pass: `autoSave` is the three-valued `AutoSave` (`OnFocus` saves
 every dirty document when the window loses the focus, `AfterDelay` after
-`autoSave.delay`), the Settings tool shows the mark beside a value Oak's file
+`autoSave.delay`), the Settings tool shows the mark beside a value WEEP's file
 sets and hangs the dropdown list under its control (rows within 0.7 px of
 Fleet's), the `showShortcuts` pill lands at 565.33–714.67 × 680–736 against
 Fleet's 567.33–714 × 680–736, Delete sends files to the system trash with no
 dialog, and the idle Text Search popup collapses to its fields. The probe
-scenes' Oak steps no longer reach Delete: with no dialog the fixture lost a
+scenes' WEEP steps no longer reach Delete: with no dialog the fixture lost a
 file per run (restored from the Recycle Bin).
 
-Batch 10 in Oak, first part: the gutter's line-status bars from `oak-git`'s
+Batch 10 in WEEP, first part: the gutter's line-status bars from `weep-git`'s
 hunks (the open hunk washed, ↓ ↑ Revert × working, Diff waiting for the
 Changed Files tab), and the branch tag's tooltip and menu (the local
 branches from `git branch`, the current one with its counts, a row checks
-out). Against Fleet: Oak's bar is 376–379.33 to Fleet's 375.33–380 (the
+out). Against Fleet: WEEP's bar is 376–379.33 to Fleet's 375.33–380 (the
 island clips the 1.33 Fleet draws outside it), the popup pill 382.67–580 ×
 4 above the hunk to Fleet's 382–580 × 4, the hunk wash `#172E28`, the
 branch menu 773.33–932.67 × 34.67–105.33 to Fleet's 772.67–952.67 ×
-36.67–103.33 (Fleet's rows carry a + and a dot icon; Oak's are text).
+36.67–103.33 (Fleet's rows carry a + and a dot icon; WEEP's are text).
 
 Second part: the Git tool (`git_tool.rs`: the commit field, Commit, the
 "Changed files" header with its tri-state checkbox, 26 px rows with the
@@ -702,18 +702,18 @@ tool, the branch tag, blame and the Changed Files tab.
 
 ## Tenth pass: the rest of M4, built from the ninth pass (2026-11-02, night)
 
-Built without Fleet, from the batch 10 rows above, and shot on Oak alone
-(`m4-oak-*.png` in the probe's out folder; the driver cannot deliver the
-two-chord git shortcuts to Oak either, so `git/toggle-blame` went through
+Built without Fleet, from the batch 10 rows above, and shot on WEEP alone
+(`m4-weep-*.png` in the probe's out folder; the driver cannot deliver the
+two-chord git shortcuts to WEEP either, so `git/toggle-blame` went through
 Goto Actions, while `Ctrl+Shift+G, Ctrl+Shift+A` is bound in the keymap).
 
-| element | Oak | Fleet |
+| element | WEEP | Fleet |
 |---|---|---|
 | blame column | text 8.67 in, bar 145.33–148.67, numbers right-aligned to 174.67, text at 201.33 (the gutter moved right by 139.33); the committed chunk's bar `editor.gitDiff.background.blame`, the uncommitted lines' `…added`; dates in the machine's zone (`Dec 31, 2025  Probe`) | 8.67, 145.33–148.67, 174.67, 201.33 |
 | commit rows | `Probe, 18:00 Dec 31, 2025` (`git log --date=format-local`; the fixture's commit is `2026-01-01T00:00:00Z`) | the same |
-| Changed Files tab | the header row 16 under the tab row (centre 105.33 at Oak's tab row against Fleet's 102), the first card 12 lower; cards 6 inside the island, a 40 px open header in `listItem.background.focused` with the checkbox 10.67 in, a 6 px `background.secondary` strip, 22 px rows; collapsed files 42 px rows with the checkbox 14 in and a 1 px `separator.default` under each (estimate) | 88–116, 128–168, 42 px rows |
+| Changed Files tab | the header row 16 under the tab row (centre 105.33 at WEEP's tab row against Fleet's 102), the first card 12 lower; cards 6 inside the island, a 40 px open header in `listItem.background.focused` with the checkbox 10.67 in, a 6 px `background.secondary` strip, 22 px rows; collapsed files 42 px rows with the checkbox 14 in and a 1 px `separator.default` under each (estimate) | 88–116, 128–168, 42 px rows |
 | diff columns | old text 6 in, its numbers ending 24 before the 2 px separator, the new numbers ending 34.67 after it, the new text 42.67 after it; the separator at the card's middle | 7.33, 22, 35.33, 42 |
-| diff pairing | git's own hunks (`git diff -U0 -M HEAD`) pair the rows, Oak's Myers diff only for `diff/two-files` and `diff/with-clipboard`; the trailing empty line after a final newline is paired as context. Against HEAD the fixture's README gains a blank line and "Modified after the commit." (git's `+22,2`); Fleet aligns the blank with the old text's trailing line and shows one added line plus the trailing row washed, Oak shows both as added | one added row |
+| diff pairing | git's own hunks (`git diff -U0 -M HEAD`) pair the rows, WEEP's Myers diff only for `diff/two-files` and `diff/with-clipboard`; the trailing empty line after a final newline is paired as context. Against HEAD the fixture's README gains a blank line and "Modified after the commit." (git's `+22,2`); Fleet aligns the blank with the old text's trailing line and shows one added line plus the trailing row washed, WEEP shows both as added | one added row |
 | washes | `diff.added` (`#14835E33`), `diff.deleted`, `diff.modified` from the theme's text attributes; an added row's old side is washed too with `»` at its number column; a changed row's new side carries the file's staging checkbox (it stages the whole file: hunks are not staged on their own, estimate) | `#172E29`, `»`, the hunk checkbox |
 | fold | a 1 px zigzag in `separator.default` across the row's middle (Fleet's dashed wave; amplitude and period estimates) | a wavy separator |
 | diff menu | "Copy Ctrl+C" with the row's text | the same |
@@ -729,10 +729,10 @@ The `terminal` scene (Ctrl+` on the fixture, `echo`, a 120-line listing,
 three wheel notches, a drag, Ctrl+Shift+` for a second tab, Alt+2) and the
 `terminal2` scene (one notch each way, the tab hovered, a click in the
 empty editor area, the right-click menu, Ctrl+` twice) ran on Fleet and on
-Oak; `terminal-fleet-*.png` and `terminal2-fleet-*.png` in the probe's out
+WEEP; `terminal-fleet-*.png` and `terminal2-fleet-*.png` in the probe's out
 folder. Logical px at 1.5 device px per px; the shell is pwsh 7.6.9.
 
-| element | measured | Oak after the pass |
+| element | measured | WEEP after the pass |
 |---|---|---|
 | bottom island | top 472 (the editor island ends at 464), the tab row box 478-506 (28), the text 376 in (8 past the island's edge at 368), the first row's "P" ink top at 518.67 and rows 22 apart (JetBrains Mono 13 x 1.7); the grid top is 512.33, 1.33 under the tab row's 5 px bottom padding | the same within 0.7 (`TERMINAL_PAD_TOP` 1.33, was 4) |
 | the tab, focused | "Terminal" (every terminal alike) semibold in `tab.text.selected`; the tool icon's ink 389.33-402 (a 16 px icon 6 in from the inner edge), the label from 408, the close cross's ink 468-476 in a 16 px box flush with the right border; a 1.33 px `tab.border.selectedFocused` (`#0E4F98`) at 381.33 and 480 around `tab.background.selectedFocused` (`#142F4D`); 100 wide | the same within 0.7 |
@@ -746,19 +746,19 @@ folder. Logical px at 1.5 device px per px; the shell is pwsh 7.6.9.
 | right-click menu | Ask AI (Ctrl+.), Fix Command (Ctrl+Shift+., greyed), New Terminal (Ctrl+Shift+`), New Terminal With Profile..., Find (Ctrl+F), Copy (Ctrl+Shift+C, greyed without a selection), Paste (Ctrl+Shift+V), Select All (Ctrl+Shift+A), Clear (greyed in the shot), Page Up (Shift+Page Up), Page Down (Shift+Page Down), Line Up (Alt+Up), Line Down (Alt+Down) | the same without the AI rows and Find |
 | toggle | Ctrl+` on a focused terminal hides the bottom panel; Ctrl+` again shows it with the terminal focused (its tab blue) | the same |
 | output | paths in the output are painted blue (`#2A60D5`-ish) as links | plain text |
-| empty editor | Fleet's empty state is three cards (Ctrl+K Go To..., Ctrl+Shift+K Actions..., Ctrl+N New File...) over "No recent files" and "Search files with 'Goto' or create a new file", recentred when the bottom panel hides; a click there leaves the focus in the terminal | Oak's two lines (M3 leftover) |
+| empty editor | Fleet's empty state is three cards (Ctrl+K Go To..., Ctrl+Shift+K Actions..., Ctrl+N New File...) over "No recent files" and "Search files with 'Goto' or create a new file", recentred when the bottom panel hides; a click there leaves the focus in the terminal | WEEP's two lines (M3 leftover) |
 
 Two things about the keys came out of the pass. gpui on Windows and Linux
 reports a shifted symbol key as the shifted character without Shift, so
-Fleet's `ctrl-shift-graveaccent` must bind as `ctrl-~` (`oak-keymap`
+Fleet's `ctrl-shift-graveaccent` must bind as `ctrl-~` (`weep-keymap`
 folds it; `graveaccent` itself was unknown to the crate and to the driver
 before). And the bundled `assets/keymap/default.json` is a 182-row subset of
 Fleet's 280-row file; the five terminal rows were added verbatim.
 
 ## Twelfth pass: M6, batch 11, run and problems (2026-11-02, night)
 
-The `run` scene ran on Fleet and on Oak (`run-fleet-*.png`,
-`run-oak-*.png` in the probe's out folder): `.fleet/run.json` opened through
+The `run` scene ran on Fleet and on WEEP (`run-fleet-*.png`,
+`run-weep-*.png` in the probe's out folder): `.fleet/run.json` opened through
 Goto (the fixture now holds two `command` rows, one of which exits 3, and a
 `cargo` row), the gutter hovered and clicked, Ctrl+R, Ctrl+Shift+R on a
 row, Ctrl+Alt+R, the popup's second row run, then `misc/broken.json` and
@@ -767,17 +767,17 @@ badge, its hover and click, Ctrl+E, a hover over the error, and
 `src/main.rs` for the clean badge. Logical px at 1.5 device px per px; the
 editor and bottom islands' left edge is 376 in this layout.
 
-| element | measured | Oak after the pass |
+| element | measured | WEEP after the pass |
 |---|---|---|
-| run icons in run.json | a green triangle (`icon.background.green`) on each configuration's `"type"` line in place of the line number, ink 399.33-409.33 x 147.33-158 on the 142-164 row; the fold chevrons still appear on hover | the same within 0.7 (`RUN_ICON_X` 20.33, Oak's own `run-gutter.svg`) |
+| run icons in run.json | a green triangle (`icon.background.green`) on each configuration's `"type"` line in place of the line number, ink 399.33-409.33 x 147.33-158 on the 142-164 row; the fold chevrons still appear on hover | the same within 0.7 (`RUN_ICON_X` 20.33, WEEP's own `run-gutter.svg`) |
 | Run & Debug popup (Ctrl+R) | the Goto popup's frame (680 wide, top 64.67): "Run & Debug" semibold with its ink at 78.67-92, the field's border box 108-136 with the focus ring outside, a "Recent" header (ink 152.67-164.67) over the recent rows in italics once something ran, a separator, the workspace's name as a header, 26 px rows (the wash 170-194, 306.67-975.33) with a type icon at 313.33 and the name, the selected row carrying a `button.secondary` "Run" (895.33-942.67 x 172-192) and a "..." (950.67-976.67), 6 to a separator, 8 to "Edit Run Configurations..." with a pencil, 9 under it (bottom 298.67); the first row selected is a Recent one when there is any | the same within 1.33 except the "..." dots (4.67 right: a 16 px icon where Fleet's dots are 10 apart) and the Run button 2 left on the first pass, 0.67 after `RUN_POPUP_ROWS_PAD_RIGHT` 4 |
 | run tab | one tab per started configuration in the bottom panel: the type icon, the name, a close cross, the `+` after it, blue (focused) as the run starts; a failed run's icon gets a red badge | the same within 0.7 (the badge an 8 px dot at the icon's corner, estimate) |
 | run tool body | the command line (`cmd /c exit 3`) in `text.secondary` mono at 384 with its ink at 528-540.67, the output in `text.primary` with its ink 561.33 down, a 28 px rerun button (popup colours, 1.33 `popup.border`) at 1230-1258 x 520-548; no exit line is printed | the same within 0.7 (`RUN_TOOL_*`) |
 | run/rerun (Ctrl+Alt+R) | the shown tab's command again in the same tab | the same |
 | the popup's Enter on another row | a second tab beside the first | the same |
-| status badge, clean | a 20 x 20 box 6 under the editor area's top and 22 in from the island's right (1232.67-1252.67 x 82-102), `problemsWidget.tag.success.background` with a check in `.foreground` (its strokes from 4.5,8.7 through 8.7,13.7 to 15.5,5 in the box, about 2 wide); a 6 px margin in the island's colour around the badge (1226.67-1258.67, and 1142-1258.67 around the widget's header) cuts the current line's wash; hover: "No problems found" | the same within 0.7 (Oak's own `check.svg` drawn from the pixel map) |
+| status badge, clean | a 20 x 20 box 6 under the editor area's top and 22 in from the island's right (1232.67-1252.67 x 82-102), `problemsWidget.tag.success.background` with a check in `.foreground` (its strokes from 4.5,8.7 through 8.7,13.7 to 15.5,5 in the box, about 2 wide); a 6 px margin in the island's colour around the badge (1226.67-1258.67, and 1142-1258.67 around the widget's header) cuts the current line's wash; hover: "No problems found" | the same within 0.7 (WEEP's own `check.svg` drawn from the pixel map) |
 | status badge, errors | the same box in `problemsWidget.tag.error.background.default` with the count in `.text.default`; hover: "Open Problems Ctrl+E" | the same within 0.7 |
-| problems widget (click, Ctrl+E) | the badge becomes a "2 errors" tag (53.33 wide for 48 of text) 8 before two 20 px buttons (sliders, close with "Close Problems Escape"); a popup-coloured card 358.67 wide with its right edge 11.33 in from the island's and its border at 108, 1.33 of padding inside: 36 px rows with a red error icon 8 in, the message 36 in and `:line` 9.33 from the right; the row at the caret expanded to 71.33 in `card.expanded.error` colours, its border on the card's edge, with "No fixes available" under the message; "Next Problem Ctrl+E   Previous Problem Ctrl+Shift+E" in small text right-aligned 18.67 in from the card, 8.67 under it | the same within 1.33 (the card's edges exact); the hint text's size is an estimate (10.33 from the width ratio) and Oak's "2 errors" tag is 4.67 wider than Fleet's; Oak's messages are tree-sitter's ("Syntax error", "Missing ']'") where Fleet says "Bad token", and tree-sitter flags the first stray comma where Fleet flags the second |
+| problems widget (click, Ctrl+E) | the badge becomes a "2 errors" tag (53.33 wide for 48 of text) 8 before two 20 px buttons (sliders, close with "Close Problems Escape"); a popup-coloured card 358.67 wide with its right edge 11.33 in from the island's and its border at 108, 1.33 of padding inside: 36 px rows with a red error icon 8 in, the message 36 in and `:line` 9.33 from the right; the row at the caret expanded to 71.33 in `card.expanded.error` colours, its border on the card's edge, with "No fixes available" under the message; "Next Problem Ctrl+E   Previous Problem Ctrl+Shift+E" in small text right-aligned 18.67 in from the card, 8.67 under it | the same within 1.33 (the card's edges exact); the hint text's size is an estimate (10.33 from the width ratio) and WEEP's "2 errors" tag is 4.67 wider than Fleet's; WEEP's messages are tree-sitter's ("Syntax error", "Missing ']'") where Fleet says "Bad token", and tree-sitter flags the first stray comma where Fleet flags the second |
 | Ctrl+E | the caret moves to the next problem (2:10) and the widget opens on it | the same (2:9, the parser's choice) |
 | error markup | a 2 px underline (`problem.error`'s colour) under the token, ending 0.67 above the row's bottom, one cell wide for a missing token; a 2 px mark on the scrollbar in `problem.error`'s `scrollbarMarkColor` | the same within 0.7 |
 | hover over an error | nothing new in the shot (the widget was open); `editor.showTooltipOnHover` stays an estimate | a tooltip-coloured pill with the message after `editor.hoverTooltipDelayMs` (estimate) |
@@ -788,25 +788,25 @@ What the Fleet side also showed: `command` rows run without Smart Mode
 through `cmd /c ...` on Windows; the status bar keeps the editor's caret
 while the run tab has the focus; the Recent section lists a run by name in
 italics; the `cargo` row gets a gear icon and the `command` rows a
-console-like one (Oak draws `oak/file-rust` and `oak/console`, estimates).
+console-like one (WEEP draws `weep/file-rust` and `weep/console`, estimates).
 
 ## Thirteenth pass: M7, Smart Mode, built without Fleet (2026-11-03)
 
 No Fleet shot yet: batch 12 needs Smart Mode on in Fleet (the Trust dialog
 accepted and the backend downloaded for the fixture, which now carries a
 `Cargo.toml`), which the earlier passes avoided on purpose. The `smart`
-scene (`tools/fleet-probe/scenes/smart.json`) ran on Oak alone
-(`smart-oak-*.png` in the probe's out folder) against rust-analyzer 1.98.1:
+scene (`tools/fleet-probe/scenes/smart.json`) ran on WEEP alone
+(`smart-weep-*.png` in the probe's out folder) against rust-analyzer 1.98.1:
 the lightning, the semantic colours, the completion popup and its
 documentation pane, the parameter info, the documentation popup, the
 declaration jump and `back`, the usages popup, the server's diagnostics in
 the badge and the widget. Every value below is an estimate until the Fleet
 side is shot; the colours are Fleet's keys.
 
-| element | Oak |
+| element | WEEP |
 |---|---|
 | lightning | the toolbar's button: plain when off; the icon in `text.bright` on `smartMode.background.enabled` when on; a 1.33 ring of `smartMode.border.loading` while a server starts or reports progress (its title and message in the tooltip's second line); `smartMode.background.error` when a server failed; a click opens a menu (the state, Enable/Disable Smart Mode, Restart Language Servers) |
-| semantic colours | the server's tokens over tree-sitter's spans through `oak_lsp::semantic::fleet_attribute` (a mutable binding `identifier.variable.mutable`, a field `identifier.field`, a format argument `string.formatItem`, a declared function `identifier.function.declaration`); asked 250 ms after the last edit, the old spans moved through the edits meanwhile |
+| semantic colours | the server's tokens over tree-sitter's spans through `weep_lsp::semantic::fleet_attribute` (a mutable binding `identifier.variable.mutable`, a field `identifier.field`, a format argument `string.formatItem`, a declared function `identifier.function.declaration`); asked 250 ms after the last edit, the old spans moved through the edits meanwhile |
 | completion popup | at the word's first char, 2 under its row (above when the row is near the bottom): 420 wide, 24 px rows (10 at most), 4 of padding, a 16 px kind icon 8 in with the label 6 after it, the matched chars in `completion.match.text`, the label detail (`(x: u32)`) in `listItem.text.secondary` after the label, the description (the type) right-aligned 8 from the edge; the selected row in `listItem.background.focused`; filtered by the Goto matcher, Enter or Tab accept, Escape closes, Up/Down/PageUp/PageDown move; opens by itself `completion.autoPopupDelay` (100 ms, estimate) after a word or trigger char |
 | documentation pane | 360 wide beside the popup (right, else left, else the popup moves left), the item's signature in the editor face then its Markdown as lines; `show-documentation` (Ctrl+Shift+I) toggles it while the popup is open |
 | parameter info | above the caret's row: the signatures one per 18 px line in the editor face, the active parameter semibold in `parameterInfo.match.text`, 8 x 6 of padding; opened by `(` and `,` or Ctrl+I, re-asked as the caret moves, gone when the server has none |
@@ -816,7 +816,7 @@ side is shot; the colours are Fleet's keys.
 | rename | the prompt under the toolbar titled "Rename" with the name preselected (`rename.selectOnRename`); the server's edit lands in the open documents (one undo step each) and the files on disk |
 | quick fixes | Alt+Enter: a context menu at the caret's top-left with the server's actions (disabled ones greyed); Shift+Alt+Enter applies the preferred one, else the first quick fix |
 
-What the Oak run also showed: rust-analyzer loads the fixture in about
+What the WEEP run also showed: rust-analyzer loads the fixture in about
 ten seconds on this machine (the lightning's ring and tooltip meanwhile);
 `cargo check` on save (`checkOnSave`) reports as progress too; four undo
 steps restore a typed `index.` plus `len(` and the new line (typing groups
@@ -838,22 +838,42 @@ card with the documentation pane and the Smart Mode card; the Jump-to
 prompt swallowed a stray space afterwards, so the declaration, usages and
 diagnostics shots are not Fleet's and stay estimates. Logical px at 1.5.
 
-| element | Fleet | Oak after the pass |
+| element | Fleet | WEEP after the pass |
 |---|---|---|
 | lightning, off | the plain icon; hover: the ghost wash and a tooltip "Smart Mode" | the same |
 | lightning, error | the icon alone in `smartMode.background.error` (`#E1465E`, 8 px of stroke at x 980.67–987.33); while its card is open the 28 px button filled with that colour under a bright icon | the same; on and starting take `smartMode.background.enabled` the same way (no healthy shot: estimate) |
 | Smart Mode card | the Notifications popup's frame (318.67 wide, right 6.67, top 36.67): the title semibold ("Enabling Smart Mode...", "Smart Mode is partially on"), the text in secondary, a 24 px secondary "Disable" button at 971.33–1030.67 x 77.33–101.33 (16.67 in, 10.67 under the text), a separator, then each error as a red icon and two lines of text | the same, "Smart Mode is on/off" for the other states (estimates); the Enable button when off |
 | completion popup | 1.33 under the caret's row, 397.33 wide (483.33–880.67), 4.67 of padding; 24 px rows in the editor face: a 14 px red disc with a letter 13.33 in (an "m" for a method, an "f" for a function; `self::`, `crate::`, types and keywords have none), the label 35.33 in (on the completed word's first char), the signature after it in a dimmer colour; the selected row in `listItem.background.focused` inset 4.67 | the same within 0.7 (`COMPLETION_*`) |
 | documentation pane | 6.67 right of the popup, 330 wide, its top on the popup's; "No documentation" for an item without any; shown after Ctrl+Shift+I and kept for the next popups | the same (the pane's text layout an estimate) |
-| parameter info | a card whose bottom sits on the caret's row and whose left edge is the call's parenthesis: a 32 px strip in `popup.footer.background` (`#323438`) reading "Documentation Ctrl+Shift+I" in secondary text, then a 32 px row with `fn len(&self) → usize` in the editor face, 14.67 of side padding, 186.67 wide for that text; the completion popup opens under the row at the same time (`(` is a trigger) | the same (`SIGNATURE_*`, `SMART_POPUP_PAD_X`); Oak's row text is the server's label, Fleet draws `->` as an arrow ligature |
+| parameter info | a card whose bottom sits on the caret's row and whose left edge is the call's parenthesis: a 32 px strip in `popup.footer.background` (`#323438`) reading "Documentation Ctrl+Shift+I" in secondary text, then a 32 px row with `fn len(&self) → usize` in the editor face, 14.67 of side padding, 186.67 wide for that text; the completion popup opens under the row at the same time (`(` is a trigger) | the same (`SIGNATURE_*`, `SMART_POPUP_PAD_X`); WEEP's row text is the server's label, Fleet draws `->` as an arrow ligature |
 | status bar | "src / main.rs / Record" with the caret in `struct Record`: the enclosing symbols follow the path (`editor.showNavBar`, on by default, with or without a server) | the same from the syntax tree's blocks and the file's symbols |
 | inlay hints | parameter names (`k:`, `v:`, `id:`, `name:`) and types (`: <Range<i32> as IntoIterator>::Item`, `r: &Record`) in italic secondary text inside the line; a green run triangle in the gutter at `fn main` | not drawn (left for later: the display map must widen lines) |
-| Jump to | `goto/line` is a card in the Goto frame titled "Jump to" with a 28 px field and, for a bad value, "doesn't match the (+/-)line:(+/-)column pattern" under a dot | Oak's prompt sits under the toolbar (an M3 estimate to correct) |
+| Jump to | `goto/line` is a card in the Goto frame titled "Jump to" with a 28 px field and, for a bad value, "doesn't match the (+/-)line:(+/-)column pattern" under a dot | WEEP's prompt sits under the toolbar (an M3 estimate to correct) |
+
+## Fourteenth pass: macOS, the first Mac build (2026-11-03)
+
+Fleet 1.48.261 beside WEEP on macOS 26.6 (Apple silicon, a 3840x2160 display
+at 2x, so values in points are pixels / 2). No probe driver on the Mac yet:
+`screencapture` shots measured with a few lines of Pillow, Fleet's welcome
+window and a workspace window, both at their default size. macOS refused
+synthetic input (no accessibility grant for the terminal), so nothing here
+was clicked or typed by the probe.
+
+| element | Fleet | WEEP after the pass |
+|---|---|---|
+| menu bar | the application menu alone, titled "Fleet", in the welcome and the workspace windows; the main menu is not in the bar | an "WEEP" application menu alone (`main.rs`, `mac_app_menu`): About WEEP, Settings… (⌘,), Services, Hide WEEP (⌘H), Hide Others (⌥⌘H), Show All, Quit WEEP (⌘Q). Fleet's own rows not captured: the system's usual ones, an estimate. The bar reads "weep" until WEEP runs from an app bundle (the process name) |
+| title bar | none: the toolbar is the title bar, the traffic lights at its left end, the window's content up to the top edge | the same (`appears_transparent` on macOS); the toolbar's empty parts drag the window and a double click does the system's title-bar action (zoom by default) |
+| toolbar | 38 tall (welcome window 37); no logo and no main menu button: the panel toggles follow the lights | `TOOLBAR_HEIGHT` 38 on macOS (36 elsewhere), the logo and the menu button left out |
+| traffic lights | 12 across, 20 apart, the first circle 12 from the top and left edges (centre 17.75, 17.75) | the system draws them at macOS 26's 14 across and 23 apart; WEEP puts the close button's frame at (11, 11) (`TRAFFIC_LIGHT_X/Y`) so the first centre lands on Fleet's 17.75 |
+| first icons | glyphs at x 85, 117, 149 (the toggles), the separator, 195 (the grid), 226 (add collaborator); y 12–25.5 | the same to 0.5: `TRAFFIC_LIGHTS_WIDTH` 78 of left padding (not zoomed, as the lights are not) |
+| chords | Fleet's macOS tooltips not captured | the system's spelling, an estimate: ⌃⌥⇧⌘ glyphs in that order with no separators, then the key (`⇧⌘F`, `⌘,`, `⌥↑`, `↩`, `⌫`, `⎋`); Fleet's literal texts measured on Windows ("Ctrl+Enter" in the commit field, "Alt+Up" in the find field, the terminal menu's scroll rows) spelled the same way on a Mac (`keymap::chord_text`) |
+| text fields | (macOS conventions) | WEEP's single-line input takes ⌘A/C/X/V, ⌥←/→ by words, ⌘←/→ to the ends and ⌥⌫ on macOS, Ctrl elsewhere |
+| theme | `dark.json` and `light.json` carry the 7-digit `editor.interline.match.background.secondary: #FFFE248`, and Fleet loads them | WEEP still skips the entry, but says so only for a user's theme file, not for its bundled copies |
 
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws
-  is the toolbar. Oak does the same (server-side decorations).
+  is the toolbar. WEEP does the same (server-side decorations).
 - Toolbar, left to right: logo (24 px), menu, panel-left, panel-bottom,
   panel-right, a 1 px separator, the tools grid, "add collaborator", the
   workspace name centred, then smart mode (lightning), run, search,

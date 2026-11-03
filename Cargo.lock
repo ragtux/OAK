@@ -3633,125 +3633,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oak"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "gpui",
- "gpui_platform",
- "oak-git",
- "oak-keymap",
- "oak-lsp",
- "oak-run",
- "oak-search",
- "oak-settings",
- "oak-syntax",
- "oak-terminal",
- "oak-text",
- "oak-theme",
- "serde",
- "serde_json",
- "trash",
-]
-
-[[package]]
-name = "oak-git"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tempfile",
- "trash",
-]
-
-[[package]]
-name = "oak-keymap"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "oak-lsp"
-version = "0.1.0"
-dependencies = [
- "lsp-types",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oak-run"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oak-search"
-version = "0.1.0"
-dependencies = [
- "ignore",
- "regex",
- "tempfile",
-]
-
-[[package]]
-name = "oak-settings"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oak-syntax"
-version = "0.1.0"
-dependencies = [
- "tree-sitter",
- "tree-sitter-highlight",
- "tree-sitter-json",
- "tree-sitter-md",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
-]
-
-[[package]]
-name = "oak-terminal"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oak-text"
-version = "0.1.0"
-dependencies = [
- "regex",
- "ropey",
-]
-
-[[package]]
-name = "oak-theme"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "indexmap",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6487,6 +6368,125 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "weep"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "gpui",
+ "gpui_platform",
+ "serde",
+ "serde_json",
+ "trash",
+ "weep-git",
+ "weep-keymap",
+ "weep-lsp",
+ "weep-run",
+ "weep-search",
+ "weep-settings",
+ "weep-syntax",
+ "weep-terminal",
+ "weep-text",
+ "weep-theme",
+]
+
+[[package]]
+name = "weep-git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
+ "trash",
+]
+
+[[package]]
+name = "weep-keymap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "weep-lsp"
+version = "0.1.0"
+dependencies = [
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "weep-run"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "weep-search"
+version = "0.1.0"
+dependencies = [
+ "ignore",
+ "regex",
+ "tempfile",
+]
+
+[[package]]
+name = "weep-settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "weep-syntax"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter",
+ "tree-sitter-highlight",
+ "tree-sitter-json",
+ "tree-sitter-md",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+]
+
+[[package]]
+name = "weep-terminal"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "weep-text"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "ropey",
+]
+
+[[package]]
+name = "weep-theme"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "indexmap",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

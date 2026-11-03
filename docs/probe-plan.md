@@ -18,13 +18,13 @@ measurements each milestone needs.
    - 63 `documentation.yaml` files: 385 action ids and 430 settings keys,
      each with a one-line description. This is Fleet's own feature list.
    - `frontend/icons/dark/`: 441 icon names, the map for choosing expui
-     equivalents (the SVGs themselves stay out of Oak).
+     equivalents (the SVGs themselves stay out of WEEP).
 2. **Fleet's runtime state** in `~/.config/JetBrains/Fleet` and
    `~/.cache/JetBrains/Fleet`.
    - `localStorage/keymap.0.json` is Fleet's *resolved* keymap for this
      machine: 240 trigger → chord entries with Fleet's own key-code spelling
      (`Down[Arrow,Navigation]`, `I[Character,Letter]`) and presentable
-     names. It is an oracle for `oak-keymap` (harness E).
+     names. It is an oracle for `weep-keymap` (harness E).
    - `log/fleet.log` logs each window's logical size (1280 × 800 default),
      which pins the screenshot scale.
    - `localStorage/recent_ships.2.json` shows the launcher arguments Fleet
@@ -52,15 +52,15 @@ Fleet unpacked from the Windows zip) everything is in one script,
 Pillow: it finds the editor's window by process id, sets the *client* area
 to the scene's logical size at the window's DPI, sends keys, text and
 pointer events through `SendInput`, and grabs the client area with
-`ImageGrab`. `winprobe.py run <scene> fleet|oak <fixture> <out>` is a whole
+`ImageGrab`. `winprobe.py run <scene> fleet|weep <fixture> <out>` is a whole
 probe; `winprobe.py attach <scene> fleet <pid> <out>` plays the scene into a
 Fleet window the user already has open (Fleet is a single instance, so a
 second launch only hands the folder to the first). Fleet on Windows draws its own caption into the toolbar, so the
 client area is the full window and the shots of both editors start at the
 toolbar's top edge. Two things to know: Fleet's Trust dialog is dismissed
-by Escape (Smart Mode stays off), and Oak must be built with
+by Escape (Smart Mode stays off), and WEEP must be built with
 `CARGO_TARGET_DIR` on a local disk when the repo is on a network share
-(`OAK_EXE` tells the driver where the binary is).
+(`WEEP_EXE` tells the driver where the binary is).
 
 On **KDE Plasma 6.6 on Wayland**, NVIDIA, no `xdotool`, `ydotool` or `wtype`
 installed, three routes to drive the windows exist (checked 2026-11-01):
@@ -90,7 +90,7 @@ Other constraints:
   window without decoration or shadow (to verify on the first run; the M0
   batch used full-screen shots and cropped). `-d <ms>` delays.
 - Fleet runs at the user's zoom 2.0 on a 1.38-scale display, so 2.76 device
-  px per logical px. Oak must run at the same zoom for pixel comparison
+  px per logical px. WEEP must run at the same zoom for pixel comparison
   (M1 adds `--zoom`).
 - The shell sandbox cannot see GUI processes; windows are closed through
   the KWin script (`window.closeWindow()`) or the editor's own close chord.
@@ -107,12 +107,12 @@ order; A–D unblock M1, E and F are an afternoon each and pay off at once.
 Status (2026-11-02): A, B, D and H exist for Windows (`make-fixture.py`,
 `winprobe.py`, `compare.py`, with scenes `editor`, `light`, `panels`,
 `splitters`, `tabs`, `settings-live`, `splits`, `surface`, `surface2`, and
-the M2 scenes `find`, `fold` and `wrap`, the M5 scenes `terminal` and `terminal2` (compared, eleventh pass), the M6 scene `run` (compared, twelfth pass), the M7 scene `smart` (Oak's side only, thirteenth pass) and the M3 scenes `goto` and `popups`
+the M2 scenes `find`, `fold` and `wrap`, the M5 scenes `terminal` and `terminal2` (compared, eleventh pass), the M6 scene `run` (compared, twelfth pass), the M7 scene `smart` (WEEP's side only, thirteenth pass) and the M3 scenes `goto` and `popups`
 shot on both editors on 2026-11-02, their `compare.py` pass still to run); C's in-app probe
 mode, E, F's lint and the KDE launchers are still to do. B's settings override is the scene's
 `fleet_settings` object (written to Fleet's `settings.json` for the run and
-restored after); an Oak launch gets a fresh `OAK_CONFIG_DIR` so no layout or
-setting carries over between runs, and the `oak-settings` step rewrites that
+restored after); a WEEP launch gets a fresh `WEEP_CONFIG_DIR` so no layout or
+setting carries over between runs, and the `weep-settings` step rewrites that
 file mid-scene for live-reload probes.
 
 **The driver only ever runs in the foreground.** It sends keys and clicks
@@ -146,10 +146,10 @@ captures `out/<scene>-fleet-z<zoom>-<theme>.png` after a delay and restores
 settings. The fixture lives under the trusted root `~/bstore2/raga/repos`
 so the Smart Mode dialog does not appear.
 
-### C. Oak probe mode: `oak --probe <scene.json>` (in the app)
+### C. WEEP probe mode: `weep --probe <scene.json>` (in the app)
 
-Oak does not need screenshot code of its own; it needs to reach the same
-state as Fleet without a mouse. Add to `crates/oak/src/main.rs`:
+WEEP does not need screenshot code of its own; it needs to reach the same
+state as Fleet without a mouse. Add to `crates/weep/src/main.rs`:
 
 - `--window-size 1280x800`, `--zoom 2.0`, `--theme` (exists).
 - `--probe <scene.json>`: after the first frame, dispatch the listed
@@ -158,19 +158,19 @@ state as Fleet without a mouse. Add to `crates/oak/src/main.rs`:
   then stay open for the external screenshot. Actions are the Fleet ids
   already mapped in `keymap.rs`, so a scene file reads the same for both
   editors. Optional `--exit-after <ms>` for unattended runs.
-- `probe-oak.sh <scene>` wraps it: `nix-shell --run 'cargo run --release -p
-  oak -- --probe scenes/<scene>.json <fixture>'`, then the same `spectacle`
+- `probe-weep.sh <scene>` wraps it: `nix-shell --run 'cargo run --release -p
+  weep -- --probe scenes/<scene>.json <fixture>'`, then the same `spectacle`
   call as B.
 
-### D. Comparison: `compare.py <scene> <fleet.png> <oak.png>` (built)
+### D. Comparison: `compare.py <scene> <fleet.png> <weep.png>` (built)
 
 - A scene file (`scenes/<name>.json`) lists the driver steps per editor
-  (`steps.fleet`, `steps.oak`, in `winprobe.py`'s vocabulary), extra
-  launch arguments (`oak_args`, with `{workspace}` expanded), and **scan
+  (`steps.fleet`, `steps.weep`, in `winprobe.py`'s vocabulary), extra
+  launch arguments (`weep_args`, with `{workspace}` expanded), and **scan
   lines**: columns and rows to run-length encode, each with a name and the
   edges expected along it (toolbar bottom, island top, first tab, status
   bar top). This generalises `rle.py`.
-- Output: a table per scan line (edge name, Fleet px, Oak px, both in
+- Output: a table per scan line (edge name, Fleet px, WEEP px, both in
   logical px, delta), a side-by-side image with the scan lines drawn
   (`--diff`), and a non-zero exit if any delta exceeds the tolerance (1
   logical px by default). `--markdown` prints rows in the format of
@@ -182,24 +182,24 @@ state as Fleet without a mouse. Add to `crates/oak/src/main.rs`:
   the theme key it should equal; this catches a wash or a border drawn from
   the wrong key.
 
-### E. Keymap oracle: test in `oak-keymap`
+### E. Keymap oracle: test in `weep-keymap`
 
-Resolve `fleet.json` for `linux` with `oak-keymap`, load
+Resolve `fleet.json` for `linux` with `weep-keymap`, load
 `~/.config/JetBrains/Fleet/localStorage/keymap.0.json`, and assert the
 trigger → chord table matches (translating Fleet's `keyCode` spelling to
 gpui's). Ignored when the file is absent so CI stays green; run locally it
 proves platform resolution, chord precedence and key naming against Fleet's
-own output. Also yields the key-code vocabulary for `oak-keymap`'s
+own output. Also yields the key-code vocabulary for `weep-keymap`'s
 keystroke spelling.
 
 ### F. Coverage and lint
 
 - `coverage.py` (exists): actions, colour keys, text attributes and settings
-  keys Oak references versus Fleet's lists; `-v` prints what is missing.
-- `lint-colors.sh`: fails if `crates/oak/src` contains a literal colour
+  keys WEEP references versus Fleet's lists; `-v` prints what is missing.
+- `lint-colors.sh`: fails if `crates/weep/src` contains a literal colour
   (`rgb(0x`, `rgba(0x`, `hsla(`, `#` + hex) outside `theme.rs`'s fallback
   table, so every painted colour traces to a Fleet key.
-- `icon-map.json`: Fleet icon name → Oak asset path, maintained by hand;
+- `icon-map.json`: Fleet icon name → WEEP asset path, maintained by hand;
   a check lists Fleet icons the roadmap's current milestone needs that have
   no mapping.
 
@@ -210,7 +210,7 @@ same step vocabulary the scene files use (`key`, `type`, `move`, `click`,
 `drag`, `hover`, `wait`, `shot`, `pixel`), one command per step from a
 shell or the whole scene with `run`. On KDE:
 
-`kwin.js` helpers loaded through `qdbus`: find the Fleet or Oak window by
+`kwin.js` helpers loaded through `qdbus`: find the Fleet or WEEP window by
 resource class, move it to a fixed position and size (1280 × 800 logical),
 activate it, close it. `drive.sh` wraps `ydotool` with a tiny step
 vocabulary shared with scene files: `key ctrl+shift+f`, `type "query"`,
@@ -218,7 +218,7 @@ vocabulary shared with scene files: `key ctrl+shift+f`, `type "query"`,
 read from KWin), `click`, `drag x1 y1 x2 y2`, `hover x y ms`, `wait ms`,
 `shot name`, plus `mousedown` / `mouseup` for a shot mid-drag and `maximize`
 / `restore`. With this every batch below runs unattended; a scene becomes
-one JSON file executed against Fleet (through the driver) and against Oak
+one JSON file executed against Fleet (through the driver) and against WEEP
 (through `--probe`, or the same driver for mouse-only states).
 
 ### G. Timing probes: `record-fleet.sh <scene>`
@@ -248,7 +248,7 @@ Each batch produces rows in `fleet-probe.md`, constants in
 | 9 | Terminal | M5 | Padding, font metrics, caret, tab title, scroll-to-bottom button, selection colour. | Scenes: `scenes/terminal.json`, `scenes/terminal2.json`, run on both editors 2026-11-02 (eleventh pass). |
 | 10 | Git and diff | M4 | Changes list rows, commit field, history table, blame column, diff colours and gutter, side-by-side split, 3-way view. | Scenes: `scenes/git*.json`, run on Fleet 2026-11-02 (ninth pass). |
 | 11 | Run and problems | M6 | Run gutter icons, run popup, build output tool, problems widget colours and layout, file status badge states. | Scene: `scenes/run.json`, run on both editors 2026-11-02 (twelfth pass). |
-| 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. | Scene: `scenes/smart.json`, run on Oak and played into the open Fleet with `attach` 2026-11-03 (thirteenth pass: the lightning, the completion popup, the documentation pane, the parameter card and the Smart Mode card measured; the declaration, usages and diagnostics shots still to catch after the Jump-to prompt derailed the run). |
+| 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. | Scene: `scenes/smart.json`, run on WEEP and played into the open Fleet with `attach` 2026-11-03 (thirteenth pass: the lightning, the completion popup, the documentation pane, the parameter card and the Smart Mode card measured; the declaration, usages and diagnostics shots still to catch after the Jump-to prompt derailed the run). |
 
 ## What the probes cannot settle
 

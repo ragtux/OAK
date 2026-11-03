@@ -1,6 +1,6 @@
-# Roadmap: Oak as a Fleet clone
+# Roadmap: WEEP as a Fleet clone
 
-Oak's first goal is a faithful clone of JetBrains Fleet 1.48 as it behaves
+WEEP's first goal is a faithful clone of JetBrains Fleet 1.48 as it behaves
 **without Smart Mode**: the shell, the editor, Files, Search, Goto, Git,
 Terminal, Run, Settings, themes and keymaps. Smart Mode features (completion,
 navigation, refactorings, debugging) come after, fed by LSP and DAP servers
@@ -23,7 +23,7 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-03, after the first M7 pass) |
+| Table | Count | WEEP covers (2026-11-03, after the first M7 pass) |
 | --- | --- | --- |
 | Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 145 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
@@ -52,14 +52,14 @@ progressInline separator
 Kept short on purpose; everything not listed here follows Fleet.
 
 - **tree-sitter, not TextMate.** Fleet's non-Smart highlighting is TextMate
-  grammars; Oak uses tree-sitter mapped onto Fleet's `textAttributes` keys,
+  grammars; WEEP uses tree-sitter mapped onto Fleet's `textAttributes` keys,
   which gives the same colours with better scoping and also powers
   expand/shrink selection, folding and bracket matching without a backend.
 - **LSP and DAP, not the IntelliJ backend.** Smart Mode becomes "a language
   server is attached"; the lightning icon, states and colours stay Fleet's.
 - **Native Markdown preview.** Fleet renders previews in an embedded
-  Chromium (JCEF); Oak paints Markdown itself.
-- **Settings file.** Oak reads `~/.config/oak/settings.json` with Fleet's
+  Chromium (JCEF); WEEP paints Markdown itself.
+- **Settings file.** WEEP reads `~/.config/weep/settings.json` with Fleet's
   keys, falling back to Fleet's own `~/.config/JetBrains/Fleet/settings.json`
   so an existing Fleet setup carries over.
 - **No JVM, no telemetry, no account.** Nothing phones home; nothing needs a
@@ -77,18 +77,18 @@ keymap formats, four gpui-free library crates, measured constants at zoom 2.0.
 ### M1 Shell fidelity (done, 2026-11-02)
 
 The frame looks right in every static configuration before more surfaces
-are added to it. Batches 1–3 ran against Fleet and Oak on Windows
+are added to it. Batches 1–3 ran against Fleet and WEEP on Windows
 (`docs/fleet-probe.md`, third pass); the `editor` and `light` scenes pass
 `compare.py` on every island, tab-row and status-bar edge. Left for later:
 shared buffers across splits (a split-right copy is its own editor until
-M2), the overflow glyph in a narrow panel's tab row, Fleet's zoom step (Oak
+M2), the overflow glyph in a narrow panel's tab row, Fleet's zoom step (WEEP
 steps by 0.1), the Windows caption on the other platforms (they keep the
 desktop's title bar, as Fleet does), and the island shadow, which Fleet
 does not draw (the `shadow.*` keys are the popups').
 
 - `zoomLevel` support: one scale factor applied to every metric, with the
   `zoom-in`, `zoom-out`, `reset-zoom` actions; this is also what lets probes
-  at zoom 2.0 be compared with Oak at 1.0.
+  at zoom 2.0 be compared with WEEP at 1.0.
 - Panels: left, bottom and right islands with draggable splitters, minimum
   sizes, persisted widths, `hide-active-panel`, panel tab rows with more than
   one tool, the `+` tool chooser.
@@ -100,8 +100,8 @@ does not draw (the `shadow.*` keys are the popups').
 - Tooltips (`tooltip.*`), focus outline (`focusOutline`), scrollbars
   (`scrollbar.*`) on every scrolling surface, separators, island shadow.
 - Light theme pass and theme switching at runtime; `themes/*.json` from
-  `~/.config/JetBrains/Fleet/themes` and `~/.config/oak/themes`.
-- Settings: `oak-settings` crate reading Fleet's keys (start with `theme`,
+  `~/.config/JetBrains/Fleet/themes` and `~/.config/weep/themes`.
+- Settings: `weep-settings` crate reading Fleet's keys (start with `theme`,
   `zoomLevel`, `editor.*` display keys, `files.*`), live reload.
 - Probes: batches 1–3 in `docs/probe-plan.md`.
 
@@ -124,11 +124,11 @@ hovered gutter (M8), the `editor.guides` ruler colour (no theme key names
 it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
 `goto/line` (batch 6).
 
-- Done: one document per open file (`crates/oak/src/document.rs`), shared by
+- Done: one document per open file (`crates/weep/src/document.rs`), shared by
   every tab and split that shows it; each view keeps its own cursor, folds
   and scroll, which follow the other views' edits through the buffer's edit
-  log (`oak-text`'s `Cursor::sync`). Undo and the dirty state are the
-  document's. The `splits` scene (Oak only) shows it.
+  log (`weep-text`'s `Cursor::sync`). Undo and the dirty state are the
+  document's. The `splits` scene (WEEP only) shows it.
 - Done (batch 5, `surface` and `surface2` scenes): the editor surface
   measured and drawn as Fleet does: rounded selection rows with the newline
   cell and the empty-row stub, the current-line wash under a selection,
@@ -141,12 +141,12 @@ it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
   `editor/add-carets-to-ends-of-selected-lines`, `select-next-occurrence`,
   `select-all-occurrences`, `unselect-occurrence`, Alt+click), every edit
   at every caret in one undo step; a paste of N lines into N carets.
-- Done: the find and replace bar (`crates/oak/src/find.rs`; `find`,
+- Done: the find and replace bar (`crates/weep/src/find.rs`; `find`,
   `replace`, `replace-one`, `replace-all`, `next-occurrence`,
   `prev-occurrence`) at batch 5's geometry, with the match-case, words and
   regex toggles (`inputField.*`, `toggleButton.*`), the match counter, the
   search kept to a multi-line selection, `editor.useSelectionForSearch`, and
-  `$1` groups in regex replacements (`oak-text`'s `search` module, on the
+  `$1` groups in regex replacements (`weep-text`'s `search` module, on the
   `regex` crate).
 - Done: `expand-selection` (the camel hump, the word, then the enclosing
   syntax nodes), `shrink-selection` (back through the same steps),
@@ -154,7 +154,7 @@ it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
   `editor/collapse-folding`, the gutter chevrons on hover, the `{…}` mark
   from `editor.foldedMark.*`, `editor.showFoldings`) and the sticky lines
   (`editor.showStickyLines`, `stickyLinesMaxCount`), all from tree-sitter
-  (`oak-syntax`'s `structure` module: `SyntaxTree::expand|shrink|folds|
+  (`weep-syntax`'s `structure` module: `SyntaxTree::expand|shrink|folds|
   matching_bracket|errors`).
 - Done: rendering options from settings: soft wrap (`editor.softWrapEnabled`,
   `editor.guideToSoftWrapBy`; word-wrapped at the view's width through a
@@ -169,7 +169,7 @@ it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
   opener, the closer on its own line, a typed closer re-indented),
   auto-pairs (insert, step over, wrap a selection, backspace both),
   `editor.tabSize`, `editor.indentStyle`, `editor.autoDetectIndentation`,
-  `.editorconfig` (`oak-settings`'s `editorconfig` module: indent style and
+  `.editorconfig` (`weep-settings`'s `editorconfig` module: indent style and
   size, end of line, trim and final newline), `trimTrailingSpacesOnSave`
   (caret rows kept), `autoSave` and `autoSave.delay`,
   `editor/change-line-endings` (also a click on the status bar's LF/CRLF),
@@ -177,12 +177,12 @@ it; it uses `editor.indentGuide`), and Fleet's Goto popup geometry for
   `comment-block`, `editor/paste-from-history` (the editor's own copy
   history), `goto/line`, the big-file confirmation
   (`localBigFileMinimumThreshold`).
-- Done: scratch files (`createScratchOnNewFile`, `--scratch`, in Oak's
+- Done: scratch files (`createScratchOnNewFile`, `--scratch`, in WEEP's
   `scratches/` folder), `new-file` (a name prompt, the file created in the
   Files tree's folder), `files/rename`, `files/delete` (confirmed) on the
   tree's selection or the active tab's file.
 - Probes: batch 5 (`surface`, `surface2`, run); `find`, `fold`, `wrap`
-  (Oak's side run, Fleet's side and the comparison still to do).
+  (WEEP's side run, Fleet's side and the comparison still to do).
 
 Theme groups: `editor` (43), `highlight`, `inputField`, `toggleButton`,
 `ghostButton`, most `textAttributes`.
@@ -214,19 +214,19 @@ overlay and `inputSequenceTimeoutMilliseconds` (gpui owns chord timing),
 `restoreWorkspacesOnStartup` and the empty state, a notification's actions
 and the `banner.*` bands (the on-disk change is a popup-coloured pill, built),
 the Search tool's path scope (Fleet's query has a
-`path`; Oak searches the whole workspace), and Goto's typed mode prefixes,
+`path`; WEEP searches the whole workspace), and Goto's typed mode prefixes,
 which no source shows.
 
-- Done: the Goto panel (`crates/oak/src/goto.rs`): `goto/everything`,
+- Done: the Goto panel (`crates/weep/src/goto.rs`): `goto/everything`,
   `goto/file`, `goto/symbol` and `show-file-symbols` (tree-sitter symbols,
-  `oak-syntax`'s `symbols` module), `goto/action` (every action id Oak binds,
+  `weep-syntax`'s `symbols` module), `goto/action` (every action id WEEP binds,
   with its chord), `goto/tool`, `goto/recent-file` (the recent files lead the
   empty list, as Fleet's `RecentNavigationEntity` rows do),
   `show-recent-workspaces`, `toggle-goto-preview` (a read-only editor under
   the list, shown by default as Fleet stores it), `goto_panel.showShortcuts`,
   `ff.previewAndPrioritiseFileSymbolsInGotoEverywhere`; Shift+Enter opens in
   a split, Tab switches lists. The matcher and the file index are
-  `oak-search` (`fuzzy`, `files`), the index walked with the `ignore` crate.
+  `weep-search` (`fuzzy`, `files`), the index walked with the `ignore` crate.
 - Done: `find-in-path` and `replace-in-path` as the Goto popup's Text
   Search tab (Fleet's own place for them): the match-case, words and regex
   toggles, the folder and file-mask fields, Fleet's limit of 100, one row
@@ -234,8 +234,8 @@ which no source shows.
   with their unsaved text, Replace and Replace All through the documents
   (one undo step each) and on disk for the rest,
   `ff.searchInBigUnindexedFiles`; the Search tool in the panel
-  (`crates/oak/src/search_tool.rs`, `search/jump-to-tool`) shows the same
-  results as a tree. The engine is `oak-search`'s `grep` module.
+  (`crates/weep/src/search_tool.rs`, `search/jump-to-tool`) shows the same
+  results as a tree. The engine is `weep-search`'s `grep` module.
 - Done: the Files tool: `files/new-folder`, multi-select (Ctrl and Shift),
   `files/delete` on every selected row, drag and drop onto a folder
   (`dragAndDrop.*`), `toggle-hidden-files`, `files.keyboardNavigation`
@@ -253,8 +253,8 @@ which no source shows.
 - Done: windows: `show-recent-workspaces` opens another window on a root
   from `layout.json`; the toolbar's buttons dispatch their actions.
 - Done: keymap presets: the `keymap` setting names a preset file copied to
-  `~/.config/oak/keymaps/<name>.json`, merged over Fleet's defaults.
-- Done: `local-history/make-snapshot` writes a copy under Oak's
+  `~/.config/weep/keymaps/<name>.json`, merged over Fleet's defaults.
+- Done: `local-history/make-snapshot` writes a copy under WEEP's
   `local-history/` folder.
 - Probes: batches 6, 7 and 8 as the `goto`, `popups`, `settings` and
   `dialogs` scenes, run on both editors (the `compare.py` pass is still to
@@ -263,7 +263,7 @@ which no source shows.
 - Done: the Settings tool (`open-settings`): `settings_schema.rs` holds
   Fleet's pages (sections, groups, labels, keys, control kinds, defaults);
   `settings_view.rs` draws them at the measured values and writes each
-  change to Oak's `settings.json` through `settings::set_value`.
+  change to WEEP's `settings.json` through `settings::set_value`.
 
 - Goto panel: `goto/everything`, `goto/file`, `goto/symbol` (file symbols
   via tree-sitter, `show-file-symbols`), `goto/action`, `goto/tool`, recent
@@ -296,7 +296,7 @@ which no source shows.
 ### M4 Git (built 2026-11-02; batch 10 measured)
 
 Begun with what the shots on hand show (`docs/fleet-probe.md`, eighth
-pass): the `oak-git` crate (branch and per-file status through the `git`
+pass): the `weep-git` crate (branch and per-file status through the `git`
 binary) and the Files tree's names coloured and badged by status. Batch 10
 ran that evening (ninth pass) and gave the gutter's line-status bars with
 their popup and the branch tag's menu, then the Git tool (status rows with
@@ -331,14 +331,14 @@ a plain diff), and a Fleet pass over the estimates the tenth pass lists
 ### M5 Terminal (built 2026-11-02; batch 9 measured)
 
 Built in one evening (`docs/fleet-probe.md`, eleventh pass): the
-`oak-terminal` crate wraps `alacritty_terminal` 0.25 (the PTY, the parser,
+`weep-terminal` crate wraps `alacritty_terminal` 0.25 (the PTY, the parser,
 the grid, the scrollback and the selection are Alacritty's; ConPTY on
 Windows) behind a gpui-free API of profiles, key encoding, a grid snapshot
 and the 256-colour table, tested on its own including a real shell. The
 app's `terminal.rs` paints the snapshot at `terminal.fontSize` x
 `terminal.lineSpacing` with the 32 `terminal.ansiColors.*` keys, takes
 typed text through the platform's text input and every other key through
-`oak_terminal::keys`, and the workspace keeps one tab per shell in the
+`weep_terminal::keys`, and the workspace keeps one tab per shell in the
 bottom panel (`workspace/terminals.rs`). Batch 9 ran on Fleet twice the
 same evening (the `terminal` and `terminal2` scenes): the grid's inset, the
 tab's icon, title, close cross and focused colours, the selection's extent,
@@ -382,24 +382,24 @@ painted as links, pixel scrolling (Fleet shows a part row at the bottom
 after a wheel notch; the amount per notch was not pinned down), the caret's
 blink (no shot caught Fleet's caret), mouse reporting to full-screen
 programs, an audible bell, the tooltip on one line with an ellipsis, the
-cross's hover colour, Fleet's profile chooser popup (Oak shows a menu), the
-keys without an effect in Oak (`terminal.fontHinting`, `fontSmoothing`,
+cross's hover colour, Fleet's profile chooser popup (WEEP shows a menu), the
+keys without an effect in WEEP (`terminal.fontHinting`, `fontSmoothing`,
 `TypeAheadLatency`, `enableTypeAheadInTerminal`, `shellIntegration`,
-`outputBufferLines`, `terminal.tool`, `ff.alignTerminalByGrid`: Oak always
+`outputBufferLines`, `terminal.tool`, `ff.alignTerminalByGrid`: WEEP always
 aligns by the grid), and Fleet's empty editor state, which batch 9 caught in
 passing (three shortcut cards over "No recent files").
 
 ### M6 Run and problems (built 2026-11-02; batch 11 measured)
 
 Built in one night from the `run` scene (`docs/fleet-probe.md`, twelfth
-pass), which ran on Fleet first: the `oak-run` crate holds Fleet's
+pass), which ran on Fleet first: the `weep-run` crate holds Fleet's
 `.fleet/run.json` as data (serde over Fleet's field names, unknown keys
 kept, a scan for each row's `"type"` line) and runs a configuration as a
 child process whose lines arrive through a channel; the app's `run_tool.rs`
 is the tab per started configuration in the bottom panel, `run_popup.rs`
 the Run & Debug popup in the Goto popup's frame, and `workspace/runs.rs`
 the actions. Problems come from tree-sitter's `ERROR` and `MISSING` nodes
-(`oak-syntax`'s `SyntaxTree::problems`, cached per document): the
+(`weep-syntax`'s `SyntaxTree::problems`, cached per document): the
 underline, the scrollbar mark, the status badge, the widget and
 `editor/go-to-next|previous-problem` read them. On the `run` pair,
 `compare.py` finds the badge, the gutter's run icon and the bottom island's
@@ -451,8 +451,8 @@ parameter info card, the Smart Mode card under the lightning and the status
 bar's symbol crumbs now follow Fleet's measurements; the declaration,
 usages and diagnostics surfaces stay estimates (the Fleet run derailed on
 the Jump-to prompt before them). Fleet's Rust Smart Mode turned out to be
-rust-analyzer as well, so Oak and Fleet answer from the same server.
-the `oak-lsp` crate speaks the Language Server Protocol to a server on its
+rust-analyzer as well, so WEEP and Fleet answer from the same server.
+the `weep-lsp` crate speaks the Language Server Protocol to a server on its
 pipes (JSON-RPC framing on two threads, the handshake, typed requests whose
 answers come back with their ids, the server's own requests answered or
 handed up, positions in whichever of UTF-8, UTF-16 or UTF-32 the server
@@ -506,17 +506,17 @@ Left for later: inlay hints (`textDocument/inlayHint`: Fleet shows
 parameter names and types inside the line, which needs the display map to
 widen lines), the run triangle in the gutter at `fn main` (a code lens),
 the inline rename (`editor.rename.current|entries` boxes
-and `rename.autoRenameOnTyping`; Oak renames through a prompt), code
+and `rename.autoRenameOnTyping`; WEEP renames through a prompt), code
 vision (`editor.showCodeVision`: a row above declarations needs the display
 map), `goto/line` as Fleet's "Jump to" card in the Goto frame (an M3
 estimate the pass corrected on paper), `insert-snippet` (Fleet's
 `snippets.json` format is unread), `complete-statement`,
 `show-quick-fixes-preview`, `go-to-next|prev-history-item` (what Fleet's
 history items are is unprobed), the inline completion keys (AI), incremental
-`didChange` (Oak sends the whole text), `toolchains`, servers for the other
+`didChange` (WEEP sends the whole text), `toolchains`, servers for the other
 languages, a `cargo check` run's diagnostics shown as they arrive (the
 server's `checkOnSave` runs; its progress shows in the lightning's tooltip),
-and Fleet's Smart Mode popup under the lightning (Oak shows a menu).
+and Fleet's Smart Mode popup under the lightning (WEEP shows a menu).
 
 ### M8 Debugger via DAP (L)
 

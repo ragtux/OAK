@@ -36,7 +36,7 @@
       ["restore"],
       ["wait", 800]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["shot", "light"],
       ["hover", 1257, 18, 700],
@@ -54,7 +54,7 @@
       ["wait", 800]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs", "--theme", "light"],
+  "weep_args": ["{workspace}/src/main.rs", "--theme", "light"],
   "scans": [
     {"name": "left island column (left of the chevrons, below the toolbar)", "axis": "y", "at": 18.67, "edges": ["island top", "Files tab top", "Files tab bottom", "root row top", "root row bottom"], "from": 30},
     {"name": "editor island column (clear of text)", "axis": "y", "at": 1000, "edges": ["island top", "current line top", "current line bottom", "island bottom"]},

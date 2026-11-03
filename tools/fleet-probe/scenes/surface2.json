@@ -18,7 +18,7 @@
       ["click"], ["wait", 500],
       ["move", 900, 600], ["wait", 300]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["key", "ctrl+home"], ["wait", 300],
       ["key", "ctrl+h"], ["wait", 800], ["shot", "replace"],
@@ -31,7 +31,7 @@
       ["move", 900, 600], ["wait", 300]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/src/main.rs"],
   "scans": [],
   "samples": []
 }

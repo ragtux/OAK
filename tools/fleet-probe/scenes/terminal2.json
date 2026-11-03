@@ -1,6 +1,6 @@
 {
   "name": "terminal2",
-  "about": "Batch 9, second pass: the terminal's wheel step (one notch after a long listing), the selected tab while the editor has the focus, the tab hovered (its close cross), the right-click menu, and Ctrl+` pressed again on a focused terminal (toggle). Fleet only; Oak's side is the same list for a later comparison.",
+  "about": "Batch 9, second pass: the terminal's wheel step (one notch after a long listing), the selected tab while the editor has the focus, the tab hovered (its close cross), the right-click menu, and Ctrl+` pressed again on a focused terminal (toggle). Fleet only; WEEP's side is the same list for a later comparison.",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
@@ -18,7 +18,7 @@
       ["key", "ctrl+graveaccent"], ["wait", 1200], ["shot", "toggled"],
       ["key", "ctrl+graveaccent"], ["wait", 1200], ["shot", "toggled-back"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 2000],
       ["key", "ctrl+graveaccent"], ["wait", 2500],
       ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500],

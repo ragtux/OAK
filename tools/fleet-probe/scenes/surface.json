@@ -1,6 +1,6 @@
 {
   "name": "surface",
-  "about": "Batch 5, the editor surface: a one-line and a multi-line selection, the identifier-under-caret occurrences, the bracket match, the find bar empty and with a query (match highlights, scrollbar marks, toggle buttons), the replace bar, the gutter hovered for fold markers, and the sticky lines after scrolling into fn main. Fleet: main.rs opened through Goto; Oak: from the command line (the find bar and friends arrive with M2).",
+  "about": "Batch 5, the editor surface: a one-line and a multi-line selection, the identifier-under-caret occurrences, the bracket match, the find bar empty and with a query (match highlights, scrollbar marks, toggle buttons), the replace bar, the gutter hovered for fold markers, and the sticky lines after scrolling into fn main. Fleet: main.rs opened through Goto; WEEP: from the command line (the find bar and friends arrive with M2).",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
@@ -22,7 +22,7 @@
       ["move", 900, 400], ["wait", 300],
       ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["key", "ctrl+home"], ["wait", 300],
       ["key", "shift+end"], ["wait", 400], ["shot", "selection"],
@@ -39,7 +39,7 @@
       ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/src/main.rs"],
   "scans": [
     {"name": "selection row (y=87, line 1)", "axis": "x", "at": 87, "from": 376, "edges": ["island left", "selection left", "selection right"]},
     {"name": "find bar column (x=1000)", "axis": "y", "at": 1000, "from": 36, "to": 200, "edges": ["island top", "find bar top", "find bar bottom"]}

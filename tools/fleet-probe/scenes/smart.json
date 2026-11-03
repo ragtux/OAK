@@ -1,6 +1,6 @@
 {
   "name": "smart",
-  "about": "Batch 12: Smart Mode. src/main.rs with the server attached (the lightning, semantic colours), the lightning's tooltip and menu, the completion popup after `index.` on a new line, the parameter info after `len(`, the documentation popup (Ctrl+Shift+I) and the declaration jump (Ctrl+B, then Alt+Left back) on `index`, the usages popup (Ctrl+U) on `Record`, then misc/broken.rs for the server's diagnostics in the badge and the widget. Fleet's side needs Smart Mode on for the fixture (the Trust dialog accepted and the backend downloaded) before the run; the scan lines are Oak's estimates until the Fleet shots exist.",
+  "about": "Batch 12: Smart Mode. src/main.rs with the server attached (the lightning, semantic colours), the lightning's tooltip and menu, the completion popup after `index.` on a new line, the parameter info after `len(`, the documentation popup (Ctrl+Shift+I) and the declaration jump (Ctrl+B, then Alt+Left back) on `index`, the usages popup (Ctrl+U) on `Record`, then misc/broken.rs for the server's diagnostics in the badge and the widget. Fleet's side needs Smart Mode on for the fixture (the Trust dialog accepted and the backend downloaded) before the run; the scan lines are WEEP's estimates until the Fleet shots exist.",
   "size": [
     1280,
     800
@@ -347,7 +347,7 @@
         "escape"
       ]
     ],
-    "oak": [
+    "weep": [
       [
         "wait",
         2000

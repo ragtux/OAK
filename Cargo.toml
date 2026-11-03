@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/oak",
-    "crates/oak-text",
-    "crates/oak-syntax",
-    "crates/oak-theme",
-    "crates/oak-keymap",
-    "crates/oak-settings",
-    "crates/oak-search",
-    "crates/oak-git",
-    "crates/oak-terminal",
-    "crates/oak-run",
-    "crates/oak-lsp",
+    "crates/weep",
+    "crates/weep-text",
+    "crates/weep-syntax",
+    "crates/weep-theme",
+    "crates/weep-keymap",
+    "crates/weep-settings",
+    "crates/weep-search",
+    "crates/weep-git",
+    "crates/weep-terminal",
+    "crates/weep-run",
+    "crates/weep-lsp",
 ]
 
 [workspace.package]
@@ -22,16 +22,16 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-oak-text = { path = "crates/oak-text" }
-oak-syntax = { path = "crates/oak-syntax" }
-oak-theme = { path = "crates/oak-theme" }
-oak-keymap = { path = "crates/oak-keymap" }
-oak-settings = { path = "crates/oak-settings" }
-oak-search = { path = "crates/oak-search" }
-oak-git = { path = "crates/oak-git" }
-oak-terminal = { path = "crates/oak-terminal" }
-oak-run = { path = "crates/oak-run" }
-oak-lsp = { path = "crates/oak-lsp" }
+weep-text = { path = "crates/weep-text" }
+weep-syntax = { path = "crates/weep-syntax" }
+weep-theme = { path = "crates/weep-theme" }
+weep-keymap = { path = "crates/weep-keymap" }
+weep-settings = { path = "crates/weep-settings" }
+weep-search = { path = "crates/weep-search" }
+weep-git = { path = "crates/weep-git" }
+weep-terminal = { path = "crates/weep-terminal" }
+weep-run = { path = "crates/weep-run" }
+weep-lsp = { path = "crates/weep-lsp" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -51,7 +51,7 @@ regex = "1"
 ignore = "0.4"
 # Fleet's Delete sends a file to the system trash without a dialog (ninth pass).
 trash = "5"
-# The terminal's PTY, parser and grid (Apache-2.0; what Zed uses too). Oak paints the grid itself.
+# The terminal's PTY, parser and grid (Apache-2.0; what Zed uses too). WEEP paints the grid itself.
 alacritty_terminal = "0.25"
 # The channel that wakes a terminal view from Alacritty's thread (gpui depends on it already).
 futures = "0.3"

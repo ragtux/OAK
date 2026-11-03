@@ -23,12 +23,12 @@
       ["wait", 800],
       ["shot", "editor"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["shot", "editor"]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/src/main.rs"],
   "scans": [
     {"name": "left island column (left of the chevrons, below the toolbar)", "axis": "y", "at": 18.67, "edges": ["island top", "Files tab top", "Files tab bottom", "root row top", "root row bottom"], "from": 30},
     {"name": "editor island column (clear of text)", "axis": "y", "at": 1000, "edges": ["island top", "current line top", "current line bottom", "island bottom"]},

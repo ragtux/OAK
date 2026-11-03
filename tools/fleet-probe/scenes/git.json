@@ -1,6 +1,6 @@
 {
   "name": "git",
-  "about": "Batch 10: git in Fleet. README.md (modified against HEAD) opened through Goto for the gutter's line-status marks; the Git tool in the left panel (its tab at 138, 55); blame (Ctrl+Shift+G, Ctrl+Shift+A) on the same file; the file history (Ctrl+Shift+G, Ctrl+Shift+H); then the toolbar's branch tag hovered. Oak opens README.md from the command line and shoots the same states it has. The scans read the gutter column through a changed line and the Git tool's first rows.",
+  "about": "Batch 10: git in Fleet. README.md (modified against HEAD) opened through Goto for the gutter's line-status marks; the Git tool in the left panel (its tab at 138, 55); blame (Ctrl+Shift+G, Ctrl+Shift+A) on the same file; the file history (Ctrl+Shift+G, Ctrl+Shift+H); then the toolbar's branch tag hovered. WEEP opens README.md from the command line and shoots the same states it has. The scans read the gutter column through a changed line and the Git tool's first rows.",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
@@ -27,7 +27,7 @@
       ["click"], ["wait", 1200], ["shot", "branch-popup"], ["key", "escape"], ["wait", 500],
       ["move", 34, 55], ["click"], ["wait", 800]
     ],
-    "oak": [
+    "weep": [
       ["wait", 2500],
       ["shot", "line-status"],
       ["move", 378, 560], ["wait", 600], ["shot", "line-status-hover"],
@@ -39,7 +39,7 @@
       ["move", 34, 55], ["click"], ["wait", 400]
     ]
   },
-  "oak_args": ["{workspace}/README.md"],
+  "weep_args": ["{workspace}/README.md"],
   "scans": [
     {"name": "gutter through line 1 (y=139)", "axis": "x", "at": 139, "from": 376, "to": 460, "edges": ["island left", "mark left", "mark right", "text left"]},
     {"name": "gutter column (x=380)", "axis": "y", "at": 380, "from": 76, "to": 400, "edges": ["first mark top", "first mark bottom"]},

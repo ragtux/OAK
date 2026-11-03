@@ -23,11 +23,11 @@
       ["key", "ctrl+shift+k"], ["wait", 1200], ["type", "Commit"], ["wait", 1500], ["shot", "actions-commit"], ["key", "escape"], ["wait", 500],
       ["move", 34, 55], ["click"], ["wait", 800]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000]
     ]
   },
-  "oak_args": ["{workspace}/README.md"],
+  "weep_args": ["{workspace}/README.md"],
   "scans": [],
   "samples": []
 }

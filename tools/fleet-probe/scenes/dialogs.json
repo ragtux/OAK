@@ -16,7 +16,7 @@
       ["key", "f2"], ["wait", 1200], ["shot", "rename"],
       ["key", "escape"], ["wait", 500]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["move", 100, 478], ["click", "right"], ["wait", 600], ["shot", "tree-menu-notes"],
       ["key", "down", "down", "down", "down", "down", "down"], ["wait", 300], ["key", "enter"], ["wait", 800], ["shot", "delete-dialog"],
@@ -28,7 +28,7 @@
       ["key", "escape"], ["wait", 500]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/src/main.rs"],
   "scans": [
     {"name": "dialog column (x=640)", "axis": "y", "at": 640, "from": 200, "to": 600, "edges": ["dialog top", "dialog bottom"]},
     {"name": "dialog row (y=400)", "axis": "x", "at": 400, "from": 300, "to": 1000, "edges": ["dialog left", "dialog right"]}

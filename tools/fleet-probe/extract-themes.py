@@ -8,7 +8,7 @@ and its icons as `frontend/icons/**.svg` inside `fleet.frontend.resources-*.jar`
 both under `lib/app/code-cache/<hash>/`. This writes the theme files, a
 `<name>.resolved.json` beside each with every palette reference replaced by
 its hex value, and a list of the icon names (the SVGs themselves are Fleet's
-and are not copied into Oak; see docs/fleet-probe.md).
+and are not copied into WEEP; see docs/fleet-probe.md).
 """
 import json, pathlib, sys, tarfile, tempfile, zipfile
 

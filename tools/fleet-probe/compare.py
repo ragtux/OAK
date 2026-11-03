@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Compare a Fleet shot with an Oak shot along the scan lines a scene names (harness D).
+"""Compare a Fleet shot with a WEEP shot along the scan lines a scene names (harness D).
 
-    compare.py <scene.json> <fleet.png> <oak.png> [--tolerance 1] [--markdown] [--min-run 2] [--diff out.png]
+    compare.py <scene.json> <fleet.png> <weep.png> [--tolerance 1] [--markdown] [--min-run 2] [--diff out.png]
 
 Both shots must be the same client area at the same scale (`winprobe.py` places both windows
 at the scene's `size`; the scale is read from the image width divided by the scene width).
@@ -21,7 +21,7 @@ A scene file holds:
 For each scan the tool prints the colour transitions along the line on both sides (position in
 logical px, colour before -> after), pairs them in order, and prints the delta. Transitions
 shorter than --min-run logical px (anti-aliased text) are skipped. `edges` names the transitions
-the scene expects, in order, so the table reads "toolbar bottom: Fleet 36.0, Oak 36.0, delta 0".
+the scene expects, in order, so the table reads "toolbar bottom: Fleet 36.0, WEEP 36.0, delta 0".
 With --markdown the rows come out in the format of docs/fleet-probe.md. Exit status is 1 when
 any paired delta exceeds --tolerance. --diff writes a side-by-side image with the scan lines
 drawn on both shots.
@@ -106,11 +106,11 @@ def main(argv):
     if len(args) != 3:
         sys.exit(__doc__)
     scene = json.load(open(args[0]))
-    fleet, oak = Image.open(args[1]).convert("RGB"), Image.open(args[2]).convert("RGB")
+    fleet, weep = Image.open(args[1]).convert("RGB"), Image.open(args[2]).convert("RGB")
     size = scene.get("size", [1280, 800])
     scale = fleet.size[0] / size[0]
-    if abs(oak.size[0] / size[0] - scale) > 0.01 or fleet.size != oak.size:
-        print(f"warning: shots differ in size: fleet {fleet.size}, oak {oak.size}", file=sys.stderr)
+    if abs(weep.size[0] / size[0] - scale) > 0.01 or fleet.size != weep.size:
+        print(f"warning: shots differ in size: fleet {fleet.size}, weep {weep.size}", file=sys.stderr)
     tol, min_run = float(opts["--tolerance"]), float(opts["--min-run"])
     markdown = "--markdown" in flags
     failed = False
@@ -120,11 +120,11 @@ def main(argv):
         axis, at = scan["axis"], scan["at"]
         lo, hi = scan.get("from", 0), scan.get("to", size[1] if axis == "y" else size[0])
         ta = transitions(runs_along(fleet, axis, at, lo, hi, scale), min_run)
-        tb = transitions(runs_along(oak, axis, at, lo, hi, scale), min_run)
+        tb = transitions(runs_along(weep, axis, at, lo, hi, scale), min_run)
         names = scan.get("edges", [])
         where = f"{'x' if axis == 'y' else 'y'}={at}"
         if markdown:
-            print(f"| {scan['name']} ({where}) | Fleet | Oak | delta |\n| --- | --- | --- | --- |")
+            print(f"| {scan['name']} ({where}) | Fleet | WEEP | delta |\n| --- | --- | --- | --- |")
         else:
             print(f"== {scan['name']} ({where}, {lo}..{hi})")
         for k, (fa, ob) in enumerate(pair(ta, tb, tol)):
@@ -141,23 +141,23 @@ def main(argv):
             if markdown:
                 print(f"| {name} | {fpos} | {opos} | {delta} |")
             else:
-                print(f"  {name:<28} fleet {fpos:>7} {fcol:<18} oak {opos:>7} {ocol:<18} {delta:>6}{mark}")
+                print(f"  {name:<28} fleet {fpos:>7} {fcol:<18} weep {opos:>7} {ocol:<18} {delta:>6}{mark}")
         print()
 
     for sample in scene.get("samples", []):
         x, y = sample["at"]
         dx, dy = round(x * scale), round(y * scale)
-        cf, co = fleet.getpixel((dx, dy)), oak.getpixel((dx, dy))
+        cf, co = fleet.getpixel((dx, dy)), weep.getpixel((dx, dy))
         same = cf == co
         failed |= not same
-        print(f"sample {sample['name']:<24} ({x},{y})  fleet {hexc(cf)}  oak {hexc(co)}  {'ok' if same else '<-- differs'}"
+        print(f"sample {sample['name']:<24} ({x},{y})  fleet {hexc(cf)}  weep {hexc(co)}  {'ok' if same else '<-- differs'}"
               + (f"  key {sample['key']}" if sample.get("key") else ""))
 
     if opts["--diff"]:
         w, h = fleet.size
         out = Image.new("RGB", (w * 2 + 10, h), (255, 0, 255))
         out.paste(fleet, (0, 0))
-        out.paste(oak, (w + 10, 0))
+        out.paste(weep, (w + 10, 0))
         d = ImageDraw.Draw(out)
         for scan in scene.get("scans", []):
             at = round(scan["at"] * scale)

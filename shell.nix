@@ -2,7 +2,7 @@
 #
 # gpui links against libxcb and libxkbcommon at build time and dlopens
 # wayland, libvulkan and libGL at run time; `nix-shell` puts them on the path
-# so `cargo test --workspace` and `cargo run -p oak` work.
+# so `cargo test --workspace` and `cargo run -p weep` work.
 {
   pkgs ? import <nixpkgs> { },
 }:

@@ -44,7 +44,7 @@
       ["wait", 800],
       ["shot", "right-min"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["hover", 372, 400, 800],
       ["shot", "gap-hover"],
@@ -76,7 +76,7 @@
       ["shot", "right-min"]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/src/main.rs"],
   "scans": [],
   "samples": []
 }

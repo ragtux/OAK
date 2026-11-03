@@ -1,6 +1,6 @@
 {
   "name": "git2",
-  "about": "Batch 10, second run, after the first showed what the driver got wrong: the branch tag is at (793, 18) not (1180, 18); a two-chord shortcut needs a pause between its chords; the Git tool's rows start at y 182 (pitch 26); the line-status mark is a bar at the island's left edge, hovered at (378, 690). Fleet only; Oak has none of these yet.",
+  "about": "Batch 10, second run, after the first showed what the driver got wrong: the branch tag is at (793, 18) not (1180, 18); a two-chord shortcut needs a pause between its chords; the Git tool's rows start at y 182 (pitch 26); the line-status mark is a bar at the island's left edge, hovered at (378, 690). Fleet only; WEEP has none of these yet.",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
@@ -34,11 +34,11 @@
       ["key", "enter"], ["wait", 1500], ["shot", "delete-dialog"],
       ["key", "escape"], ["wait", 500]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000]
     ]
   },
-  "oak_args": ["{workspace}/README.md"],
+  "weep_args": ["{workspace}/README.md"],
   "scans": [],
   "samples": []
 }

@@ -50,7 +50,7 @@
       ["wait", 1000],
       ["shot", "left-hidden"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 1000],
       ["key", "alt+2"],
       ["wait", 800],
@@ -88,7 +88,7 @@
       ["shot", "left-hidden"]
     ]
   },
-  "oak_args": ["{workspace}/src/main.rs"],
+  "weep_args": ["{workspace}/src/main.rs"],
   "scans": [],
   "samples": []
 }

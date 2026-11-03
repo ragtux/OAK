@@ -11,7 +11,7 @@
     "fleet": [
       ["wait", 2000], ["key", "escape"], ["wait", 500],
       ["key", "ctrl+graveaccent"], ["wait", 4000], ["shot", "terminal"],
-      ["type", "echo oak-probe"], ["key", "enter"], ["wait", 1500], ["shot", "echo"],
+      ["type", "echo weep-probe"], ["key", "enter"], ["wait", 1500], ["shot", "echo"],
       ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500], ["shot", "long"],
       ["move", 640, 620], ["wait", 300], ["wheel", 3], ["wait", 1200], ["shot", "scrolled"],
       ["move", 1240, 740], ["wait", 800], ["shot", "scrolled-hover"],
@@ -20,10 +20,10 @@
       ["key", "ctrl+shift+graveaccent"], ["wait", 4000], ["shot", "two-tabs"],
       ["key", "alt+2"], ["wait", 800], ["shot", "hidden"]
     ],
-    "oak": [
+    "weep": [
       ["wait", 2000],
       ["key", "ctrl+graveaccent"], ["wait", 2500], ["shot", "terminal"],
-      ["type", "echo oak-probe"], ["key", "enter"], ["wait", 1500], ["shot", "echo"],
+      ["type", "echo weep-probe"], ["key", "enter"], ["wait", 1500], ["shot", "echo"],
       ["type", "1..120 | % { \"line $_\" }"], ["key", "enter"], ["wait", 2500], ["shot", "long"],
       ["move", 640, 620], ["wait", 300], ["wheel", 3], ["wait", 800], ["shot", "scrolled"],
       ["move", 1240, 740], ["wait", 800], ["shot", "scrolled-hover"],

@@ -5,7 +5,7 @@ The Windows counterpart of the KWin/ydotool route in docs/probe-plan.md (harness
 wrapper and H). One script, one state file, so each step is a command:
 
     winprobe.py launch fleet <workspace> [--size 1280x800] [--pos 100,100]
-    winprobe.py launch oak <workspace> [--size 1280x800] [--pos 100,100] [-- <extra oak args>]
+    winprobe.py launch weep <workspace> [--size 1280x800] [--pos 100,100] [-- <extra weep args>]
     winprobe.py launch exe <path> [args...]        any other program; the window is found by pid
     winprobe.py windows                            list top-level windows: pid, class, title, rects
     winprobe.py place [--size WxH] [--pos X,Y]     move the launched window (logical px)
@@ -17,7 +17,7 @@ wrapper and H). One script, one state file, so each step is a command:
     winprobe.py drag <x1> <y1> <x2> <y2>
     winprobe.py mousedown | mouseup           half a drag, so a shot can be taken mid-way
     winprobe.py maximize | restore            ShowWindow on the launched window
-    (scene step only) ["oak-settings", {...}]  write Oak's settings.json for the run (live reload)
+    (scene step only) ["weep-settings", {...}]  write WEEP's settings.json for the run (live reload)
     winprobe.py hover <x> <y> <ms>                 move, then wait (tooltips)
     winprobe.py wait <ms>
     winprobe.py shot <out.png> [--frame]           client area (or whole frame) of the launched window
@@ -28,13 +28,13 @@ wrapper and H). One script, one state file, so each step is a command:
     winprobe.py attach <scene.json> <editor> <pid> <out dir>
                                                    the same against a window already open (a running Fleet)
 
-The launched window is remembered in %LOCALAPPDATA%/oak-probe/current.json (pid, hwnd, scale),
+The launched window is remembered in %LOCALAPPDATA%/weep-probe/current.json (pid, hwnd, scale),
 so the commands above can run one at a time from a shell. Sizes and coordinates are logical
 pixels at the window's monitor scale (150% here); screenshots are device pixels.
 
 Fleet is found through FLEET_HOME, then %LOCALAPPDATA%/Programs/Fleet, then the newest
-%USERPROFILE%/Downloads/Fleet-*/. Oak is OAK_EXE, else <repo>/target/release/oak.exe or
-$CARGO_TARGET_DIR/release/oak.exe.
+%USERPROFILE%/Downloads/Fleet-*/. WEEP is WEEP_EXE, else <repo>/target/release/weep.exe or
+$CARGO_TARGET_DIR/release/weep.exe.
 
 Needs Pillow for `shot` and `pixel`; everything else is ctypes against user32.
 """
@@ -57,7 +57,7 @@ DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
 user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
 user32.SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
 
-STATE = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "oak-probe", "current.json")
+STATE = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "weep-probe", "current.json")
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
@@ -415,30 +415,30 @@ def find_fleet():
     raise SystemExit("Fleet.exe not found: set FLEET_HOME")
 
 
-def find_oak():
-    cands = [os.environ.get("OAK_EXE"),
-             os.path.join(os.environ.get("CARGO_TARGET_DIR", ""), "release", "oak.exe"),
-             os.path.join(REPO, "target", "release", "oak.exe")]
+def find_weep():
+    cands = [os.environ.get("WEEP_EXE"),
+             os.path.join(os.environ.get("CARGO_TARGET_DIR", ""), "release", "weep.exe"),
+             os.path.join(REPO, "target", "release", "weep.exe")]
     for c in cands:
         if c and os.path.isfile(c):
             return c
-    raise SystemExit("oak.exe not found: build with `cargo build --release -p oak` or set OAK_EXE")
+    raise SystemExit("weep.exe not found: build with `cargo build --release -p weep` or set WEEP_EXE")
 
 
 def launch(editor, args, size, pos, extra):
     if editor == "fleet":
         cmd = [find_fleet(), *args]
         timeout = 90
-    elif editor == "oak":
-        cmd = [find_oak(), *args, *extra]
+    elif editor == "weep":
+        cmd = [find_weep(), *args, *extra]
         timeout = 30
         # A fresh configuration folder per launch, so a probe never inherits the
-        # layout or settings an earlier run left behind (OAK_CONFIG_DIR).
-        config = os.path.join(os.path.dirname(STATE), "oak-config")
+        # layout or settings an earlier run left behind (WEEP_CONFIG_DIR).
+        config = os.path.join(os.path.dirname(STATE), "weep-config")
         import shutil
         shutil.rmtree(config, ignore_errors=True)
         os.makedirs(config, exist_ok=True)
-        os.environ["OAK_CONFIG_DIR"] = config
+        os.environ["WEEP_CONFIG_DIR"] = config
     elif editor == "exe":
         cmd = [*args, *extra]
         timeout = 60
@@ -480,9 +480,9 @@ def fleet_settings_path():
 
 def with_fleet_settings(values):
     """Write `values` into Fleet's settings.json for the run (harness B): the previous file is kept
-    beside it as settings.json.oak-probe and put back by `restore_fleet_settings`."""
+    beside it as settings.json.weep-probe and put back by `restore_fleet_settings`."""
     path = fleet_settings_path()
-    backup = path + ".oak-probe"
+    backup = path + ".weep-probe"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path) and not os.path.exists(backup):
         os.replace(path, backup)
@@ -494,7 +494,7 @@ def with_fleet_settings(values):
 
 def restore_fleet_settings():
     path = fleet_settings_path()
-    backup = path + ".oak-probe"
+    backup = path + ".weep-probe"
     if os.path.exists(backup + ".absent"):
         os.remove(backup + ".absent")
         if os.path.exists(path):
@@ -508,8 +508,8 @@ def run_scene(scene_path, editor, workspace, out_dir):
     ["key", "ctrl+shift+f"], ["type", "text"], ["move", x, y], ["click"], ["drag", x1, y1, x2, y2],
     ["mousedown"], ["mouseup"], ["wheel", notches], ["hover", x, y, ms], ["wait", ms], ["maximize"], ["restore"],
     ["shot", "name"]. Shots go to <out dir>/<scene>-<editor>-<name>.png. `fleet_settings` is a JSON
-    object written to Fleet's settings.json for the run (theme, zoomLevel); `oak_args` are extra
-    arguments for Oak, with `{workspace}` expanded to the fixture's path.
+    object written to Fleet's settings.json for the run (theme, zoomLevel); `weep_args` are extra
+    arguments for WEEP, with `{workspace}` expanded to the fixture's path.
     """
     with open(scene_path) as fh:
         scene = json.load(fh)
@@ -627,12 +627,12 @@ def do(s, step, out_dir=".", prefix="shot"):
             i.u.mi = MOUSEINPUT(0, 0, 120 if notches > 0 else -120, MOUSEEVENTF_WHEEL, 0, None)
             send_inputs([i])
             time.sleep(0.05)
-    elif op == "oak-settings":
-        # Writes Oak's settings.json in the run's OAK_CONFIG_DIR, which Oak polls once a
+    elif op == "weep-settings":
+        # Writes WEEP's settings.json in the run's WEEP_CONFIG_DIR, which WEEP polls once a
         # second, so the next shot shows the live reload.
-        config = os.environ.get("OAK_CONFIG_DIR")
+        config = os.environ.get("WEEP_CONFIG_DIR")
         if not config:
-            raise SystemExit("oak-settings needs an Oak launch (OAK_CONFIG_DIR)")
+            raise SystemExit("weep-settings needs a WEEP launch (WEEP_CONFIG_DIR)")
         with open(os.path.join(config, "settings.json"), "w") as fh:
             json.dump(a[0], fh)
     elif op == "maximize":
@@ -697,7 +697,7 @@ def main(argv):
             else:
                 rest.append(a)
         if not rest:
-            sys.exit("launch fleet|oak|exe <workspace|path> ...")
+            sys.exit("launch fleet|weep|exe <workspace|path> ...")
         launch(rest[0], rest[1:], size or (1280., 800.), pos or (100., 100.), extra)
         return
     if cmd == "run":
