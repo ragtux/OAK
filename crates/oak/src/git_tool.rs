@@ -75,11 +75,47 @@ pub struct GitTool {
     /// The row a click selected (Fleet's `git-tool-selected` shot).
     selected: Option<PathBuf>,
     pub filter: GitFilter,
+    /// A refresh is reading on the background executor; one asked for
+    /// meanwhile runs after it.
+    refreshing: bool,
+    refresh_again: bool,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
 
 impl EventEmitter<GitToolEvent> for GitTool {}
+
+/// What the Git tool reads through `oak-git`: gathered off the UI thread,
+/// as each `git` call takes seconds on a network share.
+struct GitToolData {
+    entries: Vec<StatusEntry>,
+    branch: Option<String>,
+    upstream: Option<String>,
+    unsynced: usize,
+    commits: Vec<Commit>,
+}
+
+impl GitToolData {
+    fn load(repo: &Repo) -> GitToolData {
+        let mut entries = repo.status_entries().unwrap_or_default();
+        entries.sort_by(|a, b| {
+            a.path
+                .file_name()
+                .cmp(&b.path.file_name())
+                .then(a.path.cmp(&b.path))
+        });
+        GitToolData {
+            entries,
+            branch: repo.branch(),
+            upstream: repo.upstream(),
+            unsynced: match repo.ahead_behind() {
+                Some(ab) => ab.ahead,
+                None => repo.commit_count(),
+            },
+            commits: repo.history(None, HISTORY_LIMIT).unwrap_or_default(),
+        }
+    }
+}
 
 impl Focusable for GitTool {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -110,6 +146,8 @@ impl GitTool {
             error: None,
             selected: None,
             filter: GitFilter::All,
+            refreshing: false,
+            refresh_again: false,
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
@@ -117,31 +155,43 @@ impl GitTool {
         tool
     }
 
-    /// Reads the status, the branch, the unsynced count and the commits again.
+    /// Reads the status, the branch, the unsynced count and the commits
+    /// again, on the background executor; the tool shows them once they
+    /// have landed.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        self.entries = repo.status_entries().unwrap_or_default();
-        self.entries.sort_by(|a, b| {
-            a.path
-                .file_name()
-                .cmp(&b.path.file_name())
-                .then(a.path.cmp(&b.path))
-        });
-        self.branch = repo.branch();
-        self.upstream = repo.upstream();
-        self.unsynced = match repo.ahead_behind() {
-            Some(ab) => ab.ahead,
-            None => repo.commit_count(),
-        };
-        self.commits = repo.history(None, HISTORY_LIMIT).unwrap_or_default();
+        if self.refreshing {
+            self.refresh_again = true;
+            return;
+        }
+        self.refreshing = true;
+        cx.spawn(async move |this, cx| {
+            let data = cx
+                .background_spawn(async move { GitToolData::load(&repo) })
+                .await;
+            let _ = this.update(cx, |this, cx| this.apply(data, cx));
+        })
+        .detach();
+    }
+
+    fn apply(&mut self, data: GitToolData, cx: &mut Context<Self>) {
+        self.entries = data.entries;
+        self.branch = data.branch;
+        self.upstream = data.upstream;
+        self.unsynced = data.unsynced;
+        self.commits = data.commits;
         if self
             .selected
             .as_ref()
             .is_some_and(|s| !self.entries.iter().any(|e| &e.path == s))
         {
             self.selected = None;
+        }
+        self.refreshing = false;
+        if std::mem::take(&mut self.refresh_again) {
+            self.refresh(cx);
         }
         cx.notify();
     }
@@ -727,6 +777,10 @@ pub struct HistoryTool {
     /// The author chip's choice; None is "all users".
     author: Option<String>,
     commits: Vec<Commit>,
+    /// A refresh is reading on the background executor; one asked for
+    /// meanwhile runs after it.
+    refreshing: bool,
+    refresh_again: bool,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -756,6 +810,8 @@ impl HistoryTool {
             chosen_branch: None,
             author: None,
             commits: Vec::new(),
+            refreshing: false,
+            refresh_again: false,
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
@@ -788,19 +844,40 @@ impl HistoryTool {
         authors
     }
 
+    /// Reads the branch and the commits again on the background executor
+    /// (a chip or file chosen meanwhile is read once these have landed).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        self.branch = repo.branch();
-        self.commits = repo
-            .history_of(
-                self.chosen_branch.as_deref(),
-                self.file.as_deref(),
-                HISTORY_LIMIT,
-            )
-            .unwrap_or_default();
-        cx.notify();
+        if self.refreshing {
+            self.refresh_again = true;
+            return;
+        }
+        self.refreshing = true;
+        let chosen_branch = self.chosen_branch.clone();
+        let file = self.file.clone();
+        cx.spawn(async move |this, cx| {
+            let (branch, commits) = cx
+                .background_spawn(async move {
+                    let branch = repo.branch();
+                    let commits = repo
+                        .history_of(chosen_branch.as_deref(), file.as_deref(), HISTORY_LIMIT)
+                        .unwrap_or_default();
+                    (branch, commits)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.branch = branch;
+                this.commits = commits;
+                this.refreshing = false;
+                if std::mem::take(&mut this.refresh_again) {
+                    this.refresh(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 

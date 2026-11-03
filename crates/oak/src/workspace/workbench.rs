@@ -473,38 +473,31 @@ impl Workspace {
     }
 
     /// Reads the branch and every file's git status again: on open, after
-    /// a save or a file operation, and every fifth disk poll.
+    /// a save or a file operation, and every fifth disk poll. Every `git`
+    /// call runs on the background executor: one takes seconds on a network
+    /// share, and on the UI thread that froze the window until Windows
+    /// offered to close it. A refresh asked for while one is reading runs
+    /// after it, so the calls never pile up.
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let branch = repo.branch().map(SharedString::from);
-        if branch != self.branch {
-            self.branch = branch;
-            cx.notify();
+        if self.git_refreshing {
+            self.git_refresh_again = true;
+            return;
         }
-        match repo.status() {
-            Ok(statuses) => self
-                .file_tree
-                .update(cx, |tree, cx| tree.set_statuses(statuses, cx)),
-            Err(e) => eprintln!("oak: {e:#}"),
-        }
+        self.git_refreshing = true;
         self.git_tool.update(cx, |t, cx| t.refresh(cx));
         self.history_tool.update(cx, |t, cx| t.refresh(cx));
-        // The open files' line status (`editor.showLineStatus`).
+        // The open files' line status (`editor.showLineStatus`), the Changed
+        // Files tabs, and the blame columns that are open.
         let show = Self::settings(cx).editor_show_line_status();
-        for doc in self.documents.clone() {
-            let Some(path) = doc.read(cx).path.clone() else {
-                continue;
-            };
-            let hunks = if show {
-                repo.line_status(&path).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            doc.update(cx, |d, cx| d.set_hunks(hunks, cx));
-        }
-        // The Changed Files tabs, and the blame columns that are open.
+        let docs: Vec<(Entity<Document>, PathBuf)> = self
+            .documents
+            .iter()
+            .filter_map(|doc| Some((doc.clone(), doc.read(cx).path.clone()?)))
+            .collect();
+        let mut blames: Vec<(Entity<EditorView>, PathBuf)> = Vec::new();
         for p in 0..self.panes.len() {
             for ix in 0..self.panes[p].tabs.len() {
                 match &self.panes[p].tabs[ix].view {
@@ -513,16 +506,63 @@ impl Workspace {
                         view.update(cx, |v, cx| v.refresh(cx));
                     }
                     TabView::Editor(editor) if editor.read(cx).blame_shown() => {
-                        let editor = editor.clone();
                         if let Some(path) = editor.read(cx).path(cx) {
-                            let blame = repo.blame(&path).ok();
-                            editor.update(cx, |e, cx| e.set_blame(blame, cx));
+                            blames.push((editor.clone(), path));
                         }
                     }
                     _ => {}
                 }
             }
         }
+        let doc_paths: Vec<PathBuf> = docs.iter().map(|(_, p)| p.clone()).collect();
+        let blame_paths: Vec<PathBuf> = blames.iter().map(|(_, p)| p.clone()).collect();
+        cx.spawn(async move |this, cx| {
+            let (branch, statuses, hunks, blame_lines) = cx
+                .background_spawn(async move {
+                    let branch = repo.branch();
+                    let statuses = repo.status();
+                    let hunks: Vec<Vec<oak_git::Hunk>> = doc_paths
+                        .iter()
+                        .map(|path| {
+                            if show {
+                                repo.line_status(path).unwrap_or_default()
+                            } else {
+                                Vec::new()
+                            }
+                        })
+                        .collect();
+                    let blame_lines: Vec<Option<Vec<oak_git::BlameLine>>> = blame_paths
+                        .iter()
+                        .map(|path| repo.blame(path).ok())
+                        .collect();
+                    (branch, statuses, hunks, blame_lines)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let branch = branch.map(SharedString::from);
+                if branch != this.branch {
+                    this.branch = branch;
+                    cx.notify();
+                }
+                match statuses {
+                    Ok(statuses) => this
+                        .file_tree
+                        .update(cx, |tree, cx| tree.set_statuses(statuses, cx)),
+                    Err(e) => eprintln!("oak: {e:#}"),
+                }
+                for ((doc, _), hunks) in docs.into_iter().zip(hunks) {
+                    doc.update(cx, |d, cx| d.set_hunks(hunks, cx));
+                }
+                for ((editor, _), blame) in blames.into_iter().zip(blame_lines) {
+                    editor.update(cx, |e, cx| e.set_blame(blame, cx));
+                }
+                this.git_refreshing = false;
+                if std::mem::take(&mut this.git_refresh_again) {
+                    this.refresh_git(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// The open Changed Files tab, if any (custom diffs are separate tabs).
@@ -1069,7 +1109,8 @@ impl Workspace {
     /// clean, else the editor shows Fleet's banner with Overwrite and Reload.
     fn check_disk(&mut self, cx: &mut Context<Self>) {
         self.disk_ticks = self.disk_ticks.wrapping_add(1);
-        if self.disk_ticks % 5 == 0 {
+        // A poll that finds the last refresh still reading skips its turn.
+        if self.disk_ticks % 5 == 0 && !self.git_refreshing {
             self.refresh_git(cx);
         }
         self.auto_fetch(cx);

@@ -21,7 +21,7 @@ use gpui::{
 use oak_git::{diff_lines, ops_from_hunks, LineOp, Repo, Status, StatusEntry};
 use oak_syntax::{Highlighter, Language, Span};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
 pub enum DiffViewEvent {
@@ -87,6 +87,34 @@ enum DiffRow {
     Collapsed,
 }
 
+/// A changed file's two texts and git's hunks for it, read on the
+/// background executor (`git show`, `git diff` and the disk take seconds
+/// each on a network share).
+struct Loaded {
+    old: Option<String>,
+    new: Option<String>,
+    hunks: Option<Vec<oak_git::Hunk>>,
+}
+
+impl Loaded {
+    fn read(repo: &Repo, entry: &StatusEntry) -> Loaded {
+        let old = match entry.status {
+            Status::Untracked | Status::Added => None,
+            Status::Renamed => entry.old_path.as_deref().and_then(|p| repo.head_text(p)),
+            _ => repo.head_text(&entry.path),
+        };
+        let new = match entry.status {
+            Status::Deleted => None,
+            _ => std::fs::read_to_string(&entry.path).ok(),
+        };
+        Loaded {
+            old,
+            new,
+            hunks: repo.file_diff(entry).ok(),
+        }
+    }
+}
+
 pub struct DiffView {
     repo: Option<Repo>,
     /// None for the repository's changed files; a title for a custom diff.
@@ -94,6 +122,17 @@ pub struct DiffView {
     sources: Vec<DiffSource>,
     expanded: Vec<String>,
     rows: HashMap<String, Vec<DiffRow>>,
+    /// The open cards' texts, by key; cleared by every refresh and read
+    /// again for the cards that are open.
+    loaded: HashMap<String, Loaded>,
+    /// Bumped by each refresh, so a read started before it is dropped.
+    load_generation: u64,
+    /// A refresh is reading the changed files on the background executor;
+    /// one asked for meanwhile runs after it.
+    refreshing: bool,
+    refresh_again: bool,
+    /// `expand` asked for a file the pending refresh has not listed yet.
+    pending_expand: Option<PathBuf>,
     highlighter: Highlighter,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
@@ -116,6 +155,11 @@ impl DiffView {
             sources: Vec::new(),
             expanded: Vec::new(),
             rows: HashMap::new(),
+            loaded: HashMap::new(),
+            load_generation: 0,
+            refreshing: false,
+            refresh_again: false,
+            pending_expand: None,
             highlighter: Highlighter::new(),
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
@@ -132,6 +176,11 @@ impl DiffView {
             expanded: sources.iter().map(|s| s.key.clone()).collect(),
             sources,
             rows: HashMap::new(),
+            loaded: HashMap::new(),
+            load_generation: 0,
+            refreshing: false,
+            refresh_again: false,
+            pending_expand: None,
             highlighter: Highlighter::new(),
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
@@ -151,12 +200,36 @@ impl DiffView {
     }
 
     /// Reads the changed files again (the workspace calls this with every
-    /// git refresh); the open cards' diffs are rebuilt from disk.
+    /// git refresh); the open cards' diffs are rebuilt from disk. Git runs
+    /// on the background executor; the tab follows once it has answered.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let mut entries = repo.status_entries().unwrap_or_default();
+        if self.refreshing {
+            self.refresh_again = true;
+            return;
+        }
+        self.refreshing = true;
+        cx.spawn(async move |this, cx| {
+            let entries = cx
+                .background_spawn(async move { repo.status_entries().unwrap_or_default() })
+                .await;
+            let _ = this.update(cx, |this, cx| this.apply_entries(entries, cx));
+        })
+        .detach();
+    }
+
+    /// The changed files a refresh read: the cards, the ones that stay
+    /// open, and a read of their texts.
+    fn apply_entries(&mut self, mut entries: Vec<StatusEntry>, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        self.refreshing = false;
+        if std::mem::take(&mut self.refresh_again) {
+            self.refresh(cx);
+        }
         entries.sort_by(|a, b| {
             a.path
                 .file_name()
@@ -191,6 +264,13 @@ impl DiffView {
             .collect();
         let keys: Vec<String> = self.sources.iter().map(|s| s.key.clone()).collect();
         self.expanded.retain(|k| keys.contains(k));
+        if let Some(key) = self
+            .pending_expand
+            .take()
+            .and_then(|path| self.key_of(&path))
+        {
+            self.expanded = vec![key];
+        }
         if self.expanded.is_empty()
             && cx
                 .global::<crate::settings::AppSettings>()
@@ -199,22 +279,68 @@ impl DiffView {
         {
             self.expanded = keys;
         }
+        // The texts are read again from disk and HEAD with every refresh.
+        self.loaded.clear();
+        self.load_generation = self.load_generation.wrapping_add(1);
+        self.load_expanded(cx);
+    }
+
+    /// Reads the texts of the open cards that lack them on the background
+    /// executor, then rebuilds the rows (at once when none is missing).
+    fn load_expanded(&mut self, cx: &mut Context<Self>) {
+        let missing: Vec<(String, StatusEntry)> = self
+            .sources
+            .iter()
+            .filter(|s| self.expanded.contains(&s.key) && !self.loaded.contains_key(&s.key))
+            .filter_map(|s| Some((s.key.clone(), s.entry.clone()?)))
+            .collect();
+        let Some(repo) = self.repo.clone().filter(|_| !missing.is_empty()) else {
+            self.rebuild(cx);
+            return;
+        };
+        let generation = self.load_generation;
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_spawn(async move {
+                    missing
+                        .into_iter()
+                        .map(|(key, entry)| (key, Loaded::read(&repo, &entry)))
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.load_generation != generation {
+                    return;
+                }
+                this.loaded.extend(loaded);
+                this.rebuild(cx);
+            });
+        })
+        .detach();
         self.rebuild(cx);
     }
 
-    /// Opens the card for `path` (and closes the others, as Fleet's shot
-    /// shows one open), scrolled into view.
-    pub fn expand(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        // Paths compare by component (git's slashes against the editor's
-        // backslashes on Windows), so the key is looked up, not built.
-        let key = self
-            .sources
+    /// The card key of `path`. Paths compare by component (git's slashes
+    /// against the editor's backslashes on Windows), so the key is looked
+    /// up, not built.
+    fn key_of(&self, path: &Path) -> Option<String> {
+        self.sources
             .iter()
-            .find(|s| s.path.as_deref() == Some(path.as_path()))
-            .map(|s| s.key.clone());
-        if let Some(key) = key {
-            self.expanded = vec![key];
-            self.rebuild(cx);
+            .find(|s| s.path.as_deref() == Some(path))
+            .map(|s| s.key.clone())
+    }
+
+    /// Opens the card for `path` (and closes the others, as Fleet's shot
+    /// shows one open), scrolled into view; a file the running refresh has
+    /// not listed yet opens once it has.
+    pub fn expand(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        match self.key_of(&path) {
+            Some(key) => {
+                self.expanded = vec![key];
+                self.load_expanded(cx);
+            }
+            None if self.refreshing => self.pending_expand = Some(path),
+            None => {}
         }
     }
 
@@ -224,10 +350,10 @@ impl DiffView {
         } else {
             self.expanded.push(key);
         }
-        self.rebuild(cx);
+        self.load_expanded(cx);
     }
 
-    /// Computes the rows of every open card.
+    /// Computes the rows of every open card whose texts have been read.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.rows.clear();
         let theme = cx.global::<Theme>().clone();
@@ -236,7 +362,9 @@ impl DiffView {
             if !self.expanded.contains(&key) {
                 continue;
             }
-            let (old, new) = self.texts(ix);
+            let Some((old, new, hunks)) = self.texts(ix) else {
+                continue;
+            };
             let language = self.sources[ix]
                 .path
                 .as_deref()
@@ -255,12 +383,8 @@ impl DiffView {
                 .unwrap_or_default();
             // Git's own hunks pair the rows for a repository change (Fleet's
             // pairing); a custom diff, or hunks that do not fit, use Oak's.
-            let from_git = self
-                .repo
-                .as_ref()
-                .zip(self.sources[ix].entry.as_ref())
-                .and_then(|(repo, entry)| repo.file_diff(entry).ok())
-                .and_then(|hunks| ops_from_hunks(&hunks, old_lines.len(), new_lines.len()));
+            let from_git =
+                hunks.and_then(|hunks| ops_from_hunks(&hunks, old_lines.len(), new_lines.len()));
             let mut ops = from_git.unwrap_or_else(|| diff_lines(&old_lines, &new_lines));
             let old_phantom = old.as_deref().and_then(phantom);
             let new_phantom = new.as_deref().and_then(phantom);
@@ -313,25 +437,19 @@ impl DiffView {
         cx.notify();
     }
 
-    /// The two texts of a source: its own, or HEAD's and the disk's.
-    fn texts(&self, ix: usize) -> (Option<String>, Option<String>) {
+    /// The two texts of a source and git's hunks: its own texts, or what
+    /// `load_expanded` read of HEAD and the disk (None until it has).
+    #[allow(clippy::type_complexity)]
+    fn texts(
+        &self,
+        ix: usize,
+    ) -> Option<(Option<String>, Option<String>, Option<Vec<oak_git::Hunk>>)> {
         let source = &self.sources[ix];
         if source.old.is_some() || source.new.is_some() {
-            return (source.old.clone(), source.new.clone());
+            return Some((source.old.clone(), source.new.clone(), None));
         }
-        let (Some(repo), Some(entry)) = (&self.repo, &source.entry) else {
-            return (None, None);
-        };
-        let old = match entry.status {
-            Status::Untracked | Status::Added => None,
-            Status::Renamed => entry.old_path.as_deref().and_then(|p| repo.head_text(p)),
-            _ => repo.head_text(&entry.path),
-        };
-        let new = match entry.status {
-            Status::Deleted => None,
-            _ => std::fs::read_to_string(&entry.path).ok(),
-        };
-        (old, new)
+        let loaded = self.loaded.get(&source.key)?;
+        Some((loaded.old.clone(), loaded.new.clone(), loaded.hunks.clone()))
     }
 
     fn stage_toggle(&mut self, entry: StatusEntry, cx: &mut Context<Self>) {

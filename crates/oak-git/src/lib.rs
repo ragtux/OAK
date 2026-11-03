@@ -85,16 +85,50 @@ impl Repo {
     /// The repository holding `dir`, if git is on the path and `dir` is in
     /// a work tree.
     pub fn discover(dir: &Path) -> Option<Repo> {
-        let out = git(dir, &["rev-parse", "--show-toplevel"]).ok()?;
-        let top = String::from_utf8_lossy(&out).trim().to_string();
+        let out = git(dir, &["rev-parse", "--show-toplevel", "--show-prefix"]).ok()?;
+        let text = String::from_utf8_lossy(&out);
+        let mut lines = text.lines();
+        let top = lines.next()?.trim();
         if top.is_empty() {
             return None;
         }
+        let prefix = lines.next().unwrap_or("").trim();
         Some(Repo {
-            root: PathBuf::from(top),
+            root: root_spelled_like(dir, top, prefix),
         })
     }
+}
 
+/// The work tree's top level spelled the way `dir` is: git prints a mapped
+/// network drive as its UNC path (`//server/share/repo`), which never equals
+/// the workspace's `Z:\repo\...` paths, so the statuses keyed by it would
+/// colour no row. `prefix` is `dir` relative to the top level (git's
+/// `--show-prefix`), so the root is `dir` less that many components; `top`
+/// itself when they do not line up.
+fn root_spelled_like(dir: &Path, top: &str, prefix: &str) -> PathBuf {
+    let depth = Path::new(prefix)
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .count();
+    let dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(dir))
+            .unwrap_or_else(|_| dir.to_path_buf())
+    };
+    let same_name = |a: &Path, b: &Path| {
+        a.file_name()
+            .zip(b.file_name())
+            .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+    };
+    match dir.ancestors().nth(depth) {
+        Some(root) if same_name(root, Path::new(top)) => root.to_path_buf(),
+        _ => PathBuf::from(top),
+    }
+}
+
+impl Repo {
     /// The checked-out branch, or the short commit id when detached.
     pub fn branch(&self) -> Option<String> {
         let out = git(&self.root, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
@@ -911,6 +945,31 @@ impl Repo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_keeps_the_callers_spelling() {
+        // A mapped drive: git prints the UNC path, the workspace is `Z:`.
+        let dir = Path::new(if cfg!(windows) {
+            "Z:\\repos\\oak"
+        } else {
+            "/mnt/z/repos/oak"
+        });
+        assert_eq!(root_spelled_like(dir, "//server/share/repos/oak", ""), dir);
+        let sub = dir.join("crates").join("oak");
+        assert_eq!(
+            root_spelled_like(&sub, "//server/share/repos/oak", "crates/oak/"),
+            dir
+        );
+        // Components that do not line up fall back to git's answer.
+        assert_eq!(
+            root_spelled_like(dir, "//server/share/elsewhere", ""),
+            PathBuf::from("//server/share/elsewhere")
+        );
+        assert_eq!(
+            root_spelled_like(dir, "//server/share/repos/oak", "deeper/than/dir/"),
+            PathBuf::from("//server/share/repos/oak")
+        );
+    }
 
     #[test]
     fn parses_porcelain_entries() {

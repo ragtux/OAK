@@ -443,6 +443,10 @@ pub struct Workspace {
     repo: Option<oak_git::Repo>,
     /// Disk-poll ticks, for the slower git status refresh.
     disk_ticks: u32,
+    /// A git refresh is reading on the background executor; one asked for
+    /// meanwhile runs after it (`git_refresh_again`), never beside it.
+    git_refreshing: bool,
+    git_refresh_again: bool,
     file_tree: Entity<FileTree>,
     panes: Vec<Pane>,
     active_pane: usize,
@@ -565,6 +569,8 @@ impl Workspace {
             shortcut_hint: None,
             shortcut_generation: 0,
             disk_ticks: 0,
+            git_refreshing: false,
+            git_refresh_again: false,
             root,
             file_tree,
             panes: vec![Pane::new(cx)],
