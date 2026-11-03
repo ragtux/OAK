@@ -712,6 +712,55 @@ impl Settings {
     pub fn launch_terminal_on_open(&self) -> bool {
         self.bool("launchTerminalOnOpen").unwrap_or(false)
     }
+
+    // ---- M6: run configurations and problems ----------------------------------
+
+    /// `run.recentConfigurationsSize`: "Size of recent configurations list in
+    /// Run & Debug popup". Default 5 (estimate: the documentation gives none).
+    pub fn run_recent_configurations_size(&self) -> usize {
+        self.usize("run.recentConfigurationsSize").unwrap_or(5)
+    }
+
+    /// `run.environmentFile`: "Path to an environment file for all run
+    /// configurations, if no other file is specified for the configuration".
+    pub fn run_environment_file(&self) -> Option<&str> {
+        self.str("run.environmentFile").filter(|s| !s.is_empty())
+    }
+
+    /// `editor.renderRunInGutter`: "Show run icons in the gutter". True.
+    pub fn editor_render_run_in_gutter(&self) -> bool {
+        self.bool("editor.renderRunInGutter").unwrap_or(true)
+    }
+
+    /// `ff.runIconsAfterLineNumbers`: "Display run icon right after line
+    /// numbers in gutter". False: Fleet's icon replaces the number (batch 11).
+    pub fn ff_run_icons_after_line_numbers(&self) -> bool {
+        self.bool("ff.runIconsAfterLineNumbers").unwrap_or(false)
+    }
+
+    /// `editor.showFileStatus`: "Show the status indicator in the top-right
+    /// corner of the editor. The status indicator shows the number of
+    /// warnings and errors or a check mark if the file has none." True.
+    pub fn editor_show_file_status(&self) -> bool {
+        self.bool("editor.showFileStatus").unwrap_or(true)
+    }
+
+    /// `editor.markupWithoutSmartMode`: "Highlight basic syntax errors when
+    /// Smart Mode is off". True.
+    pub fn editor_markup_without_smart_mode(&self) -> bool {
+        self.bool("editor.markupWithoutSmartMode").unwrap_or(true)
+    }
+
+    /// `editor.showTooltipOnHover`: "Show a tooltip with error description
+    /// when hovering over an error in the source code". True.
+    pub fn editor_show_tooltip_on_hover(&self) -> bool {
+        self.bool("editor.showTooltipOnHover").unwrap_or(true)
+    }
+
+    /// `editor.hoverTooltipDelayMs`: the Settings page's "Tooltip delay", 500.
+    pub fn editor_hover_tooltip_delay_ms(&self) -> u64 {
+        self.usize("editor.hoverTooltipDelayMs").unwrap_or(500) as u64
+    }
 }
 
 /// Fleet's documented range for `zoomLevel`.

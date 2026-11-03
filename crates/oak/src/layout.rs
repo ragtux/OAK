@@ -23,6 +23,9 @@ pub struct Layout {
     /// Most recent first.
     pub recent: Vec<PathBuf>,
     pub goto_preview_hidden: bool,
+    /// The run configurations started, by name, most recent first (the Run
+    /// & Debug popup's Recent section, M6).
+    pub recent_runs: Vec<String>,
 }
 
 fn now_secs() -> u64 {
@@ -52,6 +55,7 @@ impl Layout {
             },
             recent: Vec::new(),
             goto_preview_hidden: false,
+            recent_runs: Vec::new(),
         }
     }
 
@@ -111,6 +115,16 @@ impl Layout {
                 .get("gotoPreviewHidden")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            recent_runs: entry
+                .get("recentRuns")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -131,6 +145,7 @@ impl Layout {
                 "right": panel(self.right),
                 "recent": recent,
                 "gotoPreviewHidden": self.goto_preview_hidden,
+                "recentRuns": self.recent_runs,
                 "opened": now_secs(),
             }),
         );

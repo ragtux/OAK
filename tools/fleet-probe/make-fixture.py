@@ -13,7 +13,8 @@ What it writes, and which probe it serves:
     outer/middle/inner/leaf.txt    single-child chain: Fleet's compact folders (`outer / middle / inner`)
     src/lib/util/helpers.rs        three levels of nesting: second and third level indent
     .hidden, .editorconfig,        dotfiles: the hidden-files toggle
-    .fleet/run.json                Fleet's run configurations (M6)
+    .fleet/run.json                Fleet's run configurations (M6): two `command` rows (one fails) and a `cargo` one
+    misc/broken.json, misc/broken.rs  a syntax error each: the problems widget and the status badge (M6)
     src/main.rs, data/config.json, data/settings.toml, README.md
                                    one file per supported grammar: syntax colours
     long/thousand.txt              1000 lines: scrollbar thumb, line-number gutter width
@@ -153,11 +154,35 @@ trim_trailing_whitespace = false
 RUN_JSON = """{
   "configurations": [
     {
+      "type": "command",
+      "name": "echo hello",
+      "program": "%(sh)s",
+      "args": ["%(flag)s", "echo hello from the fixture"]
+    },
+    {
+      "type": "command",
+      "name": "fail",
+      "program": "%(sh)s",
+      "args": ["%(flag)s", "exit 3"]
+    },
+    {
       "type": "cargo",
       "name": "run fixture",
       "cargoArgs": ["run"]
     }
   ]
+}
+""" % ({"sh": "cmd", "flag": "/c"} if os.name == "nt" else {"sh": "sh", "flag": "-c"})
+
+# M6: files with a syntax error for the problems widget and the status badge.
+BROKEN_JSON = """{
+  "a": 1,,
+  "b": [1, 2
+}
+"""
+
+BROKEN_RS = """fn main( {
+    let x = ;
 }
 """
 
@@ -219,6 +244,8 @@ def main():
           "日本語のテキスト\r\nemoji \U0001f980 crab\r\ntrailing spaces   \r\n",
           newline="")
     write(root, "misc/empty.txt", "")
+    write(root, "misc/broken.json", BROKEN_JSON)
+    write(root, "misc/broken.rs", BROKEN_RS)
     line = "2026-01-01T00:00:00Z INFO fixture: a log line with some padding to reach a round length ..\n"
     write(root, "big/big.log", line * (2 * 1024 * 1024 // len(line) + 1))
 

@@ -135,6 +135,15 @@ action_table! {
     "show-recent-workspaces" => ShowRecentWorkspaces, WORKSPACE;
     "notifications/toggle" => ToggleNotifications, WORKSPACE;
     "notifications/clear-all" => ClearNotifications, WORKSPACE;
+    "run-and-debug" => RunAndDebug, WORKSPACE;
+    "run/run-in-context" => RunInContext, WORKSPACE;
+    "run/rerun" => Rerun, WORKSPACE;
+    "stop-run-configurations" => StopRunConfigurations, WORKSPACE;
+    "run/stop" => RunStop, WORKSPACE;
+    "run/edit-configurations" => RunEditConfigurations, WORKSPACE;
+    "run/delete-configuration" => RunDeleteConfiguration, POPUP;
+    "editor/go-to-next-problem" => GoToNextProblem, EDITOR;
+    "editor/go-to-previous-problem" => GoToPreviousProblem, EDITOR;
     "terminal/new-tool" => TerminalNewTool, WORKSPACE;
     "terminal/toggle" => TerminalToggle, WORKSPACE;
     "terminal/jump-to-tool" => TerminalJumpToTool, WORKSPACE;
@@ -292,6 +301,17 @@ pub fn action_title(id: &str) -> String {
         "local-history/make-snapshot" => Some("Make Local History Snapshot"),
         // M5: the first six as Fleet's terminal menu spells them (batch 9),
         // the rest estimates.
+        // M6: as the Run & Debug popup and its tooltips spell them (batch 11),
+        // the rest estimates.
+        "run-and-debug" => Some("Run & Debug"),
+        "run/run-in-context" => Some("Run in Context"),
+        "run/rerun" => Some("Rerun"),
+        "stop-run-configurations" => Some("Stop Run Configurations"),
+        "run/stop" => Some("Stop"),
+        "run/edit-configurations" => Some("Edit Run Configurations..."),
+        "run/delete-configuration" => Some("Delete Configuration"),
+        "editor/go-to-next-problem" => Some("Next Problem"),
+        "editor/go-to-previous-problem" => Some("Previous Problem"),
         "terminal/new-tool" => Some("New Terminal"),
         "terminal/new-with-profile" => Some("New Terminal With Profile..."),
         "terminal/copy" => Some("Copy"),

@@ -12,7 +12,7 @@ use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter 
 
 pub mod structure;
 pub mod symbols;
-pub use structure::{enclosing_heads, Fold, SyntaxTree};
+pub use structure::{enclosing_heads, Fold, SyntaxProblem, SyntaxTree};
 pub use symbols::{Symbol, SymbolKind};
 
 /// The languages Oak ships grammars for.

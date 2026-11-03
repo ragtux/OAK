@@ -1,4 +1,6 @@
 Oak's own icon drawings (MIT, like the rest of Oak): panel toggles, the tools
-grid, the terminal, the collaboration mark, the git branch, the logo and the
-file-type monograms. Drawn on the same 16-unit grid with 1 px strokes as the
+grid, the terminal, the collaboration mark, the git branch, the logo, the
+file-type monograms, the gutter's run triangle, the status badge's check, the
+problems widget's sliders and its error mark (a circle and an exclamation,
+painted in two colours). Drawn on the same 16-unit grid with 1 px strokes as the
 expui set beside them, so the two mix in one toolbar.

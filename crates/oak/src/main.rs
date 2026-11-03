@@ -22,6 +22,8 @@ mod layout;
 mod menu;
 mod notifications;
 mod popup;
+mod run_popup;
+mod run_tool;
 mod scrollbar;
 mod search_tool;
 mod settings;

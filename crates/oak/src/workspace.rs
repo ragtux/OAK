@@ -12,6 +12,7 @@ use crate::file_tree::{FileTree, FileTreeEvent};
 use crate::find::{FindBar, FindBarEvent};
 use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
+mod runs;
 mod terminals;
 mod workbench;
 use crate::dialog::{ConfirmDialog, DialogButton};
@@ -20,6 +21,8 @@ use crate::git_tool::{GitTool, HistoryTool};
 use crate::goto::GotoPanel;
 use crate::menu::ContextMenu;
 use crate::notifications::Notifications;
+use crate::run_popup::RunPopup;
+use crate::run_tool::RunView;
 use crate::scrollbar::{scrollbar, EmptyView};
 use crate::search_tool::SearchTool;
 use crate::settings::{self, AppSettings};
@@ -478,6 +481,12 @@ pub struct Workspace {
     /// The terminals (M5), by the id their panel tab carries.
     terminals: Vec<(usize, Entity<TerminalView>)>,
     next_terminal: usize,
+    /// The run tool's tabs (M6), by the id their panel tab carries; the
+    /// Run & Debug popup while open; the recent runs' names, most recent first.
+    runs: Vec<(usize, Entity<RunView>)>,
+    next_run: usize,
+    run_popup: Option<Entity<RunPopup>>,
+    recent_runs: Vec<String>,
     /// This workspace's window, for deferred focus changes.
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
@@ -579,6 +588,10 @@ impl Workspace {
             notifications_open: false,
             terminals: Vec::new(),
             next_terminal: 0,
+            runs: Vec::new(),
+            next_run: 0,
+            run_popup: None,
+            recent_runs: layout.recent_runs.clone(),
             window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
@@ -625,6 +638,7 @@ impl Workspace {
             right: self.panels[2].layout(),
             recent: self.recent.clone(),
             goto_preview_hidden: self.goto_preview_hidden,
+            recent_runs: self.recent_runs.clone(),
         }
     }
 
@@ -725,6 +739,7 @@ impl Workspace {
                     let path = editor.read(cx).path(cx);
                     this.open_changed_files(path, cx);
                 }
+                EditorEvent::RunConfiguration(ix) => this.run_configuration_at(*ix, cx),
             }
             cx.notify()
         })
@@ -2253,8 +2268,22 @@ impl Workspace {
             let menu_entity = cx.entity();
             let close_entity = cx.entity();
             let label = self.tool_tab_label(*tab, cx);
-            let is_terminal = tab.tool == Tool::Terminal;
-            let tooltip = if is_terminal {
+            let is_run = tab.tool == Tool::Run;
+            let is_terminal = tab.tool == Tool::Terminal || is_run;
+            let run_icon = is_run.then(|| {
+                self.run_view(tab.instance)
+                    .map(|v| {
+                        let v = v.read(cx);
+                        (crate::run_popup::kind_icon(v.kind()), v.failed())
+                    })
+                    .unwrap_or((Tool::Run.icon(), false))
+            });
+            let tooltip = if is_run {
+                self.run_view(tab.instance).map(|v| {
+                    let v = v.read(cx);
+                    (label.clone(), v.kind().to_string())
+                })
+            } else if is_terminal {
                 self.terminal_view(tab.instance).map(|v| {
                     let v = v.read(cx);
                     (
@@ -2333,9 +2362,25 @@ impl Workspace {
                     menu_entity.update(cx, |this, cx| this.panel_tab_menu(side, ix, position, cx));
                 })
                 .when(is_terminal, |d| {
+                    let (path, failed) = run_icon.unwrap_or((Tool::Terminal.icon(), false));
                     d.child(
-                        icon(Tool::Terminal.icon(), m.icon_size, theme.icon_secondary)
-                            .mr(px(m.panel_tab_icon_gap)),
+                        div()
+                            .size(px(m.icon_size))
+                            .flex_shrink_0()
+                            .relative()
+                            .mr(px(m.panel_tab_icon_gap))
+                            .child(icon(path, m.icon_size, theme.icon_secondary))
+                            .when(failed, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .right(px(-m.zoom))
+                                        .bottom(px(-m.zoom))
+                                        .size(px(m.run_tab_badge))
+                                        .rounded_full()
+                                        .bg(theme.icon_red),
+                                )
+                            }),
                     )
                 })
                 .child(div().whitespace_nowrap().child(label))
@@ -2537,6 +2582,10 @@ impl Workspace {
                 Tool::History => self.history_tool.clone().into_any_element(),
                 Tool::Notifications => self.notifications_view().into_any_element(),
                 Tool::Terminal => match self.terminal_view(tab.instance) {
+                    Some(view) => view.clone().into_any_element(),
+                    None => div().size_full().into_any_element(),
+                },
+                Tool::Run => match self.run_view(tab.instance) {
                     Some(view) => view.clone().into_any_element(),
                     None => div().size_full().into_any_element(),
                 },
@@ -2930,6 +2979,12 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::terminal_new_with_profile))
             .on_action(cx.listener(Self::terminal_select_default_profile))
             .on_action(cx.listener(Self::terminal_edit_profiles))
+            .on_action(cx.listener(Self::run_and_debug))
+            .on_action(cx.listener(Self::run_in_context))
+            .on_action(cx.listener(Self::rerun))
+            .on_action(cx.listener(Self::stop_run_configurations))
+            .on_action(cx.listener(Self::run_stop))
+            .on_action(cx.listener(Self::run_edit_configurations))
             .on_action(cx.listener(Self::diff_two_files))
             .on_action(cx.listener(Self::diff_with_clipboard))
             .on_action(cx.listener(Self::unsplit))

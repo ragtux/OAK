@@ -13,12 +13,13 @@
 //! shaped each frame, so the cost is the viewport, not the file.
 
 use crate::actions::*;
-use crate::document::{Document, DocumentEvent};
+use crate::document::{Document, DocumentEvent, Problem};
 use crate::settings::AppSettings;
 use crate::theme::{
     metrics::{CARET_BLINK_MS, EDITOR_OVERSCROLL_LINES},
     Metrics, Theme,
 };
+use crate::tooltip::Tooltip;
 use gpui::{
     deferred, div, fill, point, prelude::*, px, relative, size, App, Bounds, BoxShadow,
     ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase, Element, ElementId,
@@ -49,6 +50,9 @@ pub enum EditorEvent {
     /// The line-status popup's Diff button: the workspace opens the Changed
     /// Files tab on this file.
     ShowDiff,
+    /// A click on a run icon in `.fleet/run.json`'s gutter: the workspace
+    /// runs that configuration (its index in the file).
+    RunConfiguration(usize),
 }
 
 /// The editor's sizes at the current zoom and settings: `editor.fontSize`,
@@ -71,6 +75,9 @@ pub struct TextMetrics {
     pub fold_chevron_x: f32,
     pub breakpoint_hint_x: f32,
     pub breakpoint_hint_size: f32,
+    pub run_icon_x: f32,
+    pub problem_underline: f32,
+    pub problem_underline_bottom: f32,
     pub line_status_x: f32,
     pub line_status_width: f32,
     pub line_status_hover_width: f32,
@@ -124,6 +131,14 @@ struct ViewOptions {
     ligatures: bool,
     indenter: bool,
     camel_humps: bool,
+    /// M6: `editor.renderRunInGutter`, `ff.runIconsAfterLineNumbers`,
+    /// `editor.markupWithoutSmartMode`, `editor.showFileStatus`,
+    /// `editor.showTooltipOnHover`.
+    run_in_gutter: bool,
+    run_after_numbers: bool,
+    markup: bool,
+    file_status: bool,
+    problem_tooltip: bool,
 }
 
 impl ViewOptions {
@@ -150,6 +165,11 @@ impl ViewOptions {
             ligatures: settings.editor_ligatures(),
             indenter: settings.enable_indenter(),
             camel_humps: settings.editor_honor_camel_humps(),
+            run_in_gutter: settings.editor_render_run_in_gutter(),
+            run_after_numbers: settings.ff_run_icons_after_line_numbers(),
+            markup: settings.editor_markup_without_smart_mode(),
+            file_status: settings.editor_show_file_status(),
+            problem_tooltip: settings.editor_show_tooltip_on_hover(),
         }
     }
 
@@ -187,6 +207,9 @@ impl TextMetrics {
             fold_chevron_x: m.fold_chevron_x,
             breakpoint_hint_x: m.breakpoint_hint_x,
             breakpoint_hint_size: m.breakpoint_hint_size,
+            run_icon_x: m.run_icon_x,
+            problem_underline: m.problem_underline,
+            problem_underline_bottom: m.problem_underline_bottom,
             line_status_x: m.line_status_x,
             line_status_width: m.line_status_width,
             line_status_hover_width: m.line_status_hover_width,
@@ -444,6 +467,19 @@ pub struct EditorView {
     space_px: Pixels,
     /// A preview (the Goto panel's): no edit changes the buffer.
     pub read_only: bool,
+    /// M6: the rows of `.fleet/run.json`'s configurations (row, index) for
+    /// the gutter's run icons, per buffer version.
+    run_rows: Option<(u64, Vec<(usize, usize)>)>,
+    /// The problems widget is open; the problem whose card is expanded.
+    pub problems_open: bool,
+    problem_expanded: Option<usize>,
+    /// The problem under the pointer, where the pointer is, and whether the
+    /// hover delay has passed (`editor.showTooltipOnHover`).
+    problem_hovered: Option<usize>,
+    hover_position: Point<Pixels>,
+    problem_tooltip_shown: bool,
+    hover_epoch: u64,
+    hover_task: Option<Task<()>>,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -528,7 +564,515 @@ impl EditorView {
             sticky_rows: Vec::new(),
             space_px: px(0.),
             read_only: false,
+            run_rows: None,
+            problems_open: false,
+            problem_expanded: None,
+            problem_hovered: None,
+            hover_position: Point::default(),
+            problem_tooltip_shown: false,
+            hover_epoch: 0,
+            hover_task: None,
         }
+    }
+
+    // ---- M6: run icons and problems ---------------------------------------------
+
+    /// The rows of `.fleet/run.json`'s configurations with their index, for
+    /// the gutter's run icons; empty for any other file.
+    fn run_rows(&mut self, cx: &App) -> Vec<(usize, usize)> {
+        let doc = self.document.read(cx);
+        let is_run_file = doc.path.as_deref().is_some_and(|p| {
+            p.file_name().is_some_and(|n| n == "run.json")
+                && p.parent()
+                    .and_then(|d| d.file_name())
+                    .is_some_and(|n| n == ".fleet")
+        });
+        if !is_run_file {
+            return Vec::new();
+        }
+        let version = doc.buffer.version();
+        if let Some((v, rows)) = &self.run_rows {
+            if *v == version {
+                return rows.clone();
+            }
+        }
+        let rows: Vec<(usize, usize)> = oak_run::config::config_lines(&doc.buffer.text())
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, l)| l.map(|l| (l, i)))
+            .collect();
+        self.run_rows = Some((version, rows.clone()));
+        rows
+    }
+
+    /// The document's syntax errors, while `editor.markupWithoutSmartMode`
+    /// shows them.
+    pub fn problems(&self, cx: &mut App) -> Vec<Problem> {
+        if !self.options.markup {
+            return Vec::new();
+        }
+        self.document.update(cx, |d, _| d.problems().to_vec())
+    }
+
+    /// Moves the caret to the problem after (or before) it, wrapping, and
+    /// opens the problems widget on it (`editor/go-to-next-problem`,
+    /// `editor/go-to-previous-problem`; Fleet's tooltip calls the first
+    /// "Open Problems").
+    fn go_to_problem(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let problems = self.problems(cx);
+        if problems.is_empty() {
+            return;
+        }
+        let head = self.with_buffer(cx, |c, _| c.selection.head);
+        let ix = if forward {
+            problems
+                .iter()
+                .position(|p| p.range.start > head)
+                .unwrap_or(0)
+        } else {
+            problems
+                .iter()
+                .rposition(|p| p.range.start < head)
+                .unwrap_or(problems.len() - 1)
+        };
+        self.show_problem(ix, &problems, cx);
+    }
+
+    fn show_problem(&mut self, ix: usize, problems: &[Problem], cx: &mut Context<Self>) {
+        let Some(problem) = problems.get(ix) else {
+            return;
+        };
+        let point = self
+            .document
+            .read(cx)
+            .buffer
+            .offset_to_point(problem.range.start);
+        self.goto(point.row, point.column, cx);
+        self.problems_open = true;
+        self.problem_expanded = Some(ix);
+        cx.notify();
+    }
+
+    fn go_to_next_problem(&mut self, _: &GoToNextProblem, _: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_problem(true, cx);
+    }
+
+    fn go_to_previous_problem(
+        &mut self,
+        _: &GoToPreviousProblem,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_problem(false, cx);
+    }
+
+    /// The status badge's click: the widget opens on the problem at the
+    /// caret (the first otherwise), or closes.
+    pub fn toggle_problems(&mut self, cx: &mut Context<Self>) {
+        if self.problems_open {
+            self.problems_open = false;
+        } else {
+            let problems = self.problems(cx);
+            if problems.is_empty() {
+                return;
+            }
+            let head = self.with_buffer(cx, |c, _| c.selection.head);
+            self.problem_expanded = problems
+                .iter()
+                .position(|p| p.range.start <= head && head <= p.range.end.max(p.range.start + 1));
+            self.problems_open = true;
+        }
+        cx.notify();
+    }
+
+    /// Closes the widget; whether it was open (Escape's first job).
+    pub fn close_problems(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.problems_open {
+            return false;
+        }
+        self.problems_open = false;
+        cx.notify();
+        true
+    }
+
+    /// The problem under the pointer, from the row and a monospace column
+    /// (an estimate on a wrapped row).
+    fn problem_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
+        let bounds = self.last_bounds;
+        if !bounds.contains(&position) {
+            return None;
+        }
+        let y = position.y - bounds.origin.y + self.scroll_y;
+        let d = (y / self.line_height()).floor().max(0.) as usize;
+        let (row, seg) = self.map.at(d);
+        if seg > 0 {
+            return None;
+        }
+        let x = position.x - bounds.origin.x - self.text_offset() - px(self.tm.gutter_width)
+            + self.scroll_x;
+        if x < px(0.) {
+            return None;
+        }
+        let col = (x / self.space_px.max(px(1.))).floor() as usize;
+        let doc = self.document.read(cx);
+        if row >= doc.buffer.line_count() {
+            return None;
+        }
+        let line_start = doc.buffer.line_to_char(row);
+        let line_len = doc.buffer.line(row).chars().count();
+        let offset = line_start + col.min(line_len);
+        doc.cached_problems()
+            .iter()
+            .position(|p| p.range.start <= offset && offset < p.range.end.max(p.range.start + 1))
+    }
+
+    /// Tracks the problem under the pointer; its tooltip shows after
+    /// `editor.hoverTooltipDelayMs`.
+    fn hover_problem(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let hovered = if self.options.problem_tooltip && self.options.markup {
+            self.problem_at(position, cx)
+        } else {
+            None
+        };
+        if hovered == self.problem_hovered {
+            return;
+        }
+        self.problem_hovered = hovered;
+        self.hover_position = position;
+        self.problem_tooltip_shown = false;
+        self.hover_epoch += 1;
+        self.hover_task = None;
+        if hovered.is_none() {
+            cx.notify();
+            return;
+        }
+        let epoch = self.hover_epoch;
+        let delay = cx
+            .global::<AppSettings>()
+            .settings
+            .editor_hover_tooltip_delay_ms();
+        self.hover_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(delay))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.hover_epoch == epoch && this.problem_hovered.is_some() {
+                    this.problem_tooltip_shown = true;
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    /// The file status badge, the problems widget over the editor's top
+    /// right, and the hovered problem's tooltip (batch 11, twelfth pass).
+    fn render_problems(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let mut out = Vec::new();
+        if !self.options.file_status {
+            return out;
+        }
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let problems = self.problems(cx);
+        let count = problems.len();
+        let next_chord = crate::keymap::hint_for(cx, "editor/go-to-next-problem");
+        let prev_chord = crate::keymap::hint_for(cx, "editor/go-to-previous-problem");
+        let ui = |d: gpui::Div| {
+            d.font_family(theme.ui_font.clone())
+                .text_size(px(m.ui_font_size))
+                .text_color(theme.popup_text)
+        };
+        // The badge or the widget's header sits on an island-coloured margin
+        // that cuts the current line's wash around it (batch 11).
+        let cutout = |d: gpui::Div| {
+            d.absolute()
+                .top(px(0.))
+                .right(px(m.file_status_right - m.file_status_margin))
+                .pt(px(m.file_status_top))
+                .px(px(m.file_status_margin))
+                .pb(px(m.file_status_margin))
+                .bg(theme.island_background)
+                .flex()
+                .items_center()
+        };
+        let box_20 = |d: gpui::Stateful<gpui::Div>| {
+            d.h(px(m.file_status_size))
+                .min_w(px(m.file_status_size))
+                .rounded(px(m.file_status_radius))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+        };
+        if !self.problems_open || count == 0 {
+            let title = if count == 0 {
+                "No problems found"
+            } else {
+                "Open Problems"
+            };
+            let badge = cutout(ui(div()))
+                .child(
+                    box_20(div().id("file-status"))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_problems(cx)))
+                        .map(|d| {
+                            if count == 0 {
+                                d.bg(theme.problems_success_bg)
+                                    .tooltip(Tooltip::text(title))
+                                    .child(crate::assets::icon(
+                                        "oak/check",
+                                        m.icon_size,
+                                        theme.problems_success_fg,
+                                    ))
+                            } else {
+                                let hovered = theme.problems_error_tag_bg_hovered;
+                                d.bg(theme.problems_error_tag_bg)
+                                    .hover(move |s| s.bg(hovered))
+                                    .px(px(m.file_status_tag_pad_x))
+                                    .text_color(theme.problems_error_tag_text)
+                                    .map(|d| match next_chord.clone() {
+                                        Some(chord) => {
+                                            d.tooltip(Tooltip::with_shortcut(title, chord))
+                                        }
+                                        None => d.tooltip(Tooltip::text(title)),
+                                    })
+                                    .child(count.to_string())
+                            }
+                        }),
+                )
+                .into_any_element();
+            out.push(badge);
+        } else {
+            let head = self.with_buffer(cx, |c, _| c.selection.head);
+            let at_caret = problems
+                .iter()
+                .position(|p| p.range.start <= head && head <= p.range.end.max(p.range.start + 1));
+            let expanded = at_caret.or(self.problem_expanded.filter(|ix| *ix < count));
+            let label: SharedString = if count == 1 {
+                "1 error".into()
+            } else {
+                format!("{count} errors").into()
+            };
+            let hovered = theme.problems_error_tag_bg_hovered;
+            let header = cutout(ui(div()))
+                .child(
+                    box_20(div().id("problems-tag"))
+                        .mr(px(m.problems_header_gap))
+                        .px(px(m.file_status_tag_pad_x))
+                        .bg(theme.problems_error_tag_bg)
+                        .hover(move |s| s.bg(hovered))
+                        .text_color(theme.problems_error_tag_text)
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_problems(cx)))
+                        .child(label),
+                )
+                .child(
+                    box_20(div().id("problems-filter"))
+                        .mr(px(m.problems_button_gap))
+                        .hover(|s| s.bg(theme.ghost_hovered))
+                        .tooltip(Tooltip::text("Filter"))
+                        .child(crate::assets::icon(
+                            "oak/sliders",
+                            m.icon_size,
+                            theme.icon_secondary,
+                        )),
+                )
+                .child(
+                    box_20(div().id("problems-close"))
+                        .hover(|s| s.bg(theme.ghost_hovered))
+                        .tooltip(Tooltip::with_shortcut("Close Problems", "Escape"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.close_problems(cx);
+                        }))
+                        .child(crate::assets::icon(
+                            "expui/general/close",
+                            m.icon_size,
+                            theme.icon_secondary,
+                        )),
+                )
+                .into_any_element();
+            out.push(header);
+            let card_top = m.file_status_top + m.file_status_size + m.problems_card_gap;
+            let doc = self.document.read(cx);
+            let mut card_height = 2. * m.problems_card_pad + 2.;
+            let rows: Vec<gpui::AnyElement> = problems
+                .iter()
+                .enumerate()
+                .map(|(ix, p)| {
+                    let line: SharedString =
+                        format!(":{}", doc.buffer.offset_to_point(p.range.start).row + 1).into();
+                    let message: SharedString = p.message.clone().into();
+                    let is_expanded = expanded == Some(ix);
+                    let title_row = |text_color: Hsla| {
+                        div()
+                            .h(px(m.problems_row_height))
+                            .flex()
+                            .items_center()
+                            .pl(px(m.problems_row_pad_left))
+                            .pr(px(m.problems_row_pad_right))
+                            .child(
+                                div()
+                                    .size(px(m.icon_size))
+                                    .flex_shrink_0()
+                                    .relative()
+                                    .mr(px(m.problems_row_text_x
+                                        - m.problems_row_pad_left
+                                        - m.icon_size))
+                                    .child(
+                                        crate::assets::icon(
+                                            "oak/circle",
+                                            m.icon_size,
+                                            theme.icon_red,
+                                        )
+                                        .absolute()
+                                        .left_0()
+                                        .top_0(),
+                                    )
+                                    .child(
+                                        crate::assets::icon(
+                                            "oak/exclamation",
+                                            m.icon_size,
+                                            theme.problems_error_tag_text,
+                                        )
+                                        .absolute()
+                                        .left_0()
+                                        .top_0(),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(text_color)
+                                    .child(message.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(theme.problems_card_text_secondary)
+                                    .child(line.clone()),
+                            )
+                    };
+                    if is_expanded {
+                        card_height += m.problems_expanded_height + 2. * m.problems_expanded_border
+                            - 2. * m.problems_card_pad;
+                        div()
+                            .id(ElementId::NamedInteger("problem-row".into(), ix as u64))
+                            .h(px(
+                                m.problems_expanded_height + 2. * m.problems_expanded_border
+                            ))
+                            // Its border sits on the card's edge, over the card's padding.
+                            .my(px(-m.problems_card_pad))
+                            .border(px(m.problems_expanded_border))
+                            .border_color(theme.problems_card_error_border)
+                            .bg(theme.problems_card_error_bg)
+                            .rounded(px(m.popup_radius))
+                            .flex()
+                            .flex_col()
+                            .child(
+                                title_row(theme.problems_card_text)
+                                    .font_weight(FontWeight::SEMIBOLD),
+                            )
+                            .child(
+                                div()
+                                    .pl(px(m.problems_row_text_x))
+                                    .text_color(theme.problems_card_text_secondary)
+                                    .child("No fixes available"),
+                            )
+                            .into_any_element()
+                    } else {
+                        card_height += m.problems_row_height;
+                        title_row(theme.problems_card_text)
+                            .id(ElementId::NamedInteger("problem-row".into(), ix as u64))
+                            .rounded(px(m.popup_row_radius))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme.list_bg_hovered))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let problems = this.problems(cx);
+                                this.show_problem(ix, &problems, cx);
+                            }))
+                            .into_any_element()
+                    }
+                })
+                .collect();
+            // The card is itself the absolute element (a wrapper would sit
+            // below the editor element in the flow and carry it along).
+            let card = div()
+                .id("problems-card")
+                .font_family(theme.ui_font.clone())
+                .text_size(px(m.ui_font_size))
+                .text_color(theme.popup_text)
+                .occlude()
+                .absolute()
+                .top(px(card_top))
+                .right(px(m.problems_card_right))
+                .w(px(m.problems_card_width))
+                .child(
+                    div()
+                        .w_full()
+                        .p(px(m.problems_card_pad))
+                        .rounded(px(m.popup_radius))
+                        .border_1()
+                        .border_color(theme.popup_border)
+                        .bg(theme.popup_bg)
+                        .shadow(vec![BoxShadow {
+                            color: theme.shadow_medium,
+                            offset: point(px(0.), px(m.popup_shadow_offset_y)),
+                            blur_radius: px(m.popup_shadow_blur),
+                            spread_radius: px(0.),
+                        }])
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                )
+                .into_any_element();
+            out.push(card);
+            let hint = |label: &'static str, chord: Option<String>| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(m.problems_hint_chord_gap))
+                    .child(div().text_color(theme.text_secondary).child(label))
+                    .children(chord.map(|c| div().text_color(theme.text_primary).child(c)))
+            };
+            let hints = div()
+                .absolute()
+                .top(px(card_top + card_height + m.problems_hint_top))
+                .right(px(m.problems_card_right + m.problems_hint_right))
+                .flex()
+                .items_center()
+                .gap(px(m.problems_hint_gap))
+                .font_family(theme.ui_font.clone())
+                .text_size(px(m.problems_hint_font))
+                .whitespace_nowrap()
+                .child(hint("Next Problem", next_chord))
+                .child(hint("Previous Problem", prev_chord))
+                .into_any_element();
+            out.push(hints);
+        }
+        if self.problem_tooltip_shown {
+            if let Some(p) = self.problem_hovered.and_then(|ix| problems.get(ix)) {
+                let at = self.hover_position - self.last_bounds.origin;
+                let message: SharedString = p.message.clone().into();
+                out.push(
+                    ui(div())
+                        .absolute()
+                        .left(at.x)
+                        .top(at.y + px(m.tooltip_offset_y))
+                        .px(px(m.tooltip_pad_x))
+                        .py(px(m.tooltip_pad_y))
+                        .rounded(px(m.tooltip_radius))
+                        .bg(theme.tooltip_bg)
+                        .border_1()
+                        .border_color(theme.tooltip_border)
+                        .text_color(theme.tooltip_text)
+                        .line_height(px(m.tooltip_line))
+                        .whitespace_nowrap()
+                        .child(message)
+                        .into_any_element(),
+                );
+            }
+        }
+        out
     }
 
     /// The whole-word occurrences of the identifier under the caret (its own
@@ -1260,6 +1804,9 @@ impl EditorView {
     }
     /// Escape: back to one empty caret.
     fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        if self.close_problems(cx) {
+            return;
+        }
         self.go(cx, |c, b| {
             let head = c.selection.head;
             c.clear_extra();
@@ -1584,6 +2131,20 @@ impl EditorView {
             }
         }
         let x_in = position.x - bounds.origin.x - self.text_offset();
+        let run_left = if self.options.run_after_numbers {
+            px(self.tm.gutter_number_right + 4.)
+        } else {
+            px(self.tm.run_icon_x)
+        };
+        if self.options.run_in_gutter
+            && seg == 0
+            && x_in >= run_left
+            && x_in < run_left + px(self.tm.icon_size)
+        {
+            if let Some((_, ix)) = self.run_rows(cx).iter().find(|(r, _)| *r == row) {
+                return Hit::RunIcon(*ix);
+            }
+        }
         let chevron_left = px(self.tm.fold_chevron_x);
         if x_in >= chevron_left && x_in < chevron_left + px(self.tm.icon_size) && seg == 0 {
             if self.map.fold_at_head(row).is_some() {
@@ -1675,6 +2236,9 @@ impl EditorView {
             Hit::FoldedMark(row) => {
                 self.unfold_row(row, cx);
             }
+            Hit::RunIcon(ix) => {
+                cx.emit(EditorEvent::RunConfiguration(ix));
+            }
             Hit::Sticky(row) => {
                 // A sticky line scrolls its block head to the top.
                 let d = self.map.display_row(row, 0);
@@ -1760,6 +2324,7 @@ impl EditorView {
             self.status_hovered = status;
             cx.notify();
         }
+        self.hover_problem(position, cx);
     }
 
     /// The hunk whose rows hold `row` (a deletion sits on its row).
@@ -1934,6 +2499,8 @@ enum Hit {
     Sticky(usize),
     /// A git line-status bar on the island's edge (the hunk's index).
     LineStatus(usize),
+    /// A run icon in `.fleet/run.json`'s gutter (the configuration's index).
+    RunIcon(usize),
 }
 
 /// Whether a hunk's rows hold `row`; a deletion sits on the row after it.
@@ -2123,10 +2690,16 @@ impl EntityInputHandler for EditorView {
 impl Render for EditorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status_popup = self.render_status_popup(cx);
+        let problems = self.render_problems(cx);
+        // The badge, the widget and the hover tooltip come after the
+        // element, so they paint over its washes.
         div()
+            .relative()
             .children(status_popup)
             .key_context("Editor")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::go_to_next_problem))
+            .on_action(cx.listener(Self::go_to_previous_problem))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))
             .on_action(cx.listener(Self::move_left))
@@ -2190,6 +2763,7 @@ impl Render for EditorView {
             .child(EditorElement {
                 editor: cx.entity(),
             })
+            .children(problems)
     }
 }
 
@@ -2440,6 +3014,8 @@ enum BoxKind {
     Occurrence,
     Bracket,
     SearchMatch,
+    /// A syntax error's underline (`problem.error`).
+    Problem,
 }
 
 /// The folded mark on a head row: the display byte it sits after, and the
@@ -2462,6 +3038,8 @@ struct LaidOutRow {
     guides: Vec<(usize, bool)>,
     /// A fold chevron: open, or folded.
     chevron: Option<bool>,
+    /// The row carries a run icon (`.fleet/run.json`, M6).
+    run_icon: bool,
     folded: Option<FoldedMarkLayout>,
     /// Display byte offsets of the spaces, for the whitespace dots.
     spaces: Vec<usize>,
@@ -2498,14 +3076,16 @@ pub struct Prepaint {
     options: ViewOptions,
     /// One space's advance, for guide columns past a line's end.
     space_width: Pixels,
-    /// Rows that get a scrollbar mark: search matches.
+    /// Rows that get a scrollbar mark: search matches, and the problems'.
     mark_rows: Vec<usize>,
     caret_mark_rows: Vec<usize>,
+    problem_mark_rows: Vec<usize>,
     text_offset: Pixels,
     sticky: Vec<StickyLayout>,
     space_glyph: Option<ShapedLine>,
     tab_glyph: Option<ShapedLine>,
     hovered_row: Option<usize>,
+    gutter_hovered: bool,
 }
 
 impl IntoElement for EditorElement {
@@ -2630,9 +3210,11 @@ impl Element for EditorElement {
                 editor.gutter_hovered,
             )
         });
+        let run_rows: Vec<(usize, usize)> = self.editor.update(cx, |e, cx| e.run_rows(cx));
         let map = folds;
         let mut rows = Vec::new();
         let mut mark_rows = Vec::new();
+        let mut problem_mark_rows = Vec::new();
         let mut sticky = Vec::new();
         let total_rows = map.total;
         // The blame column (ninth pass): 13 px UI text in the secondary colour.
@@ -2737,6 +3319,23 @@ impl Element for EditorElement {
             }
             mark_rows.sort_unstable();
             mark_rows.dedup();
+            // The syntax errors (M6): a 2 px underline under each, one cell
+            // wide when the parser's missing token has no width, and a mark
+            // on the scrollbar.
+            if options.markup {
+                for p in doc.problems().to_vec() {
+                    let range = if p.range.is_empty() {
+                        p.range.start..p.range.start + 1
+                    } else {
+                        p.range.clone()
+                    };
+                    boxes.push((range, BoxKind::Problem));
+                    let pt = doc.buffer.offset_to_point(p.range.start);
+                    problem_mark_rows.push(map.display_row(pt.row, pt.column));
+                }
+                problem_mark_rows.sort_unstable();
+                problem_mark_rows.dedup();
+            }
             let current_block = analysis::current_block(&doc.buffer, cursor.row);
             let tab_width = doc.buffer.indent.width;
             let mut shaped_rows: Vec<(usize, LineSpans)> = Vec::new();
@@ -2833,7 +3432,15 @@ impl Element for EditorElement {
                         tail,
                     }
                 });
-                let number = (seg == 0 && options.line_numbers != LineNumbers::Off).then(|| {
+                let run_index = if seg == 0 && options.run_in_gutter {
+                    run_rows.iter().find(|(r, _)| *r == row).map(|(_, i)| *i)
+                } else {
+                    None
+                };
+                let show_number = seg == 0
+                    && options.line_numbers != LineNumbers::Off
+                    && (run_index.is_none() || options.run_after_numbers);
+                let number = show_number.then(|| {
                     let color = if row == cursor.row {
                         theme.line_number_current
                     } else {
@@ -2871,11 +3478,16 @@ impl Element for EditorElement {
                 });
                 let char_end = char_start + seg_cols.end;
                 let seg_char_start = char_start + seg_cols.start;
+                let last_seg = seg_cols.end == cols.end && fold.is_none();
                 let row_boxes = boxes
                     .iter()
-                    .filter(|(r, _)| r.start < char_end && r.end > seg_char_start)
+                    .filter(|(r, kind)| {
+                        let at_end =
+                            matches!(kind, BoxKind::Problem) && last_seg && r.start == char_end;
+                        (r.start < char_end || at_end) && r.end > seg_char_start
+                    })
                     .map(|(r, kind)| {
-                        let a = r.start.max(seg_char_start) - seg_char_start;
+                        let a = r.start.clamp(seg_char_start, char_end) - seg_char_start;
                         let b = r.end.min(char_end) - seg_char_start;
                         (
                             line.display_byte_for_char(a)..line.display_byte_for_char(b),
@@ -2926,6 +3538,7 @@ impl Element for EditorElement {
                     boxes: row_boxes,
                     guides,
                     chevron,
+                    run_icon: run_index.is_some(),
                     folded: folded_layout,
                     spaces,
                     continuation: seg > 0,
@@ -2997,11 +3610,13 @@ impl Element for EditorElement {
             space_width,
             mark_rows,
             caret_mark_rows,
+            problem_mark_rows,
             text_offset,
             sticky,
             space_glyph,
             tab_glyph,
             hovered_row: hovered,
+            gutter_hovered,
         }
     }
 
@@ -3135,6 +3750,20 @@ impl Element for EditorElement {
                 for (range, kind) in &laid.boxes {
                     let x0 = laid.shaped.x_for_index(range.start);
                     let x1 = laid.shaped.x_for_index(range.end);
+                    if matches!(kind, BoxKind::Problem) {
+                        let x1 = if x1 <= x0 {
+                            x0 + prepaint.space_width
+                        } else {
+                            x1
+                        };
+                        let thickness = px(tm.problem_underline);
+                        let top = y + lh - thickness - px(tm.problem_underline_bottom);
+                        window.paint_quad(fill(
+                            Bounds::new(point(row_text_x + x0, top), size(x1 - x0, thickness)),
+                            theme.problem_error_underline,
+                        ));
+                        continue;
+                    }
                     let (color, inset, radius) = match kind {
                         BoxKind::Occurrence => (
                             theme.occurrence_bg,
@@ -3143,6 +3772,7 @@ impl Element for EditorElement {
                         ),
                         BoxKind::Bracket => (theme.brace_match_bg, px(0.), px(0.)),
                         BoxKind::SearchMatch => (theme.search_result_bg, px(0.), px(0.)),
+                        BoxKind::Problem => unreachable!(),
                     };
                     window.paint_quad(
                         fill(
@@ -3257,9 +3887,30 @@ impl Element for EditorElement {
                         cx,
                     );
                 }
+                // The run icon (M6, batch 11): `icon.background.green` in a 16 px
+                // box in place of the number, or after it (`ff.runIconsAfterLineNumbers`).
+                if laid.run_icon {
+                    let x = if options.run_after_numbers {
+                        number_right + px(4.)
+                    } else {
+                        origin_x + px(tm.run_icon_x)
+                    };
+                    let icon_bounds = Bounds::new(
+                        point(x, y + (lh - px(tm.icon_size)) / 2.),
+                        size(px(tm.icon_size), px(tm.icon_size)),
+                    );
+                    let _ = window.paint_svg(
+                        icon_bounds,
+                        "icons/oak/run-gutter.svg".into(),
+                        None,
+                        gpui::TransformationMatrix::unit(),
+                        theme.icon_green,
+                        cx,
+                    );
+                }
                 // The hovered row shows the breakpoint hint: a filled circle at
                 // 21.3 (batch 5; the `fold` scene showed no wash under the chevron).
-                if prepaint.hovered_row == Some(laid.row) {
+                if prepaint.gutter_hovered && prepaint.hovered_row == Some(laid.row) {
                     let d = px(tm.breakpoint_hint_size);
                     let hint = Bounds::new(
                         point(origin_x + px(tm.breakpoint_hint_x), y + (lh - d) / 2.),
@@ -3454,6 +4105,9 @@ impl Element for EditorElement {
                 }
                 for row in &prepaint.caret_mark_rows {
                     mark(window, *row, theme.current_line_mark);
+                }
+                for row in &prepaint.problem_mark_rows {
+                    mark(window, *row, theme.problem_error_mark);
                 }
             }
         });

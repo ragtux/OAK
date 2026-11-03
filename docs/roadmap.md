@@ -23,13 +23,13 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-02, after the M5 build) |
+| Table | Count | Oak covers (2026-11-02, after the M6 build) |
 | --- | --- | --- |
-| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 125 |
+| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 131 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 97 |
-| Theme `colors` keys | 684 | 176 |
-| Theme `textAttributes` keys | 157 | 35 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 101 |
+| Theme `colors` keys | 684 | 187 |
+| Theme `textAttributes` keys | 157 | 36 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
 
@@ -389,17 +389,58 @@ keys without an effect in Oak (`terminal.fontHinting`, `fontSmoothing`,
 aligns by the grid), and Fleet's empty editor state, which batch 9 caught in
 passing (three shortcut cards over "No recent files").
 
-### M6 Run and problems (M)
+### M6 Run and problems (built 2026-11-02; batch 11 measured)
 
-- `.fleet/run.json` as the run configuration format, `run/run-in-context`,
-  `run/rerun`, `run-and-debug` popup (`run.recentConfigurationsSize`),
-  `stop-run-configurations`, Build Output tool, run icons in the gutter
-  (`editor.renderRunInGutter`, `ff.runIconsAfterLineNumbers`).
-- Problems: the file-status badge and problems widget (`problemsWidget.*`,
-  `editor.showFileStatus`, `editor/go-to-next|previous-problem`,
-  `editor.showTooltipOnHover`), fed first by tree-sitter syntax errors
-  (`editor.markupWithoutSmartMode`), then by LSP diagnostics.
-- Probes: batch 11.
+Built in one night from the `run` scene (`docs/fleet-probe.md`, twelfth
+pass), which ran on Fleet first: the `oak-run` crate holds Fleet's
+`.fleet/run.json` as data (serde over Fleet's field names, unknown keys
+kept, a scan for each row's `"type"` line) and runs a configuration as a
+child process whose lines arrive through a channel; the app's `run_tool.rs`
+is the tab per started configuration in the bottom panel, `run_popup.rs`
+the Run & Debug popup in the Goto popup's frame, and `workspace/runs.rs`
+the actions. Problems come from tree-sitter's `ERROR` and `MISSING` nodes
+(`oak-syntax`'s `SyntaxTree::problems`, cached per document): the
+underline, the scrollbar mark, the status badge, the widget and
+`editor/go-to-next|previous-problem` read them. On the `run` pair,
+`compare.py` finds the badge, the gutter's run icon and the bottom island's
+edges within 0.7 of Fleet's (one inner edge of the check mark's stroke at
+1.3); the popup's and the card's edges were measured by hand to the same
+tolerance (`docs/fleet-probe.md`, twelfth pass). The fixture gained two `command` rows and a `cargo` row in run.json
+and `misc/broken.json`, `misc/broken.rs`.
+
+- Done: `.fleet/run.json` (`name`, `type`, `program`, `args`, `cargoArgs`,
+  `workingDir`, `environment`, `environmentFile`, `dependsOn`,
+  `allowParallelRun`); `command` rows run their program, `cargo` rows run
+  `cargo`, other types say so in a notification; `run.environmentFile` as
+  the default environment file; the Run & Debug popup (`run-and-debug`,
+  the toolbar's run button): the field runs a typed line through the shell,
+  Recent rows (`run.recentConfigurationsSize`, persisted in `layout.json`),
+  the workspace's rows with Run and a "..." menu (Edit Configuration, Delete
+  Configuration), "Edit Run Configurations..." (the file written from a
+  template when absent), `run/delete-configuration` (Shift+Delete) through
+  the open document or the file; `run/run-in-context` (the row at the caret
+  in run.json, else the last run, else the popup), `run/rerun` (the shown
+  tab's command again in the same tab), `run/stop`,
+  `stop-run-configurations`; the run tab's icon per type with a badge when
+  the exit code was not 0, its close cross, `close-tab`; the gutter's run
+  icons (`editor.renderRunInGutter`, `ff.runIconsAfterLineNumbers`), a
+  click on one running the row.
+- Done: problems: the 2 px underline and the scrollbar mark from
+  `problem.error`, the status badge (`editor.showFileStatus`) with Fleet's
+  tooltips, the widget with its tag, sliders and close buttons, the card,
+  the expanded row and the hints, `editor/go-to-next-problem` (Ctrl+E) and
+  `editor/go-to-previous-problem`, Escape closing the widget,
+  `editor.markupWithoutSmartMode`, `editor.showTooltipOnHover` with
+  `editor.hoverTooltipDelayMs`.
+- Probes: batch 11 as the `run` scene, run on both editors.
+
+Left for later: Fleet's Build Output tool (the project-import log, nothing
+without a backend), `dependsOn` and `allowParallelRun` beyond reading them
+(a dependency is not started first; a parallel run gets its own tab, a
+non-parallel one reuses the finished tab of the same name), the sliders
+button's menu (unknown), the hovered error's tooltip against Fleet, a click
+on the gutter icon against Fleet, the "..." icon's size, paths in the
+output as links, and LSP diagnostics (M7).
 
 ### M7 Smart Mode via LSP (XL)
 

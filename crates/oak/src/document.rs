@@ -39,6 +39,9 @@ pub struct Document {
     tree_version: Option<u64>,
     folds: Vec<Fold>,
     folds_version: Option<u64>,
+    /// The syntax errors (M6), as char ranges with a message, per version.
+    problems: Vec<Problem>,
+    problems_version: Option<u64>,
     indent_source: Option<IndentSource>,
     /// The file's modification time when it was read or written.
     disk_modified: Option<std::time::SystemTime>,
@@ -56,6 +59,14 @@ fn modified_time(path: &std::path::Path) -> Option<std::time::SystemTime> {
 }
 
 impl EventEmitter<DocumentEvent> for Document {}
+
+/// One syntax error in a document: a char range (empty for a missing
+/// token) and a message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub range: std::ops::Range<usize>,
+    pub message: String,
+}
 
 impl Document {
     pub fn new(path: Option<PathBuf>, text: &str, settings: &Settings) -> Self {
@@ -76,6 +87,8 @@ impl Document {
             tree_version: None,
             folds: Vec::new(),
             folds_version: None,
+            problems: Vec::new(),
+            problems_version: None,
             indent_source: None,
             disk_modified: None,
             conflict: false,
@@ -301,6 +314,35 @@ impl Document {
             self.tree_version = Some(version);
         }
         self.tree.as_ref()
+    }
+
+    /// The syntax errors of the current text (`editor.markupWithoutSmartMode`):
+    /// tree-sitter's `ERROR` and `MISSING` nodes, as char ranges in document
+    /// order with a message each. The problems widget, the underlines, the
+    /// scrollbar marks and `editor/go-to-next-problem` read them.
+    pub fn problems(&mut self) -> &[Problem] {
+        let version = self.buffer.version();
+        if self.problems_version != Some(version) {
+            let found: Vec<oak_syntax::SyntaxProblem> = self
+                .syntax()
+                .map(|tree| tree.problems())
+                .unwrap_or_default();
+            let buffer = &self.buffer;
+            self.problems = found
+                .into_iter()
+                .map(|p| Problem {
+                    range: buffer.byte_to_char(p.range.start)..buffer.byte_to_char(p.range.end),
+                    message: p.message,
+                })
+                .collect();
+            self.problems_version = Some(version);
+        }
+        &self.problems
+    }
+
+    /// The problems as last computed (`problems` refreshes them).
+    pub fn cached_problems(&self) -> &[Problem] {
+        &self.problems
     }
 
     /// The folds as last computed (`folds` refreshes them each frame).

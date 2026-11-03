@@ -8,6 +8,9 @@ use gpui::{div, prelude::*, px, AnyView, App, BoxShadow, Context, Render, Shared
 pub struct Tooltip {
     title: SharedString,
     detail: Option<SharedString>,
+    /// A chord after the title on the same line, in the secondary colour
+    /// ("Open Problems Ctrl+E", batch 11).
+    shortcut: Option<SharedString>,
 }
 
 impl Tooltip {
@@ -19,6 +22,26 @@ impl Tooltip {
             cx.new(|_| Tooltip {
                 title,
                 detail: None,
+                shortcut: None,
+            })
+            .into()
+        }
+    }
+
+    /// One line: the action's name, then its chord dimmed (the problems
+    /// widget's tooltips).
+    pub fn with_shortcut(
+        title: impl Into<SharedString>,
+        shortcut: impl Into<SharedString>,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = title.into();
+        let shortcut = shortcut.into();
+        move |_, cx| {
+            let (title, shortcut) = (title.clone(), shortcut.clone());
+            cx.new(|_| Tooltip {
+                title,
+                detail: None,
+                shortcut: Some(shortcut),
             })
             .into()
         }
@@ -36,6 +59,7 @@ impl Tooltip {
             cx.new(|_| Tooltip {
                 title,
                 detail: Some(detail),
+                shortcut: None,
             })
             .into()
         }
@@ -74,7 +98,16 @@ impl Render for Tooltip {
                     .child(
                         div()
                             .line_height(px(m.tooltip_line))
-                            .child(self.title.clone()),
+                            .flex()
+                            .items_center()
+                            .gap(px(m.tooltip_shortcut_gap))
+                            .whitespace_nowrap()
+                            .child(self.title.clone())
+                            .children(
+                                self.shortcut.clone().map(|s| {
+                                    div().text_color(theme.tooltip_text_secondary).child(s)
+                                }),
+                            ),
                     )
                     .children(self.detail.clone().map(|d| {
                         div()

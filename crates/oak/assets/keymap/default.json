@@ -854,6 +854,40 @@
       "mac": "cmd-a",
       "key": "ctrl-shift-a",
       "action": "select-all-terminal"
+    },
+    {
+      "mac": "cmd-r",
+      "key": "ctrl-r",
+      "action": "run-and-debug"
+    },
+    {
+      "mac": "cmd-shift-r",
+      "key": "ctrl-shift-r",
+      "action": "run/run-in-context"
+    },
+    {
+      "mac": "ctrl-shift-r",
+      "key": "ctrl-alt-r",
+      "action": "run/rerun"
+    },
+    {
+      "mac": "ctrl-backspace",
+      "key": "shift-delete",
+      "action": "run/delete-configuration"
+    },
+    {
+      "mac": "ctrl-delete",
+      "action": "run/delete-configuration"
+    },
+    {
+      "mac": "cmd-e",
+      "key": "ctrl-e",
+      "action": "editor/go-to-next-problem"
+    },
+    {
+      "mac": "cmd-shift-e",
+      "key": "ctrl-shift-e",
+      "action": "editor/go-to-previous-problem"
     }
   ]
 }

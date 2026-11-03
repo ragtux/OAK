@@ -107,7 +107,7 @@ order; A–D unblock M1, E and F are an afternoon each and pay off at once.
 Status (2026-11-02): A, B, D and H exist for Windows (`make-fixture.py`,
 `winprobe.py`, `compare.py`, with scenes `editor`, `light`, `panels`,
 `splitters`, `tabs`, `settings-live`, `splits`, `surface`, `surface2`, and
-the M2 scenes `find`, `fold` and `wrap`, the M5 scenes `terminal` and `terminal2` (compared, eleventh pass) and the M3 scenes `goto` and `popups`
+the M2 scenes `find`, `fold` and `wrap`, the M5 scenes `terminal` and `terminal2` (compared, eleventh pass), the M6 scene `run` (compared, twelfth pass) and the M3 scenes `goto` and `popups`
 shot on both editors on 2026-11-02, their `compare.py` pass still to run); C's in-app probe
 mode, E, F's lint and the KDE launchers are still to do. B's settings override is the scene's
 `fleet_settings` object (written to Fleet's `settings.json` for the run and
@@ -247,7 +247,7 @@ Each batch produces rows in `fleet-probe.md`, constants in
 | 8 | Settings tool | M3 | Page layout, search field, section headers, `tileButton`, `checkbox`, `combobox`, `dropdown`, every `button` variant and state, `pillButton`, `link`; and read every default value off the pages. |
 | 9 | Terminal | M5 | Padding, font metrics, caret, tab title, scroll-to-bottom button, selection colour. | Scenes: `scenes/terminal.json`, `scenes/terminal2.json`, run on both editors 2026-11-02 (eleventh pass). |
 | 10 | Git and diff | M4 | Changes list rows, commit field, history table, blame column, diff colours and gutter, side-by-side split, 3-way view. | Scenes: `scenes/git*.json`, run on Fleet 2026-11-02 (ninth pass). |
-| 11 | Run and problems | M6 | Run gutter icons, run popup, build output tool, problems widget colours and layout, file status badge states. |
+| 11 | Run and problems | M6 | Run gutter icons, run popup, build output tool, problems widget colours and layout, file status badge states. | Scene: `scenes/run.json`, run on both editors 2026-11-02 (twelfth pass). |
 | 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. |
 
 ## What the probes cannot settle

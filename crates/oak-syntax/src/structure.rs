@@ -275,6 +275,43 @@ impl SyntaxTree {
         });
         errors
     }
+
+    /// The syntax errors with a message each (M6): an `ERROR` node is a
+    /// "Syntax error", a zero-width `MISSING` token names what the parser
+    /// inserted. Byte ranges, in document order.
+    pub fn problems(&self) -> Vec<SyntaxProblem> {
+        let root = self.tree.root_node();
+        if !root.has_error() {
+            return Vec::new();
+        }
+        let mut problems = Vec::new();
+        walk(root, |node| {
+            if node.is_missing() {
+                problems.push(SyntaxProblem {
+                    range: byte_range(node),
+                    message: format!("Missing '{}'", node.kind()),
+                });
+                return false;
+            }
+            if node.is_error() {
+                problems.push(SyntaxProblem {
+                    range: byte_range(node),
+                    message: "Syntax error".to_string(),
+                });
+                return false;
+            }
+            node.has_error()
+        });
+        problems.sort_by_key(|p| (p.range.start, p.range.end));
+        problems
+    }
+}
+
+/// One syntax error: where (bytes) and what.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SyntaxProblem {
+    pub range: Range<usize>,
+    pub message: String,
 }
 
 fn is_bracket_token(node: Node<'_>) -> bool {
@@ -622,6 +659,17 @@ mod tests {
         assert!(parse(Language::Json, JSON).errors().is_empty());
         assert!(!parse(Language::Rust, "fn (").errors().is_empty());
         assert!(!parse(Language::Json, "{ \"a\": }").errors().is_empty());
+        let problems = parse(Language::Json, "{\n  \"a\": 1,,\n  \"b\": [1, 2\n}\n").problems();
+        assert!(!problems.is_empty());
+        assert!(problems.iter().all(|p| !p.message.is_empty()));
+        assert!(problems
+            .windows(2)
+            .all(|w| w[0].range.start <= w[1].range.start));
+        let missing = parse(Language::Rust, "fn main() {\n    let x = 1\n}\n").problems();
+        assert!(
+            missing.iter().any(|p| p.message.starts_with("Missing")),
+            "{missing:?}"
+        );
     }
 
     #[test]

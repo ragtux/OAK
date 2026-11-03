@@ -44,6 +44,10 @@ impl Workspace {
                 .terminal_view(tab.instance)
                 .map(|v| v.read(cx).title())
                 .unwrap_or_else(|| Tool::Terminal.label().into()),
+            Tool::Run => self
+                .run_view(tab.instance)
+                .map(|v| v.read(cx).name().to_string().into())
+                .unwrap_or_else(|| Tool::Run.label().into()),
             other => other.label().into(),
         }
     }
@@ -63,6 +67,12 @@ impl Workspace {
             Tool::Files => self.file_tree.read(cx).focus_handle(cx).focus(window, cx),
             Tool::Terminal => {
                 if let Some(view) = self.terminal_view(tab.instance) {
+                    let handle = view.read(cx).focus_handle(cx);
+                    handle.focus(window, cx);
+                }
+            }
+            Tool::Run => {
+                if let Some(view) = self.run_view(tab.instance) {
                     let handle = view.read(cx).focus_handle(cx);
                     handle.focus(window, cx);
                 }
@@ -224,6 +234,9 @@ impl Workspace {
         if tab.tool == Tool::Terminal {
             self.terminals.retain(|(id, _)| *id != tab.instance);
         }
+        if tab.tool == Tool::Run {
+            self.drop_run(tab.instance, cx);
+        }
         if had_focus {
             if self.panel(side).tools.is_empty() {
                 self.focus_editor_now(window, cx);
@@ -263,7 +276,7 @@ impl Workspace {
                 continue;
             }
             if let Some(tab) = panel.tools.get(panel.active).copied() {
-                if tab.tool == Tool::Terminal {
+                if matches!(tab.tool, Tool::Terminal | Tool::Run) {
                     let ix = panel.active;
                     self.close_tool_tab(side, ix, window, cx);
                     return true;

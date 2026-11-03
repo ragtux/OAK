@@ -6,7 +6,9 @@
 //! window's caption: the three caption buttons sit at its right end and the
 //! empty parts drag the window (`docs/fleet-probe.md`, batch 1).
 
-use crate::actions::{GotoEverything, GotoTool, OpenSettings, ShowMainMenu, ToggleNotifications};
+use crate::actions::{
+    GotoEverything, GotoTool, OpenSettings, RunAndDebug, ShowMainMenu, ToggleNotifications,
+};
 use crate::assets::icon;
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
@@ -214,7 +216,11 @@ pub fn render(
             icon_button("smart-mode", "expui/actions/lightning", theme, m)
                 .tooltip(Tooltip::text("Smart Mode")),
         )
-        .child(icon_button("run", "expui/run/run", theme, m).tooltip(Tooltip::text("Run")))
+        .child(
+            icon_button("run", "expui/run/run", theme, m)
+                .tooltip(Tooltip::text("Run & Debug"))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(RunAndDebug), cx)),
+        )
         .child(
             icon_button("search", "expui/general/search", theme, m)
                 .tooltip(Tooltip::text("Search Everywhere"))

@@ -755,6 +755,41 @@ folds it; `graveaccent` itself was unknown to the crate and to the driver
 before). And the bundled `assets/keymap/default.json` is a 182-row subset of
 Fleet's 280-row file; the five terminal rows were added verbatim.
 
+## Twelfth pass: M6, batch 11, run and problems (2026-11-02, night)
+
+The `run` scene ran on Fleet and on Oak (`run-fleet-*.png`,
+`run-oak-*.png` in the probe's out folder): `.fleet/run.json` opened through
+Goto (the fixture now holds two `command` rows, one of which exits 3, and a
+`cargo` row), the gutter hovered and clicked, Ctrl+R, Ctrl+Shift+R on a
+row, Ctrl+Alt+R, the popup's second row run, then `misc/broken.json` and
+`misc/broken.rs` (a syntax error each, new in the fixture) for the status
+badge, its hover and click, Ctrl+E, a hover over the error, and
+`src/main.rs` for the clean badge. Logical px at 1.5 device px per px; the
+editor and bottom islands' left edge is 376 in this layout.
+
+| element | measured | Oak after the pass |
+|---|---|---|
+| run icons in run.json | a green triangle (`icon.background.green`) on each configuration's `"type"` line in place of the line number, ink 399.33-409.33 x 147.33-158 on the 142-164 row; the fold chevrons still appear on hover | the same within 0.7 (`RUN_ICON_X` 20.33, Oak's own `run-gutter.svg`) |
+| Run & Debug popup (Ctrl+R) | the Goto popup's frame (680 wide, top 64.67): "Run & Debug" semibold with its ink at 78.67-92, the field's border box 108-136 with the focus ring outside, a "Recent" header (ink 152.67-164.67) over the recent rows in italics once something ran, a separator, the workspace's name as a header, 26 px rows (the wash 170-194, 306.67-975.33) with a type icon at 313.33 and the name, the selected row carrying a `button.secondary` "Run" (895.33-942.67 x 172-192) and a "..." (950.67-976.67), 6 to a separator, 8 to "Edit Run Configurations..." with a pencil, 9 under it (bottom 298.67); the first row selected is a Recent one when there is any | the same within 1.33 except the "..." dots (4.67 right: a 16 px icon where Fleet's dots are 10 apart) and the Run button 2 left on the first pass, 0.67 after `RUN_POPUP_ROWS_PAD_RIGHT` 4 |
+| run tab | one tab per started configuration in the bottom panel: the type icon, the name, a close cross, the `+` after it, blue (focused) as the run starts; a failed run's icon gets a red badge | the same within 0.7 (the badge an 8 px dot at the icon's corner, estimate) |
+| run tool body | the command line (`cmd /c exit 3`) in `text.secondary` mono at 384 with its ink at 528-540.67, the output in `text.primary` with its ink 561.33 down, a 28 px rerun button (popup colours, 1.33 `popup.border`) at 1230-1258 x 520-548; no exit line is printed | the same within 0.7 (`RUN_TOOL_*`) |
+| run/rerun (Ctrl+Alt+R) | the shown tab's command again in the same tab | the same |
+| the popup's Enter on another row | a second tab beside the first | the same |
+| status badge, clean | a 20 x 20 box 6 under the editor area's top and 22 in from the island's right (1232.67-1252.67 x 82-102), `problemsWidget.tag.success.background` with a check in `.foreground` (its strokes from 4.5,8.7 through 8.7,13.7 to 15.5,5 in the box, about 2 wide); a 6 px margin in the island's colour around the badge (1226.67-1258.67, and 1142-1258.67 around the widget's header) cuts the current line's wash; hover: "No problems found" | the same within 0.7 (Oak's own `check.svg` drawn from the pixel map) |
+| status badge, errors | the same box in `problemsWidget.tag.error.background.default` with the count in `.text.default`; hover: "Open Problems Ctrl+E" | the same within 0.7 |
+| problems widget (click, Ctrl+E) | the badge becomes a "2 errors" tag (53.33 wide for 48 of text) 8 before two 20 px buttons (sliders, close with "Close Problems Escape"); a popup-coloured card 358.67 wide with its right edge 11.33 in from the island's and its border at 108, 1.33 of padding inside: 36 px rows with a red error icon 8 in, the message 36 in and `:line` 9.33 from the right; the row at the caret expanded to 71.33 in `card.expanded.error` colours, its border on the card's edge, with "No fixes available" under the message; "Next Problem Ctrl+E   Previous Problem Ctrl+Shift+E" in small text right-aligned 18.67 in from the card, 8.67 under it | the same within 1.33 (the card's edges exact); the hint text's size is an estimate (10.33 from the width ratio) and Oak's "2 errors" tag is 4.67 wider than Fleet's; Oak's messages are tree-sitter's ("Syntax error", "Missing ']'") where Fleet says "Bad token", and tree-sitter flags the first stray comma where Fleet flags the second |
+| Ctrl+E | the caret moves to the next problem (2:10) and the widget opens on it | the same (2:9, the parser's choice) |
+| error markup | a 2 px underline (`problem.error`'s colour) under the token, ending 0.67 above the row's bottom, one cell wide for a missing token; a 2 px mark on the scrollbar in `problem.error`'s `scrollbarMarkColor` | the same within 0.7 |
+| hover over an error | nothing new in the shot (the widget was open); `editor.showTooltipOnHover` stays an estimate | a tooltip-coloured pill with the message after `editor.hoverTooltipDelayMs` (estimate) |
+| run.json gutter hover | the fold chevrons on every foldable row, as batch 5 showed; no breakpoint hint while the pointer is in the text | the same (the hint now needs the pointer in the gutter) |
+| gutter-click | the click landed on the fold chevron, so a click on the icon itself is unprobed | a click on the icon runs the row (estimate) |
+
+What the Fleet side also showed: `command` rows run without Smart Mode
+through `cmd /c ...` on Windows; the status bar keeps the editor's caret
+while the run tab has the focus; the Recent section lists a run by name in
+italics; the `cargo` row gets a gear icon and the `command` rows a
+console-like one (Oak draws `oak/file-rust` and `oak/console`, estimates).
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

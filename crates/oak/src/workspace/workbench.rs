@@ -2196,6 +2196,9 @@ impl Workspace {
         if let Some(goto) = &self.goto {
             out.push(goto.clone().into_any_element());
         }
+        if let Some(popup) = &self.run_popup {
+            out.push(popup.clone().into_any_element());
+        }
         if let Some(menu) = &self.menu {
             out.push(menu.clone().into_any_element());
         }

@@ -99,6 +99,14 @@ actions!(
         TerminalNewWithProfile,
         TerminalSelectDefaultProfile,
         TerminalEditProfiles,
+        // M6: run configurations and problems
+        RunAndDebug,
+        RunInContext,
+        Rerun,
+        StopRunConfigurations,
+        RunStop,
+        RunEditConfigurations,
+        RunDeleteConfiguration,
     ]
 );
 
@@ -175,6 +183,8 @@ actions!(
         ExpandFolding,
         CollapseFolding,
         ToggleCase,
+        GoToNextProblem,
+        GoToPreviousProblem,
     ]
 );
 

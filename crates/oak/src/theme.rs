@@ -190,6 +190,99 @@ pub mod metrics {
     pub const LINE_STATUS_POPUP_LEFT: f32 = 6.;
     pub const LINE_STATUS_POPUP_WIDTH: f32 = 198.;
     pub const LINE_STATUS_POPUP_HEIGHT: f32 = 35.33;
+
+    /// M6, batch 11 (twelfth pass). The run icon in `.fleet/run.json`'s
+    /// gutter: Oak's `run-gutter.svg` (a 10 x 10.67 triangle at 3,2.67 in
+    /// its 16 px box) whose ink spans 399.33-409.33 x 147.33-158 on the
+    /// 142-164 row of an island whose left edge is 376, in
+    /// `icon.background.green`, in place of the line number.
+    pub const RUN_ICON_X: f32 = 21.;
+    /// The file status badge at the editor's top right: a 20 px box 6 under
+    /// the editor area's top and 22 in from the island's right edge
+    /// (ink 1232.67-1252 x 82-102 on a 1274 island), on a 6 px margin in
+    /// the island's colour that cuts the current line's wash around it
+    /// (1226.67-1258.67) and around the widget's header (1142-1258.67).
+    pub const FILE_STATUS_SIZE: f32 = 20.;
+    pub const FILE_STATUS_TOP: f32 = 6.;
+    pub const FILE_STATUS_RIGHT: f32 = 22.;
+    pub const FILE_STATUS_MARGIN: f32 = 6.;
+    pub const FILE_STATUS_RADIUS: f32 = 4.;
+    /// The count tag's side padding past its text (the "2 errors" tag is
+    /// 53.33 wide around 48 of text; a single digit sits in the 20 box).
+    pub const FILE_STATUS_TAG_PAD_X: f32 = 2.67;
+    /// The expanded widget's header: two 20 px icon buttons after the tag,
+    /// 2 apart, the tag 8 before them (sliders ink 1212-1226.67, cross
+    /// 1236-1246.67).
+    pub const PROBLEMS_HEADER_GAP: f32 = 8.;
+    pub const PROBLEMS_BUTTON_GAP: f32 = 2.;
+    /// The problems card: 358.67 wide, its right edge 11.33 in from the
+    /// island's (904-1262.67), 6 under the badge (its border at 108); 36 px
+    /// rows with a 16 px icon 8 in and the text 36 in; `:line` 9.33 from the
+    /// right.
+    pub const PROBLEMS_CARD_WIDTH: f32 = 358.67;
+    pub const PROBLEMS_CARD_RIGHT: f32 = 11.33;
+    pub const PROBLEMS_CARD_GAP: f32 = 6.;
+    pub const PROBLEMS_CARD_PAD: f32 = 1.33;
+    pub const PROBLEMS_ROW_HEIGHT: f32 = 36.;
+    pub const PROBLEMS_ROW_PAD_LEFT: f32 = 8.;
+    pub const PROBLEMS_ROW_TEXT_X: f32 = 36.;
+    pub const PROBLEMS_ROW_PAD_RIGHT: f32 = 9.33;
+    /// The expanded row (the problem at the caret): 69.33 inside a 1.33
+    /// border in the `card.expanded.error` colours, the title on the first
+    /// 36 and "No fixes available" under it.
+    pub const PROBLEMS_EXPANDED_HEIGHT: f32 = 69.33;
+    pub const PROBLEMS_EXPANDED_BORDER: f32 = 1.33;
+    /// The hints under the card ("Next Problem Ctrl+E Previous Problem
+    /// Ctrl+Shift+E"): small text right-aligned 18.67 in from the card's
+    /// right edge, its ink 8.67 under the card's border, a chord 4.67 after
+    /// its label's ink and the second hint 8.67 after the first's. The size
+    /// is an estimate: Fleet's words are 0.93 of gpui's 11 px Inter
+    /// ("Next Problem" 64.67 wide against 69.33), so 10.33.
+    pub const PROBLEMS_HINT_FONT: f32 = 10.33;
+    pub const PROBLEMS_HINT_RIGHT: f32 = 18.67;
+    pub const PROBLEMS_HINT_TOP: f32 = 4.;
+    pub const PROBLEMS_HINT_GAP: f32 = 6.67;
+    pub const PROBLEMS_HINT_CHORD_GAP: f32 = 3.33;
+    /// The error underline: 2 px (`problem.error`'s thickness) ending 0.67
+    /// above the row's bottom; one cell wide for a zero-width problem.
+    pub const PROBLEM_UNDERLINE: f32 = 2.;
+    pub const PROBLEM_UNDERLINE_BOTTOM: f32 = 0.67;
+    /// The Run & Debug popup: the Goto popup's frame with a 43.33 title row
+    /// ("Run & Debug" semibold, its ink centred on 85.33: 6 of bottom padding
+    /// puts gpui's text line there), the field's 28 px box at 108-136 with
+    /// the focus ring outside it, 8 to a 26 px section header, 26 px rows
+    /// (24 washed, 306.67-975.33), 6 to a separator, 4 to the next header or
+    /// 8 to the "Edit Run Configurations..." row, 9 under it.
+    pub const RUN_POPUP_TITLE_HEIGHT: f32 = 43.33;
+    pub const RUN_POPUP_TITLE_LIFT: f32 = 6.;
+    pub const RUN_POPUP_HEADER_GAP: f32 = 8.;
+    pub const RUN_POPUP_ROWS_PAD_RIGHT: f32 = 4.67;
+    pub const RUN_POPUP_SEPARATOR_ABOVE: f32 = 6.;
+    pub const RUN_POPUP_SEPARATOR_BELOW: f32 = 4.;
+    pub const RUN_POPUP_EDIT_ABOVE: f32 = 8.;
+    pub const RUN_POPUP_BOTTOM_PAD: f32 = 9.;
+    /// The selected row's Run button (47.33 x 20, `button.secondary` over
+    /// the row, 32.67 from the popup's right edge) and the "..." button
+    /// (26 wide, 3.33 from the edge).
+    pub const RUN_POPUP_BUTTON_WIDTH: f32 = 47.33;
+    pub const RUN_POPUP_BUTTON_HEIGHT: f32 = 20.;
+    pub const RUN_POPUP_MORE_WIDTH: f32 = 24.67;
+    pub const RUN_POPUP_MORE_RIGHT: f32 = 3.33;
+    pub const RUN_POPUP_BUTTON_GAP: f32 = 8.;
+    /// The run tool's body: the command line's row 12.67 under the tab
+    /// row's bottom padding (its ink at 528 on a 511 body top), the output
+    /// 11.33 under it, both 8 in from the island's edge (mono text at the
+    /// terminal's size); the rerun button a 28 px box 9.67 under the tab
+    /// row and 16 from the island's right edge.
+    pub const RUN_TOOL_PAD_X: f32 = 8.;
+    pub const RUN_TOOL_COMMAND_TOP: f32 = 12.67;
+    pub const RUN_TOOL_OUTPUT_GAP: f32 = 11.33;
+    pub const RUN_TOOL_BUTTON: f32 = 28.;
+    pub const RUN_TOOL_BUTTON_TOP: f32 = 9.67;
+    pub const RUN_TOOL_BUTTON_RIGHT: f32 = 16.;
+    /// The failed badge on a run tab's icon (estimate: an 8 px red dot at
+    /// the icon's bottom right).
+    pub const RUN_TAB_BADGE: f32 = 8.;
     /// The branch tag's menu (ninth pass): 0.67 under the toolbar; its left
     /// about 20 left of the click (the tag's icon, estimate).
     pub const BRANCH_MENU_GAP: f32 = 0.67;
@@ -384,6 +477,9 @@ pub mod metrics {
     pub const TOOLTIP_RADIUS: f32 = 4.;
     /// Fleet's tab tooltip wrapped at 616 wide (batch 3).
     pub const TOOLTIP_MAX_WIDTH: f32 = 616.;
+    /// The gap before a chord on the tooltip's line ("Open Problems Ctrl+E",
+    /// batch 11: the chord's ink 5.33 after the label's).
+    pub const TOOLTIP_SHORTCUT_GAP: f32 = 5.33;
     /// The Goto panel (batch 6, `docs/fleet-probe.md` sixth pass): 680 wide,
     /// centred, its top at 64.67 and its bottom at 743.33 in an 800 window when
     /// it holds a preview (`GOTO_MAX_HEIGHT`), else as tall as its rows plus 2.
@@ -688,6 +784,53 @@ scaled_metrics!(
     line_status_popup_left = LINE_STATUS_POPUP_LEFT,
     line_status_popup_width = LINE_STATUS_POPUP_WIDTH,
     line_status_popup_height = LINE_STATUS_POPUP_HEIGHT,
+    tooltip_shortcut_gap = TOOLTIP_SHORTCUT_GAP,
+    run_icon_x = RUN_ICON_X,
+    file_status_size = FILE_STATUS_SIZE,
+    file_status_top = FILE_STATUS_TOP,
+    file_status_right = FILE_STATUS_RIGHT,
+    file_status_margin = FILE_STATUS_MARGIN,
+    file_status_radius = FILE_STATUS_RADIUS,
+    file_status_tag_pad_x = FILE_STATUS_TAG_PAD_X,
+    problems_header_gap = PROBLEMS_HEADER_GAP,
+    problems_button_gap = PROBLEMS_BUTTON_GAP,
+    problems_card_width = PROBLEMS_CARD_WIDTH,
+    problems_card_right = PROBLEMS_CARD_RIGHT,
+    problems_card_gap = PROBLEMS_CARD_GAP,
+    problems_card_pad = PROBLEMS_CARD_PAD,
+    problems_row_height = PROBLEMS_ROW_HEIGHT,
+    problems_row_pad_left = PROBLEMS_ROW_PAD_LEFT,
+    problems_row_text_x = PROBLEMS_ROW_TEXT_X,
+    problems_row_pad_right = PROBLEMS_ROW_PAD_RIGHT,
+    problems_expanded_height = PROBLEMS_EXPANDED_HEIGHT,
+    problems_expanded_border = PROBLEMS_EXPANDED_BORDER,
+    problems_hint_font = PROBLEMS_HINT_FONT,
+    problems_hint_right = PROBLEMS_HINT_RIGHT,
+    problems_hint_top = PROBLEMS_HINT_TOP,
+    problems_hint_gap = PROBLEMS_HINT_GAP,
+    problems_hint_chord_gap = PROBLEMS_HINT_CHORD_GAP,
+    problem_underline = PROBLEM_UNDERLINE,
+    problem_underline_bottom = PROBLEM_UNDERLINE_BOTTOM,
+    run_popup_title_height = RUN_POPUP_TITLE_HEIGHT,
+    run_popup_title_lift = RUN_POPUP_TITLE_LIFT,
+    run_popup_header_gap = RUN_POPUP_HEADER_GAP,
+    run_popup_rows_pad_right = RUN_POPUP_ROWS_PAD_RIGHT,
+    run_popup_separator_above = RUN_POPUP_SEPARATOR_ABOVE,
+    run_popup_separator_below = RUN_POPUP_SEPARATOR_BELOW,
+    run_popup_edit_above = RUN_POPUP_EDIT_ABOVE,
+    run_popup_bottom_pad = RUN_POPUP_BOTTOM_PAD,
+    run_popup_button_width = RUN_POPUP_BUTTON_WIDTH,
+    run_popup_button_height = RUN_POPUP_BUTTON_HEIGHT,
+    run_popup_more_width = RUN_POPUP_MORE_WIDTH,
+    run_popup_more_right = RUN_POPUP_MORE_RIGHT,
+    run_popup_button_gap = RUN_POPUP_BUTTON_GAP,
+    run_tool_pad_x = RUN_TOOL_PAD_X,
+    run_tool_command_top = RUN_TOOL_COMMAND_TOP,
+    run_tool_output_gap = RUN_TOOL_OUTPUT_GAP,
+    run_tool_button = RUN_TOOL_BUTTON,
+    run_tool_button_top = RUN_TOOL_BUTTON_TOP,
+    run_tool_button_right = RUN_TOOL_BUTTON_RIGHT,
+    run_tab_badge = RUN_TAB_BADGE,
     branch_menu_gap = BRANCH_MENU_GAP,
     branch_menu_offset_x = BRANCH_MENU_OFFSET_X,
     git_field_top = GIT_FIELD_TOP,
@@ -1128,6 +1271,23 @@ pub struct Theme {
     pub icon_blue: Hsla,
     pub icon_red: Hsla,
     pub icon_yellow: Hsla,
+    /// M6, the problems widget (`problemsWidget.*`, batch 11): the status
+    /// badge's success box and check, the error count tag, the expanded
+    /// card's colours and its texts.
+    pub problems_success_bg: Hsla,
+    pub problems_success_fg: Hsla,
+    pub problems_error_tag_bg: Hsla,
+    pub problems_error_tag_bg_hovered: Hsla,
+    pub problems_error_tag_text: Hsla,
+    pub problems_warning_tag_bg: Hsla,
+    pub problems_warning_tag_text: Hsla,
+    pub problems_card_error_bg: Hsla,
+    pub problems_card_error_border: Hsla,
+    pub problems_card_text: Hsla,
+    pub problems_card_text_secondary: Hsla,
+    /// `problem.error`: the underline's colour and its scrollbar mark.
+    pub problem_error_underline: Hsla,
+    pub problem_error_mark: Hsla,
     /// The breakpoint hint on the hovered gutter row: Fleet's red at 28 %
     /// (read off the `fold` scene's hover shot; no theme key names it, so
     /// `icon.background.red` with the opacity is an estimate).
@@ -1448,6 +1608,53 @@ impl Theme {
             shortcut_overlay_bg: to_hsla(Color::rgb(0xB8, 0xB9, 0xB9)),
             shortcut_overlay_text: to_hsla(Color::rgb(0x09, 0x09, 0x09)),
             breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.28),
+            problems_success_bg: c(
+                "problemsWidget.tag.success.background",
+                Color::rgb(0x1F, 0x39, 0x2D),
+            ),
+            problems_success_fg: c(
+                "problemsWidget.tag.success.foreground",
+                Color::rgb(0x69, 0xB0, 0x90),
+            ),
+            problems_error_tag_bg: c(
+                "problemsWidget.tag.error.background.default",
+                Color::rgb(0xB8, 0x2D, 0x46),
+            ),
+            problems_error_tag_bg_hovered: c(
+                "problemsWidget.tag.error.background.hovered",
+                Color::rgb(0x92, 0x2C, 0x3B),
+            ),
+            problems_error_tag_text: c(
+                "problemsWidget.tag.error.text.default",
+                Color::rgb(0xFF, 0xE9, 0xEA),
+            ),
+            problems_warning_tag_bg: c(
+                "problemsWidget.tag.warning.background.default",
+                Color::rgb(0x86, 0x5A, 0x15),
+            ),
+            problems_warning_tag_text: c(
+                "problemsWidget.tag.warning.text.default",
+                Color::rgb(0xFC, 0xED, 0xDC),
+            ),
+            problems_card_error_bg: c(
+                "problemsWidget.card.expanded.error.background",
+                Color::rgb(0x40, 0x1A, 0x1E),
+            ),
+            problems_card_error_border: c(
+                "problemsWidget.card.expanded.error.border",
+                Color::rgb(0x92, 0x2C, 0x3B),
+            ),
+            problems_card_text: c("problemsWidget.card.text.primary", text_primary),
+            problems_card_text_secondary: c(
+                "problemsWidget.card.text.secondary",
+                text_primary.with_alpha(0x85),
+            ),
+            problem_error_underline: attr("problem.error")
+                .and_then(|a| a.underline)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xEC, 0x5D, 0x6F))),
+            problem_error_mark: attr("problem.error")
+                .and_then(|a| a.scrollbar_mark)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xE1, 0x46, 0x5E))),
             git_added_text: c("editor.gitDiff.text.added", Color::rgb(0x69, 0xB0, 0x90)),
             git_modified_text: c("editor.gitDiff.text.modified", Color::rgb(0x71, 0xA3, 0xEF)),
             git_deleted_text: c("editor.gitDiff.text.deleted", Color::rgb(0xF8, 0x7C, 0x88)),
