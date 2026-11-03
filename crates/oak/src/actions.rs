@@ -107,6 +107,23 @@ actions!(
         RunStop,
         RunEditConfigurations,
         RunDeleteConfiguration,
+        // M7: Smart Mode through a language server. These need an editor
+        // focused (the keymap binds them in the Editor context) and run in
+        // the workspace, which owns the servers.
+        Completion,
+        SmartCompletion,
+        ShowParameterInfo,
+        ShowDocumentation,
+        GoToDeclaration,
+        GoToTypeDeclaration,
+        FindUsages,
+        RenameSymbol,
+        QuickFixes,
+        ApplyPrimaryQuickFix,
+        ReformatCode,
+        OptimizeImports,
+        Back,
+        Forward,
     ]
 );
 

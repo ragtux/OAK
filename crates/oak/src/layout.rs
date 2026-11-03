@@ -26,6 +26,9 @@ pub struct Layout {
     /// The run configurations started, by name, most recent first (the Run
     /// & Debug popup's Recent section, M6).
     pub recent_runs: Vec<String>,
+    /// Smart Mode (M7): on unless the lightning button turned it off for
+    /// this workspace (Fleet keeps the choice per workspace too).
+    pub smart_mode: bool,
 }
 
 fn now_secs() -> u64 {
@@ -56,6 +59,7 @@ impl Layout {
             recent: Vec::new(),
             goto_preview_hidden: false,
             recent_runs: Vec::new(),
+            smart_mode: true,
         }
     }
 
@@ -125,6 +129,10 @@ impl Layout {
                         .collect()
                 })
                 .unwrap_or_default(),
+            smart_mode: entry
+                .get("smartMode")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
         }
     }
 
@@ -146,6 +154,7 @@ impl Layout {
                 "recent": recent,
                 "gotoPreviewHidden": self.goto_preview_hidden,
                 "recentRuns": self.recent_runs,
+                "smartMode": self.smart_mode,
                 "opened": now_secs(),
             }),
         );

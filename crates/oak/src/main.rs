@@ -19,6 +19,7 @@ mod goto;
 mod input;
 mod keymap;
 mod layout;
+mod list_popup;
 mod menu;
 mod notifications;
 mod popup;

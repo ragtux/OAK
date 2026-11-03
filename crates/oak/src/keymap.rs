@@ -160,6 +160,22 @@ action_table! {
     "about" => About, WORKSPACE;
     "editor/change-line-endings" => ChangeLineEndings, WORKSPACE;
     "editor/paste-from-history" => PasteFromHistory, WORKSPACE;
+    // M7: Smart Mode. Run by the workspace, which owns the language servers,
+    // on the focused editor.
+    "completion" => Completion, EDITOR;
+    "smart-completion" => SmartCompletion, EDITOR;
+    "show-parameter-info" => ShowParameterInfo, EDITOR;
+    "show-documentation" => ShowDocumentation, EDITOR;
+    "go-to-declaration" => GoToDeclaration, EDITOR;
+    "go-to-type-declaration" => GoToTypeDeclaration, EDITOR;
+    "find-usages" => FindUsages, EDITOR;
+    "rename" => RenameSymbol, EDITOR;
+    "quick-fixes" => QuickFixes, EDITOR;
+    "apply-primary-quick-fix" => ApplyPrimaryQuickFix, EDITOR;
+    "reformat-code" => ReformatCode, EDITOR;
+    "optimize-imports" => OptimizeImports, EDITOR;
+    "back" => Back, WORKSPACE;
+    "forward" => Forward, WORKSPACE;
 
     "arrow-up" => MoveUp, EDITOR;
     "arrow-down" => MoveDown, EDITOR;
@@ -322,6 +338,22 @@ pub fn action_title(id: &str) -> String {
         "terminal/jump-to-tool" => Some("Terminal"),
         "terminal/select-default-profile" => Some("Select Default Terminal Profile"),
         "terminal/edit-profiles" => Some("Edit Terminal Profiles"),
+        // M7: as Fleet's editor menu spells them (batch 7 caught Quick
+        // Fixes..., Reformat Code, Go To and Refactor); the rest estimates.
+        "completion" => Some("Code Completion"),
+        "smart-completion" => Some("Smart Code Completion"),
+        "show-parameter-info" => Some("Show Parameter Info"),
+        "show-documentation" => Some("Show Documentation"),
+        "go-to-declaration" => Some("Go to Declaration"),
+        "go-to-type-declaration" => Some("Go to Type Declaration"),
+        "find-usages" => Some("Find Usages"),
+        "rename" => Some("Rename..."),
+        "quick-fixes" => Some("Quick Fixes..."),
+        "apply-primary-quick-fix" => Some("Apply Primary Quick Fix"),
+        "reformat-code" => Some("Reformat Code"),
+        "optimize-imports" => Some("Optimize Imports"),
+        "back" => Some("Back"),
+        "forward" => Some("Forward"),
         "confirm" => Some("Enter"),
         "arrow-up" => Some("Up"),
         "arrow-down" => Some("Down"),

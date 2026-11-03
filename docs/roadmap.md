@@ -23,13 +23,13 @@ Fleet's distribution describes most of its own surface as data, and the
 inventory script reads it (`tools/fleet-probe/inventory.py`, output in the
 gitignored `tools/fleet-probe/out/`). Fleet 1.48.261 has:
 
-| Table | Count | Oak covers (2026-11-02, after the M6 build) |
+| Table | Count | Oak covers (2026-11-03, after the first M7 pass) |
 | --- | --- | --- |
-| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 131 |
+| Action ids with a default chord (`fleet/keymap/fleet.json`) | 203 | 145 |
 | Action ids described in plugin `documentation.yaml` files | 204 (385 with the above) | – |
-| `settings.json` keys described in `documentation.yaml` files | 430 | 101 |
-| Theme `colors` keys | 684 | 187 |
-| Theme `textAttributes` keys | 157 | 36 |
+| `settings.json` keys described in `documentation.yaml` files | 430 | 104 |
+| Theme `colors` keys | 684 | 199 |
+| Theme `textAttributes` keys | 157 | 43 |
 | Icons (`frontend/icons/dark`) | 441 | mapped by hand so far |
 | Keymap presets shipped | 8 (fleet, intellij, ij-classic, visual-studio, vscode, sublimeText, eclipse, emacs) | format only |
 
@@ -442,22 +442,70 @@ button's menu (unknown), the hovered error's tooltip against Fleet, a click
 on the gutter icon against Fleet, the "..." icon's size, paths in the
 output as links, and LSP diagnostics (M7).
 
-### M7 Smart Mode via LSP (XL)
+### M7 Smart Mode via LSP (XL; first pass built 2026-11-03, batch 12 not run)
 
-- Language server lifecycle behind the lightning icon (`smartMode.*`,
-  `smart-mode-*` icons), per-language servers (rust-analyzer first),
-  `toolchains`.
-- Completion popup (`completion`, `smart-completion`, `complete-statement`,
-  `completion.autoPopupDelay`, `completion.*`), `show-parameter-info`
-  (`parameterInfo`), `show-documentation`, semantic highlighting
-  (`editor.semanticHighlighting`), `go-to-declaration`,
-  `go-to-type-declaration`, `find-usages`, `rename` (`rename.*`),
-  `quick-fixes`, `apply-primary-quick-fix`, `show-quick-fixes-preview`
-  (`quickFixes.preview.*`), `reformat-code`, `optimize-imports`,
-  `editor.formatOnSave`, code vision (`editor.showCodeVision`), navigation
-  bar (`editor.showNavBar`), `insert-snippet` (`snippet.*`, Fleet's
-  `snippets.json` format), inline completion key handling.
-- `back`, `forward`, `go-to-next|prev-history-item` navigation history.
+Built in one pass without Fleet (`docs/fleet-probe.md`, thirteenth pass):
+the `oak-lsp` crate speaks the Language Server Protocol to a server on its
+pipes (JSON-RPC framing on two threads, the handshake, typed requests whose
+answers come back with their ids, the server's own requests answered or
+handed up, positions in whichever of UTF-8, UTF-16 or UTF-32 the server
+negotiated, edits as char-range changes, snippets as plain text, semantic
+tokens decoded and mapped onto Fleet's `textAttributes` keys, Markdown as
+plain lines), tested against the real rust-analyzer (ready, hover,
+definition, completion, tokens, shutdown). The app's `workspace/smart.rs`
+runs one server per language (rust-analyzer, found on `PATH` or through
+rustup), feeds it the open documents (full text on every edit) and asks on
+the editors' behalf; `editor/smart.rs` paints the popups. Every size of the
+new surfaces is an estimate until the `smart` scene runs on Fleet with Smart
+Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
+
+- Done: the lightning (`smartMode.background.enabled|error`,
+  `smartMode.border.loading`): off, starting (the server's progress in the
+  tooltip), on, failed; its menu (Enable/Disable, Restart Language Servers;
+  the choice kept per workspace in `layout.json`); the server's messages as
+  notifications; `rust-analyzer.*` settings keys handed to the server as
+  its configuration.
+- Done: diagnostics as the documents' problems (`problem.error|warning|
+  warning.weak|info`, the widget's warning and weak cards and tags, the
+  badge following the worst severity, the quick fixes of the expanded
+  problem as rows under its message), semantic highlighting
+  (`editor.semanticHighlighting`) laid over tree-sitter's spans and moved
+  through edits until the next answer.
+- Done: `completion` and `smart-completion` (the popup at the word, rows
+  with a kind icon, the label with the matched chars in
+  `completion.match.text`, the detail right-aligned, filtered by the Goto
+  matcher as you type, Enter or Tab accepting with the item's edit, its
+  additional edits (imports) in the same undo step and a snippet's first
+  tabstop selected, the auto popup after `completion.autoPopupDelay` on a
+  word or trigger char), `show-documentation` (the popup's documentation
+  pane, else the hover at the caret; also on the pointer resting on a
+  symbol after `editor.hoverTooltipDelayMs`), `show-parameter-info` (the
+  active parameter in `parameterInfo.match.text`, re-asked as the caret
+  moves, opened by `(` and `,`).
+- Done: `go-to-declaration` (also Ctrl+click), `go-to-type-declaration`,
+  `find-usages` (a popup in the Goto frame listing `file:line` rows),
+  `back` and `forward` over the positions jumped from, `rename` (the name
+  in a prompt, preselected per `rename.selectOnRename`, the server's edit
+  applied across open documents and files on disk), `quick-fixes` (a menu
+  at the caret), `apply-primary-quick-fix`, `optimize-imports`
+  (`source.organizeImports`), `reformat-code` and `editor.formatOnSave`,
+  `workspace/applyEdit` from the server.
+- Menus: the editor menu's Quick Fixes..., Refactor ›, Go To ›, Reformat
+  Code and Git › rows; the main menu's Code rows.
+- Probes: batch 12 as the `smart` scene (written, not yet run on either
+  editor).
+
+Left for later: the inline rename (`editor.rename.current|entries` boxes
+and `rename.autoRenameOnTyping`; Oak renames through a prompt), code
+vision (`editor.showCodeVision`: a row above declarations needs the display
+map), the navigation bar (`editor.showNavBar`), `insert-snippet` (Fleet's
+`snippets.json` format is unread), `complete-statement`,
+`show-quick-fixes-preview`, `go-to-next|prev-history-item` (what Fleet's
+history items are is unprobed), the inline completion keys (AI), incremental
+`didChange` (Oak sends the whole text), `toolchains`, servers for the other
+languages, a `cargo check` run's diagnostics shown as they arrive (the
+server's `checkOnSave` runs; its progress shows in the lightning's tooltip),
+and Fleet's Smart Mode popup under the lightning (Oak shows a menu).
 
 ### M8 Debugger via DAP (L)
 

@@ -2,11 +2,18 @@
 //! folds, shared by every editor view that shows it (a tab in each split).
 //! Views keep their own cursor and scroll; edits made through any of them
 //! land here, and every view observes the document to repaint.
+//!
+//! With Smart Mode on (M7) the language server feeds the document too: its
+//! diagnostics replace the parser's syntax errors as the problems, and its
+//! semantic tokens colour spans over the tree-sitter highlighting
+//! (`editor.semanticHighlighting`). Both are kept with the buffer version
+//! they were computed for and moved through the edits made since.
 
 use gpui::{Context, EventEmitter};
 use oak_settings::{EditorConfig, EndOfLine, IndentStyle, Settings};
 use oak_syntax::{Fold, Highlighter, Language, Span, SyntaxTree};
 use oak_text::{Buffer, Indent};
+use std::ops::Range;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -26,6 +33,39 @@ struct IndentSource {
     auto_detect: bool,
 }
 
+/// How bad a problem is: the server's severity, or an error for the
+/// parser's. Each paints with its own `problem.*` attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    Error,
+    Warning,
+    /// `problem.warning.weak` (LSP's hint).
+    Weak,
+    Info,
+}
+
+/// One problem in a document: a char range (empty for a missing token) and
+/// a message; the server's diagnostic when it came from one, for the quick
+/// fixes it is asked about.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Problem {
+    pub range: Range<usize>,
+    pub message: String,
+    pub severity: Severity,
+    /// `problem.unused`: the server tagged the range as unnecessary.
+    pub unused: bool,
+    /// `problem.deprecated`.
+    pub deprecated: bool,
+    pub diagnostic: Option<oak_lsp::lsp_types::Diagnostic>,
+}
+
+/// A semantic token's span as a char range with its Fleet attribute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticSpan {
+    pub range: Range<usize>,
+    pub attribute: &'static str,
+}
+
 pub struct Document {
     pub path: Option<PathBuf>,
     pub buffer: Buffer,
@@ -33,15 +73,26 @@ pub struct Document {
     /// The `.editorconfig` values for the path, read when the file opened.
     pub editorconfig: EditorConfig,
     highlighter: Highlighter,
+    /// The tree-sitter spans for `spans_version`.
+    syntax_spans: Vec<Span>,
+    syntax_spans_version: Option<u64>,
+    /// The merged spans (syntax under semantic) for `spans_key`.
     spans: Vec<Span>,
-    spans_version: Option<u64>,
+    spans_key: Option<(u64, u64)>,
     tree: Option<SyntaxTree>,
     tree_version: Option<u64>,
     folds: Vec<Fold>,
     folds_version: Option<u64>,
-    /// The syntax errors (M6), as char ranges with a message, per version.
-    problems: Vec<Problem>,
-    problems_version: Option<u64>,
+    /// The parser's syntax errors (M6), as char ranges with a message, per version.
+    syntax_problems: Vec<Problem>,
+    syntax_problems_version: Option<u64>,
+    /// The server's diagnostics (M7), for the version they were received
+    /// at; `None` while no server has published for this file.
+    diagnostics: Option<(u64, Vec<Problem>)>,
+    /// The server's semantic tokens (M7) for the version they were
+    /// computed at, and a counter bumped whenever they are replaced.
+    semantic: Option<(u64, Vec<SemanticSpan>)>,
+    semantic_generation: u64,
     indent_source: Option<IndentSource>,
     /// The file's modification time when it was read or written.
     disk_modified: Option<std::time::SystemTime>,
@@ -60,14 +111,6 @@ fn modified_time(path: &std::path::Path) -> Option<std::time::SystemTime> {
 
 impl EventEmitter<DocumentEvent> for Document {}
 
-/// One syntax error in a document: a char range (empty for a missing
-/// token) and a message.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Problem {
-    pub range: std::ops::Range<usize>,
-    pub message: String,
-}
-
 impl Document {
     pub fn new(path: Option<PathBuf>, text: &str, settings: &Settings) -> Self {
         let language = path.as_deref().and_then(Language::from_path);
@@ -81,14 +124,19 @@ impl Document {
             language,
             editorconfig,
             highlighter: Highlighter::new(),
+            syntax_spans: Vec::new(),
+            syntax_spans_version: None,
             spans: Vec::new(),
-            spans_version: None,
+            spans_key: None,
             tree: None,
             tree_version: None,
             folds: Vec::new(),
             folds_version: None,
-            problems: Vec::new(),
-            problems_version: None,
+            syntax_problems: Vec::new(),
+            syntax_problems_version: None,
+            diagnostics: None,
+            semantic: None,
+            semantic_generation: 0,
             indent_source: None,
             disk_modified: None,
             conflict: false,
@@ -186,10 +234,13 @@ impl Document {
             .unwrap_or_default();
         self.disk_modified = path.as_deref().and_then(modified_time);
         self.path = path;
-        self.spans_version = None;
+        self.syntax_spans_version = None;
+        self.spans_key = None;
         self.tree = None;
         self.tree_version = None;
         self.folds_version = None;
+        self.diagnostics = None;
+        self.semantic = None;
         cx.emit(DocumentEvent::Changed);
         cx.notify();
     }
@@ -286,17 +337,47 @@ impl Document {
         Ok(())
     }
 
-    /// The highlight spans for the current text, computed once per version.
-    pub fn spans(&mut self) -> &[Span] {
+    /// The tree-sitter spans for the current text, computed once per version.
+    fn syntax_spans(&mut self) -> &[Span] {
         let version = self.buffer.version();
-        if self.spans_version != Some(version) {
-            self.spans = match self.language {
+        if self.syntax_spans_version != Some(version) {
+            self.syntax_spans = match self.language {
                 Some(lang) => self
                     .highlighter
                     .highlight(lang, self.buffer.text().as_bytes()),
                 None => Vec::new(),
             };
-            self.spans_version = Some(version);
+            self.syntax_spans_version = Some(version);
+        }
+        &self.syntax_spans
+    }
+
+    /// The highlight spans for the current text: tree-sitter's, with the
+    /// server's semantic tokens painted over them where there are any.
+    pub fn spans(&mut self) -> &[Span] {
+        let version = self.buffer.version();
+        let key = (version, self.semantic_generation);
+        if self.spans_key != Some(key) {
+            self.catch_up_semantic();
+            let semantic: Vec<(Range<usize>, &'static str)> = self
+                .semantic
+                .as_ref()
+                .map(|(_, spans)| {
+                    spans
+                        .iter()
+                        .map(|s| {
+                            (
+                                self.buffer.char_to_byte(s.range.start)
+                                    ..self.buffer.char_to_byte(s.range.end),
+                                s.attribute,
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let syntax = self.syntax_spans().to_vec();
+            self.spans = merge_spans(syntax, semantic);
+            self.spans_key = Some(key);
         }
         &self.spans
     }
@@ -316,33 +397,154 @@ impl Document {
         self.tree.as_ref()
     }
 
-    /// The syntax errors of the current text (`editor.markupWithoutSmartMode`):
-    /// tree-sitter's `ERROR` and `MISSING` nodes, as char ranges in document
-    /// order with a message each. The problems widget, the underlines, the
-    /// scrollbar marks and `editor/go-to-next-problem` read them.
-    pub fn problems(&mut self) -> &[Problem] {
+    /// The parser's syntax errors of the current text
+    /// (`editor.markupWithoutSmartMode`): tree-sitter's `ERROR` and `MISSING`
+    /// nodes, as char ranges in document order with a message each.
+    fn syntax_problems(&mut self) -> &[Problem] {
         let version = self.buffer.version();
-        if self.problems_version != Some(version) {
+        if self.syntax_problems_version != Some(version) {
             let found: Vec<oak_syntax::SyntaxProblem> = self
                 .syntax()
                 .map(|tree| tree.problems())
                 .unwrap_or_default();
             let buffer = &self.buffer;
-            self.problems = found
+            self.syntax_problems = found
                 .into_iter()
                 .map(|p| Problem {
                     range: buffer.byte_to_char(p.range.start)..buffer.byte_to_char(p.range.end),
                     message: p.message,
+                    severity: Severity::Error,
+                    unused: false,
+                    deprecated: false,
+                    diagnostic: None,
                 })
                 .collect();
-            self.problems_version = Some(version);
+            self.syntax_problems_version = Some(version);
         }
-        &self.problems
+        &self.syntax_problems
+    }
+
+    /// The problems the editor shows: the server's diagnostics once it has
+    /// published for this file, else the parser's errors when `markup`
+    /// (`editor.markupWithoutSmartMode`) asks for them. In document order.
+    pub fn problems(&mut self, markup: bool) -> &[Problem] {
+        if self.diagnostics.is_some() {
+            self.catch_up_diagnostics();
+            return &self.diagnostics.as_ref().expect("checked").1;
+        }
+        if markup {
+            self.syntax_problems()
+        } else {
+            &[]
+        }
     }
 
     /// The problems as last computed (`problems` refreshes them).
     pub fn cached_problems(&self) -> &[Problem] {
-        &self.problems
+        match &self.diagnostics {
+            Some((_, problems)) => problems,
+            None => &self.syntax_problems,
+        }
+    }
+
+    /// The server published for this file: `problems` are in char offsets
+    /// of buffer `version` (the version the text was sent at).
+    pub fn set_diagnostics(
+        &mut self,
+        version: u64,
+        mut problems: Vec<Problem>,
+        cx: &mut Context<Self>,
+    ) {
+        problems.sort_by_key(|p| (p.range.start, p.range.end));
+        self.diagnostics = Some((version, problems));
+        cx.notify();
+    }
+
+    /// Smart Mode went off (or the server left): back to the parser's errors.
+    pub fn clear_server_state(&mut self, cx: &mut Context<Self>) {
+        let had = self.diagnostics.is_some() || self.semantic.is_some();
+        self.diagnostics = None;
+        self.semantic = None;
+        self.semantic_generation += 1;
+        if had {
+            cx.notify();
+        }
+    }
+
+    /// The server's semantic tokens for buffer `version`, as char ranges.
+    pub fn set_semantic_spans(
+        &mut self,
+        version: u64,
+        mut spans: Vec<SemanticSpan>,
+        cx: &mut Context<Self>,
+    ) {
+        spans.sort_by_key(|s| (s.range.start, s.range.end));
+        self.semantic = Some((version, spans));
+        self.semantic_generation += 1;
+        cx.notify();
+    }
+
+    /// Moves the diagnostics' ranges through the edits since their version.
+    fn catch_up_diagnostics(&mut self) {
+        let version = self.buffer.version();
+        let Some((at, problems)) = &mut self.diagnostics else {
+            return;
+        };
+        if *at == version {
+            return;
+        }
+        match self.buffer.edits_since(*at) {
+            Some(edits) => {
+                for p in problems.iter_mut() {
+                    for e in &edits {
+                        p.range = e.adjust(p.range.start)..e.adjust(p.range.end);
+                    }
+                    if p.range.end < p.range.start {
+                        p.range.end = p.range.start;
+                    }
+                }
+            }
+            None => {
+                // Too far behind the log: the ranges would be guesses.
+                problems.clear();
+            }
+        }
+        *at = version;
+    }
+
+    /// Moves the semantic spans through the edits since their version; a
+    /// span an edit touched is dropped (its token may have changed).
+    fn catch_up_semantic(&mut self) {
+        let version = self.buffer.version();
+        let Some((at, spans)) = &mut self.semantic else {
+            return;
+        };
+        if *at == version {
+            return;
+        }
+        match self.buffer.edits_since(*at) {
+            Some(edits) => {
+                spans.retain_mut(|s| {
+                    for e in &edits {
+                        let inside = e.offset > s.range.start && e.offset < s.range.end;
+                        let removed = e.offset..e.offset + e.old_len;
+                        let overlaps = removed.start < s.range.end && removed.end > s.range.start;
+                        if inside || overlaps {
+                            return false;
+                        }
+                        if e.old_len == 0 && e.offset == s.range.start {
+                            // Typed just before the token: it moves whole.
+                            s.range = s.range.start + e.new_len..s.range.end + e.new_len;
+                        } else {
+                            s.range = e.adjust(s.range.start)..e.adjust(s.range.end);
+                        }
+                    }
+                    s.range.start < s.range.end
+                });
+            }
+            None => spans.clear(),
+        }
+        *at = version;
     }
 
     /// The folds as last computed (`folds` refreshes them each frame).
@@ -362,5 +564,84 @@ impl Document {
             self.folds_version = Some(version);
         }
         &self.folds
+    }
+}
+
+/// Lays `semantic` byte spans over `syntax` ones: the parts of a syntax
+/// span under a semantic span give way to it. Both inputs are sorted and
+/// non-overlapping; the output is too.
+fn merge_spans(syntax: Vec<Span>, semantic: Vec<(Range<usize>, &'static str)>) -> Vec<Span> {
+    if semantic.is_empty() {
+        return syntax;
+    }
+    let mut out: Vec<Span> = Vec::with_capacity(syntax.len() + semantic.len());
+    let mut sem_ix = 0;
+    for span in syntax {
+        let mut start = span.range.start;
+        let end = span.range.end;
+        // Skip semantic spans wholly before this one.
+        while sem_ix < semantic.len() && semantic[sem_ix].0.end <= start {
+            sem_ix += 1;
+        }
+        let mut k = sem_ix;
+        while k < semantic.len() && semantic[k].0.start < end {
+            let (sr, _) = &semantic[k];
+            if sr.start > start {
+                out.push(Span {
+                    range: start..sr.start,
+                    attribute: span.attribute,
+                });
+            }
+            start = start.max(sr.end);
+            k += 1;
+        }
+        if start < end {
+            out.push(Span {
+                range: start..end,
+                attribute: span.attribute,
+            });
+        }
+    }
+    out.extend(
+        semantic
+            .into_iter()
+            .map(|(range, attribute)| Span { range, attribute }),
+    );
+    out.sort_by_key(|s| (s.range.start, s.range.end));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(range: Range<usize>, attribute: &'static str) -> Span {
+        Span { range, attribute }
+    }
+
+    #[test]
+    fn semantic_spans_cut_the_syntax_ones() {
+        let syntax = vec![span(0..10, "keyword"), span(12..20, "identifier")];
+        let semantic = vec![
+            (2..4, "identifier.function.call"),
+            (14..22, "identifier.type"),
+        ];
+        let merged = merge_spans(syntax, semantic);
+        assert_eq!(
+            merged,
+            vec![
+                span(0..2, "keyword"),
+                span(2..4, "identifier.function.call"),
+                span(4..10, "keyword"),
+                span(12..14, "identifier"),
+                span(14..22, "identifier.type"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_semantic_span_covering_a_syntax_span_replaces_it() {
+        let merged = merge_spans(vec![span(3..6, "a")], vec![(0..10, "b")]);
+        assert_eq!(merged, vec![span(0..10, "b")]);
     }
 }

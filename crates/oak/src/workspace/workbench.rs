@@ -1184,13 +1184,24 @@ impl Workspace {
         entries
     }
 
-    /// The editor's menu (batch 7): Go To ›, Cut, Copy, Paste. Fleet's Quick
-    /// Fixes, Refactor, Reformat Code and Git rows are M4 and M7.
+    /// The editor's menu (batch 7): Quick Fixes..., then Refactor ›, Go To ›,
+    /// Reformat Code, then Git ›, then Cut, Copy, Paste (Fleet's AI Actions
+    /// and Plugins rows are out of scope). The Refactor and Go To rows'
+    /// contents are estimates (M7).
     fn editor_menu(cx: &App) -> Vec<MenuEntry> {
-        let mut entries = vec![MenuEntry::submenu(
+        let mut entries = Self::entries(&["quick-fixes", "-"], cx);
+        entries.push(MenuEntry::submenu(
+            "Refactor",
+            Self::entries(&["rename", "-", "optimize-imports"], cx),
+        ));
+        entries.push(MenuEntry::submenu(
             "Go To",
             Self::entries(
                 &[
+                    "go-to-declaration",
+                    "go-to-type-declaration",
+                    "find-usages",
+                    "-",
                     "goto/line",
                     "goto/file",
                     "goto/symbol",
@@ -1200,7 +1211,9 @@ impl Workspace {
                 ],
                 cx,
             ),
-        )];
+        ));
+        entries.extend(Self::entries(&["reformat-code", "-"], cx));
+        entries.push(MenuEntry::submenu("Git", Self::git_menu(cx)));
         entries.extend(Self::entries(&["-", "cut", "copy", "paste"], cx));
         entries
     }
@@ -1304,6 +1317,21 @@ impl Workspace {
                 "Code",
                 Self::entries(
                     &[
+                        "completion",
+                        "show-parameter-info",
+                        "show-documentation",
+                        "quick-fixes",
+                        "-",
+                        "go-to-declaration",
+                        "go-to-type-declaration",
+                        "find-usages",
+                        "back",
+                        "forward",
+                        "-",
+                        "rename",
+                        "reformat-code",
+                        "optimize-imports",
+                        "-",
                         "comment-line",
                         "comment-block",
                         "-",
@@ -2199,6 +2227,7 @@ impl Workspace {
         if let Some(popup) = &self.run_popup {
             out.push(popup.clone().into_any_element());
         }
+        out.extend(self.smart_overlay());
         if let Some(menu) = &self.menu {
             out.push(menu.clone().into_any_element());
         }

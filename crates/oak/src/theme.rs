@@ -243,6 +243,35 @@ pub mod metrics {
     pub const PROBLEMS_HINT_TOP: f32 = 4.;
     pub const PROBLEMS_HINT_GAP: f32 = 6.67;
     pub const PROBLEMS_HINT_CHORD_GAP: f32 = 3.33;
+    /// M7, Smart Mode (batch 12 has not run; every value here is an
+    /// estimate until it does). The completion popup under the caret: 420
+    /// wide, up to 10 rows of 24 with a 16 px kind icon 8 in and 6 before
+    /// the label, the detail right-aligned 8 from the edge, 4 of padding, 2
+    /// under the caret's row; the documentation pane beside it 360 wide.
+    /// The parameter info and documentation popups above the caret: 8 x 6
+    /// of padding, 18 px lines, at most 616 wide (the tooltip's). The
+    /// lightning button's loading ring is 1.33 (the island border's width).
+    pub const COMPLETION_WIDTH: f32 = 420.;
+    pub const COMPLETION_ROW: f32 = 24.;
+    pub const COMPLETION_MAX_ROWS: f32 = 10.;
+    pub const COMPLETION_PAD: f32 = 4.;
+    pub const COMPLETION_ICON_X: f32 = 8.;
+    pub const COMPLETION_ICON_GAP: f32 = 6.;
+    pub const COMPLETION_PAD_RIGHT: f32 = 8.;
+    pub const COMPLETION_GAP_Y: f32 = 2.;
+    pub const COMPLETION_DOCS_WIDTH: f32 = 360.;
+    pub const COMPLETION_DOCS_GAP: f32 = 4.;
+    pub const SMART_POPUP_PAD_X: f32 = 8.;
+    pub const SMART_POPUP_PAD_Y: f32 = 6.;
+    pub const SMART_POPUP_LINE: f32 = 18.;
+    pub const SMART_POPUP_MAX_WIDTH: f32 = 616.;
+    pub const SMART_POPUP_MAX_HEIGHT: f32 = 320.;
+    pub const SMART_MODE_RING: f32 = 1.33;
+    pub const SMART_MODE_RADIUS: f32 = 4.;
+    /// The navigation bar under the editor (`editor.showNavBar`): a 24 px
+    /// row of crumbs 8 in, `/` between them (estimate).
+    pub const NAV_BAR_HEIGHT: f32 = 24.;
+    pub const NAV_BAR_PAD_X: f32 = 8.;
     /// The error underline: 2 px (`problem.error`'s thickness) ending 0.67
     /// above the row's bottom; one cell wide for a zero-width problem.
     pub const PROBLEM_UNDERLINE: f32 = 2.;
@@ -809,6 +838,25 @@ scaled_metrics!(
     problems_hint_top = PROBLEMS_HINT_TOP,
     problems_hint_gap = PROBLEMS_HINT_GAP,
     problems_hint_chord_gap = PROBLEMS_HINT_CHORD_GAP,
+    completion_width = COMPLETION_WIDTH,
+    completion_row = COMPLETION_ROW,
+    completion_max_rows = COMPLETION_MAX_ROWS,
+    completion_pad = COMPLETION_PAD,
+    completion_icon_x = COMPLETION_ICON_X,
+    completion_icon_gap = COMPLETION_ICON_GAP,
+    completion_pad_right = COMPLETION_PAD_RIGHT,
+    completion_gap_y = COMPLETION_GAP_Y,
+    completion_docs_width = COMPLETION_DOCS_WIDTH,
+    completion_docs_gap = COMPLETION_DOCS_GAP,
+    smart_popup_pad_x = SMART_POPUP_PAD_X,
+    smart_popup_pad_y = SMART_POPUP_PAD_Y,
+    smart_popup_line = SMART_POPUP_LINE,
+    smart_popup_max_width = SMART_POPUP_MAX_WIDTH,
+    smart_popup_max_height = SMART_POPUP_MAX_HEIGHT,
+    smart_mode_ring = SMART_MODE_RING,
+    smart_mode_radius = SMART_MODE_RADIUS,
+    nav_bar_height = NAV_BAR_HEIGHT,
+    nav_bar_pad_x = NAV_BAR_PAD_X,
     problem_underline = PROBLEM_UNDERLINE,
     problem_underline_bottom = PROBLEM_UNDERLINE_BOTTOM,
     run_popup_title_height = RUN_POPUP_TITLE_HEIGHT,
@@ -1288,6 +1336,36 @@ pub struct Theme {
     /// `problem.error`: the underline's colour and its scrollbar mark.
     pub problem_error_underline: Hsla,
     pub problem_error_mark: Hsla,
+    /// M7: the other severities' underlines and marks (`problem.warning`,
+    /// `problem.warning.weak`, `problem.info`), `problem.unused`'s text and
+    /// `problem.deprecated`'s strike-through colour.
+    pub problem_warning_underline: Hsla,
+    pub problem_warning_mark: Hsla,
+    pub problem_weak_underline: Hsla,
+    pub problem_weak_mark: Hsla,
+    pub problem_info_underline: Hsla,
+    pub problem_unused_text: Hsla,
+    pub problem_deprecated_line: Hsla,
+    /// `problemsWidget.tag.warning.background.hovered`, the warning and
+    /// weak-warning expanded cards, the weak-warning tag.
+    pub problems_warning_tag_bg_hovered: Hsla,
+    pub problems_card_warning_bg: Hsla,
+    pub problems_card_warning_border: Hsla,
+    pub problems_card_weak_bg: Hsla,
+    pub problems_card_weak_border: Hsla,
+    pub problems_weak_tag_bg: Hsla,
+    pub problems_weak_tag_text: Hsla,
+    /// M7, Smart Mode: the lightning button's states (`smartMode.*`), the
+    /// completion popup's matched chars (`completion.match.*`), the active
+    /// parameter (`parameterInfo.match.text`), and the rename boxes
+    /// (`editor.rename.current`'s border, `editor.rename.entries`' wash).
+    pub smart_mode_error: Hsla,
+    pub smart_mode_loading: Hsla,
+    pub completion_match_text: Hsla,
+    pub completion_match_bg: Hsla,
+    pub parameter_info_match_text: Hsla,
+    pub rename_current_border: Hsla,
+    pub rename_entries_bg: Hsla,
     /// The breakpoint hint on the hovered gutter row: Fleet's red at 28 %
     /// (read off the `fold` scene's hover shot; no theme key names it, so
     /// `icon.background.red` with the opacity is an estimate).
@@ -1655,6 +1733,69 @@ impl Theme {
             problem_error_mark: attr("problem.error")
                 .and_then(|a| a.scrollbar_mark)
                 .unwrap_or_else(|| to_hsla(Color::rgb(0xE1, 0x46, 0x5E))),
+            problem_warning_underline: attr("problem.warning")
+                .and_then(|a| a.underline)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xFA, 0xCB, 0x66))),
+            problem_warning_mark: attr("problem.warning")
+                .and_then(|a| a.scrollbar_mark)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xFA, 0xCB, 0x66))),
+            problem_weak_underline: attr("problem.warning.weak")
+                .and_then(|a| a.underline)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0x7A, 0x7F, 0x86))),
+            problem_weak_mark: attr("problem.warning.weak")
+                .and_then(|a| a.scrollbar_mark)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0x7A, 0x7F, 0x86))),
+            problem_info_underline: attr("problem.info")
+                .and_then(|a| a.underline)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xA3, 0x66, 0xC4))),
+            problem_unused_text: attr("problem.unused")
+                .and_then(|a| a.color)
+                .unwrap_or_else(|| to_hsla(text_primary.with_alpha(0x9B))),
+            problem_deprecated_line: attr("problem.deprecated")
+                .and_then(|a| a.underline)
+                .unwrap_or_else(|| to_hsla(text_primary)),
+            problems_warning_tag_bg_hovered: c(
+                "problemsWidget.tag.warning.background.hovered",
+                Color::rgb(0xA6, 0x7A, 0x1A),
+            ),
+            problems_card_warning_bg: c(
+                "problemsWidget.card.expanded.warning.background",
+                Color::rgb(0x3E, 0x33, 0x14),
+            ),
+            problems_card_warning_border: c(
+                "problemsWidget.card.expanded.warning.border",
+                Color::rgb(0xA6, 0x7A, 0x1A),
+            ),
+            problems_card_weak_bg: c(
+                "problemsWidget.card.expanded.weakWarning.background",
+                Color::rgb(0x2B, 0x2D, 0x30),
+            ),
+            problems_card_weak_border: c(
+                "problemsWidget.card.expanded.weakWarning.border",
+                Color::rgb(0x4E, 0x4E, 0x50),
+            ),
+            problems_weak_tag_bg: c(
+                "problemsWidget.tag.weakWarning.background.default",
+                Color::rgb(0x4E, 0x4E, 0x50),
+            ),
+            problems_weak_tag_text: c(
+                "problemsWidget.tag.weakWarning.text.default",
+                Color::rgb(0xE0, 0xE1, 0xE4),
+            ),
+            smart_mode_error: c("smartMode.background.error", Color::rgb(0xE1, 0x46, 0x5E)),
+            smart_mode_loading: c(
+                "smartMode.border.loading",
+                Color::rgb(0x2A, 0x7D, 0xEB).with_alpha(0x40),
+            ),
+            completion_match_text: c("completion.match.text", Color::rgb(0x8F, 0xBD, 0xFF)),
+            completion_match_bg: c("completion.match.background", Color::TRANSPARENT),
+            parameter_info_match_text: c("parameterInfo.match.text", Color::rgb(0x8F, 0xBD, 0xFF)),
+            rename_current_border: attr("editor.rename.current")
+                .and_then(|a| a.underline)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0x2A, 0x7D, 0xEB))),
+            rename_entries_bg: attr("editor.rename.entries")
+                .and_then(|a| a.background)
+                .unwrap_or_else(|| to_hsla(Color::rgb(0x14, 0x83, 0x5E))),
             git_added_text: c("editor.gitDiff.text.added", Color::rgb(0x69, 0xB0, 0x90)),
             git_modified_text: c("editor.gitDiff.text.modified", Color::rgb(0x71, 0xA3, 0xEF)),
             git_deleted_text: c("editor.gitDiff.text.deleted", Color::rgb(0xF8, 0x7C, 0x88)),

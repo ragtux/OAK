@@ -888,6 +888,74 @@
       "mac": "cmd-shift-e",
       "key": "ctrl-shift-e",
       "action": "editor/go-to-previous-problem"
+    },
+    {
+      "mac": "alt-cmd-return",
+      "key": "shift-alt-return",
+      "action": "apply-primary-quick-fix"
+    },
+    {
+      "mac": "cmd-leftbracket",
+      "key": "alt-left",
+      "action": "back"
+    },
+    {
+      "key": "mouse4",
+      "action": "back"
+    },
+    {
+      "key": "ctrl-space",
+      "action": "completion"
+    },
+    {
+      "mac": "cmd-u",
+      "key": "ctrl-u",
+      "action": "find-usages"
+    },
+    {
+      "key": "mouse5",
+      "action": "forward"
+    },
+    {
+      "mac": "cmd-rightbracket",
+      "key": "alt-right",
+      "action": "forward"
+    },
+    {
+      "mac": "cmd-shift-b",
+      "key": "ctrl-shift-b",
+      "action": "go-to-type-declaration"
+    },
+    {
+      "mac": "cmd-alt-o",
+      "key": "alt-shift-o",
+      "action": "optimize-imports"
+    },
+    {
+      "key": "alt-return",
+      "action": "quick-fixes"
+    },
+    {
+      "key": "alt-numpadenter",
+      "action": "quick-fixes"
+    },
+    {
+      "key": "alt-shift-f",
+      "action": "reformat-code"
+    },
+    {
+      "mac": "cmd-shift-i",
+      "key": "ctrl-shift-i",
+      "action": "show-documentation"
+    },
+    {
+      "mac": "cmd-i",
+      "key": "ctrl-i",
+      "action": "show-parameter-info"
+    },
+    {
+      "key": "ctrl-shift-space",
+      "action": "smart-completion"
     }
   ]
 }

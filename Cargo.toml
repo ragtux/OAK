@@ -11,6 +11,7 @@ members = [
     "crates/oak-git",
     "crates/oak-terminal",
     "crates/oak-run",
+    "crates/oak-lsp",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ oak-search = { path = "crates/oak-search" }
 oak-git = { path = "crates/oak-git" }
 oak-terminal = { path = "crates/oak-terminal" }
 oak-run = { path = "crates/oak-run" }
+oak-lsp = { path = "crates/oak-lsp" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -53,6 +55,9 @@ trash = "5"
 alacritty_terminal = "0.25"
 # The channel that wakes a terminal view from Alacritty's thread (gpui depends on it already).
 futures = "0.3"
+# The Language Server Protocol's types (MIT), behind Smart Mode (M7); 0.95 keeps `url::Url`
+# for file URIs, which 0.97 drops.
+lsp-types = "0.95"
 
 # Cargo.lock pins libc to 0.2.189: gpui -> http_client -> async-tar -> xattr 0.2.3 reads `libc::ENOATTR`,
 # which libc 0.2.190 removed on Linux. Drop the pin once async-tar moves to xattr 1.x.

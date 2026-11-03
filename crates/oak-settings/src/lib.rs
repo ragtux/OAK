@@ -190,6 +190,12 @@ impl Settings {
         self.values.get(key)
     }
 
+    /// Every key with its merged value (a language server's `<name>.*`
+    /// keys are handed to it as its configuration, M7).
+    pub fn values(&self) -> &Map<String, Value> {
+        &self.values
+    }
+
     pub fn str(&self, key: &str) -> Option<&str> {
         self.get(key).and_then(Value::as_str)
     }
@@ -220,6 +226,44 @@ impl Settings {
         }
         let text = serde_json::to_string_pretty(&Value::Object(self.own.clone()))?;
         std::fs::write(path, text + "\n").with_context(|| path.display().to_string())
+    }
+
+    // ---- the keys M7 reads (Smart Mode) ----------------------------------------
+
+    /// `completion.autoPopupDelay`: "the delay after which the completion
+    /// popup appears if not invoked explicitly", in ms. The default is not
+    /// in the documentation (estimate: 100).
+    pub fn completion_auto_popup_delay_ms(&self) -> u64 {
+        self.usize("completion.autoPopupDelay")
+            .map(|n| n as u64)
+            .unwrap_or(100)
+    }
+
+    /// `editor.semanticHighlighting`: "Highlight code based on its semantics".
+    pub fn editor_semantic_highlighting(&self) -> bool {
+        self.bool("editor.semanticHighlighting").unwrap_or(true)
+    }
+
+    /// `editor.formatOnSave` ("Reformat code on save", off by default).
+    pub fn editor_format_on_save(&self) -> bool {
+        self.bool("editor.formatOnSave").unwrap_or(false)
+    }
+
+    /// `rename.selectOnRename`: "whether an entire symbol should be selected
+    /// when you invoke the Rename refactoring".
+    pub fn rename_select_on_rename(&self) -> bool {
+        self.bool("rename.selectOnRename").unwrap_or(true)
+    }
+
+    /// `editor.showNavBar`: "Show the navigation bar in the bottom part of
+    /// the editor" (default estimate: off, as the probe shots show no bar).
+    pub fn editor_show_nav_bar(&self) -> bool {
+        self.bool("editor.showNavBar").unwrap_or(false)
+    }
+
+    /// `editor.showCodeVision` ("Show code interlines", on by default).
+    pub fn editor_show_code_vision(&self) -> bool {
+        self.bool("editor.showCodeVision").unwrap_or(true)
     }
 
     // ---- the keys M1 reads ---------------------------------------------------

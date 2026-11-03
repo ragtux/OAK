@@ -232,6 +232,22 @@ pub const SECTIONS: &[Section] = &[
                     ),
                 ],
             },
+            // M7: the Smart Mode rows. Fleet's page for them was not shot
+            // (batch 12); the labels are estimates, the keys and defaults
+            // from `documentation.yaml`.
+            Group {
+                title: Some("Smart Mode"),
+                items: &[
+                    described(
+                        "Semantic highlighting",
+                        "editor.semanticHighlighting",
+                        "true",
+                        "Highlight code based on its semantics, as the language server resolves it",
+                    ),
+                    item("Completion auto popup delay", "completion.autoPopupDelay", Kind::Number, "100"),
+                    check("Rename symbol usages automatically when typing", "rename.autoRenameOnTyping", "true"),
+                ],
+            },
             Group {
                 title: Some("Tabs"),
                 items: &[

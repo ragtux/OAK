@@ -13,6 +13,7 @@ use crate::find::{FindBar, FindBarEvent};
 use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
 mod runs;
+mod smart;
 mod terminals;
 mod workbench;
 use crate::dialog::{ConfirmDialog, DialogButton};
@@ -487,6 +488,9 @@ pub struct Workspace {
     next_run: usize,
     run_popup: Option<Entity<RunPopup>>,
     recent_runs: Vec<String>,
+    /// Smart Mode (M7): the language servers, the navigation history, the
+    /// usages popup.
+    smart: smart::SmartMode,
     /// This workspace's window, for deferred focus changes.
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
@@ -592,6 +596,7 @@ impl Workspace {
             next_run: 0,
             run_popup: None,
             recent_runs: layout.recent_runs.clone(),
+            smart: smart::SmartMode::new(layout.smart_mode),
             window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
@@ -639,6 +644,7 @@ impl Workspace {
             recent: self.recent.clone(),
             goto_preview_hidden: self.goto_preview_hidden,
             recent_runs: self.recent_runs.clone(),
+            smart_mode: self.smart.enabled,
         }
     }
 
@@ -697,10 +703,11 @@ impl Workspace {
             Document::new(Some(path.to_path_buf()), &text, settings)
         });
         self.documents.push(doc.clone());
+        self.smart_document_opened(&doc, cx);
         Some(doc)
     }
 
-    /// Drops the documents no tab shows any more.
+    /// Drops the documents no tab shows any more (their server hears `didClose`).
     fn prune_documents(&mut self, cx: &App) {
         let shown: Vec<Entity<Document>> = self
             .panes
@@ -708,7 +715,16 @@ impl Workspace {
             .flat_map(|p| p.tabs.iter().filter_map(|t| t.editor()))
             .map(|e| e.read(cx).document.clone())
             .collect();
+        let gone: Vec<PathBuf> = self
+            .documents
+            .iter()
+            .filter(|d| !shown.contains(d))
+            .filter_map(|d| d.read(cx).path.clone())
+            .collect();
         self.documents.retain(|d| shown.contains(d));
+        for path in gone {
+            self.smart_document_closed(&path);
+        }
     }
 
     fn new_editor(
@@ -740,10 +756,19 @@ impl Workspace {
                     this.open_changed_files(path, cx);
                 }
                 EditorEvent::RunConfiguration(ix) => this.run_configuration_at(*ix, cx),
+                EditorEvent::Completion { .. }
+                | EditorEvent::SignatureHelp
+                | EditorEvent::Hover { .. }
+                | EditorEvent::GoToDefinition { .. }
+                | EditorEvent::ProblemFixes(_)
+                | EditorEvent::ApplyProblemFix { .. }
+                | EditorEvent::ResolveCompletion(_)
+                | EditorEvent::Accepted { .. } => this.on_smart_editor_event(&editor, event, cx),
             }
             cx.notify()
         })
         .detach();
+        self.smart_editor_created(&editor, cx);
         editor
     }
 
@@ -1032,9 +1057,7 @@ impl Workspace {
 
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor().cloned() {
-            if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
-                self.notify_error("Save failed", format!("{e}"), cx);
-            }
+            self.save_editor(&editor, cx);
         }
     }
 
@@ -1045,9 +1068,7 @@ impl Workspace {
             .flat_map(|p| p.tabs.iter().filter_map(|t| t.editor().cloned()))
             .collect();
         for editor in editors {
-            if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
-                self.notify_error("Save failed", format!("{e}"), cx);
-            }
+            self.save_editor(&editor, cx);
         }
     }
 
@@ -1296,6 +1317,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match kind {
+            // The symbol rename's prompt answers through its own subscription
+            // (`workspace/smart.rs`).
+            PromptKind::RenameSymbol => {}
             PromptKind::GotoLine => {
                 let mut parts = text.split(':');
                 let row = parts.next().and_then(|s| s.trim().parse::<usize>().ok());
@@ -2877,6 +2901,7 @@ impl Render for Workspace {
             self.last_title = title;
         }
         let entity = cx.entity();
+        let (smart, smart_detail) = self.smart_indicator();
         let toolbar = toolbar::render(
             toolbar::ToolbarState {
                 workspace_name: root_name.into(),
@@ -2888,6 +2913,8 @@ impl Render for Workspace {
                 maximized: window.is_maximized(),
                 toggle_hints: workbench::toggle_hints(cx),
                 unread_notifications: self.notifications.read(cx).unread(),
+                smart,
+                smart_detail,
             },
             &theme,
             &m,
@@ -2899,7 +2926,13 @@ impl Render for Workspace {
                     })
                 }
             },
-            move |at, window, cx| entity.update(cx, |this, cx| this.show_branches(at, window, cx)),
+            {
+                let entity = entity.clone();
+                move |at, window, cx| {
+                    entity.update(cx, |this, cx| this.show_branches(at, window, cx))
+                }
+            },
+            move |at, _, cx| entity.update(cx, |this, cx| this.show_smart_menu(at, cx)),
         );
         let left = self.panels[0].open;
         let bottom = self.panels[1].open;
@@ -3042,6 +3075,20 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::close_all_tabs))
             .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::about))
+            .on_action(cx.listener(Self::completion))
+            .on_action(cx.listener(Self::smart_completion))
+            .on_action(cx.listener(Self::show_parameter_info))
+            .on_action(cx.listener(Self::show_documentation))
+            .on_action(cx.listener(Self::go_to_declaration))
+            .on_action(cx.listener(Self::go_to_type_declaration))
+            .on_action(cx.listener(Self::find_usages))
+            .on_action(cx.listener(Self::rename_symbol))
+            .on_action(cx.listener(Self::quick_fixes))
+            .on_action(cx.listener(Self::apply_primary_quick_fix))
+            .on_action(cx.listener(Self::reformat_code))
+            .on_action(cx.listener(Self::optimize_imports))
+            .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(Self::forward))
             .on_drag_move(
                 cx.listener(|this, e: &DragMoveEvent<SplitterDrag>, window, cx| {
                     let side = e.drag(cx).side;

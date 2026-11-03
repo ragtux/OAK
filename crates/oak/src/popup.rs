@@ -36,6 +36,9 @@ pub enum PromptKind {
     LineEndings,
     /// One of the recent clipboard texts, pasted into the active editor.
     PasteHistory,
+    /// M7: a new name for the symbol at the caret (`rename`), through the
+    /// language server.
+    RenameSymbol,
 }
 
 impl PromptKind {
@@ -47,6 +50,7 @@ impl PromptKind {
             PromptKind::NewFolder { .. } => "New Folder",
             PromptKind::LineEndings => "Line Endings",
             PromptKind::PasteHistory => "Paste from History",
+            PromptKind::RenameSymbol => "Rename",
         }
     }
 
@@ -54,7 +58,7 @@ impl PromptKind {
         match self {
             PromptKind::GotoLine => "Line:Column",
             PromptKind::NewFile { .. } => "File name",
-            PromptKind::Rename { .. } => "New name",
+            PromptKind::Rename { .. } | PromptKind::RenameSymbol => "New name",
             PromptKind::NewFolder { .. } => "Folder name",
             _ => "",
         }
@@ -67,6 +71,7 @@ impl PromptKind {
                 | PromptKind::NewFile { .. }
                 | PromptKind::Rename { .. }
                 | PromptKind::NewFolder { .. }
+                | PromptKind::RenameSymbol
         )
     }
 }
@@ -125,6 +130,13 @@ impl Prompt {
             selected: 0,
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
+        }
+    }
+
+    /// Selects the field's whole text (`rename.selectOnRename`).
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        if let Some(input) = &self.input {
+            input.update(cx, |i, cx| i.select_all(cx));
         }
     }
 

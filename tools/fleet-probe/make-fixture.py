@@ -186,6 +186,17 @@ BROKEN_RS = """fn main( {
 }
 """
 
+# M7: a Cargo manifest so rust-analyzer (and Fleet's Smart Mode) load the
+# workspace; `src/main.rs` is its binary. The orphan files under `src/`
+# (added.rs, renamed.rs, lib/) stay outside the module tree on purpose.
+CARGO_TOML = """[package]
+name = "probe-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"""
+
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "Probe",
     "GIT_AUTHOR_EMAIL": "probe@example.invalid",
@@ -234,7 +245,8 @@ def main():
     write(root, ".hidden", "hidden\n")
     write(root, ".editorconfig", EDITORCONFIG)
     write(root, ".fleet/run.json", RUN_JSON)
-    write(root, ".gitignore", "big/\n")
+    write(root, "Cargo.toml", CARGO_TOML)
+    write(root, ".gitignore", "big/\ntarget/\n")
     write(root, "long/thousand.txt",
           "".join(f"line {i:4d}: the quick brown fox jumps over the lazy dog\n" for i in range(1, 1001)))
     wide = "".join(f"col{i:03d} " for i in range(1, 44))[:300]

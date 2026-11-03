@@ -790,6 +790,38 @@ while the run tab has the focus; the Recent section lists a run by name in
 italics; the `cargo` row gets a gear icon and the `command` rows a
 console-like one (Oak draws `oak/file-rust` and `oak/console`, estimates).
 
+## Thirteenth pass: M7, Smart Mode, built without Fleet (2026-11-03)
+
+No Fleet shot yet: batch 12 needs Smart Mode on in Fleet (the Trust dialog
+accepted and the backend downloaded for the fixture, which now carries a
+`Cargo.toml`), which the earlier passes avoided on purpose. The `smart`
+scene (`tools/fleet-probe/scenes/smart.json`) ran on Oak alone
+(`smart-oak-*.png` in the probe's out folder) against rust-analyzer 1.98.1:
+the lightning, the semantic colours, the completion popup and its
+documentation pane, the parameter info, the documentation popup, the
+declaration jump and `back`, the usages popup, the server's diagnostics in
+the badge and the widget. Every value below is an estimate until the Fleet
+side is shot; the colours are Fleet's keys.
+
+| element | Oak |
+|---|---|
+| lightning | the toolbar's button: plain when off; the icon in `text.bright` on `smartMode.background.enabled` when on; a 1.33 ring of `smartMode.border.loading` while a server starts or reports progress (its title and message in the tooltip's second line); `smartMode.background.error` when a server failed; a click opens a menu (the state, Enable/Disable Smart Mode, Restart Language Servers) |
+| semantic colours | the server's tokens over tree-sitter's spans through `oak_lsp::semantic::fleet_attribute` (a mutable binding `identifier.variable.mutable`, a field `identifier.field`, a format argument `string.formatItem`, a declared function `identifier.function.declaration`); asked 250 ms after the last edit, the old spans moved through the edits meanwhile |
+| completion popup | at the word's first char, 2 under its row (above when the row is near the bottom): 420 wide, 24 px rows (10 at most), 4 of padding, a 16 px kind icon 8 in with the label 6 after it, the matched chars in `completion.match.text`, the label detail (`(x: u32)`) in `listItem.text.secondary` after the label, the description (the type) right-aligned 8 from the edge; the selected row in `listItem.background.focused`; filtered by the Goto matcher, Enter or Tab accept, Escape closes, Up/Down/PageUp/PageDown move; opens by itself `completion.autoPopupDelay` (100 ms, estimate) after a word or trigger char |
+| documentation pane | 360 wide beside the popup (right, else left, else the popup moves left), the item's signature in the editor face then its Markdown as lines; `show-documentation` (Ctrl+Shift+I) toggles it while the popup is open |
+| parameter info | above the caret's row: the signatures one per 18 px line in the editor face, the active parameter semibold in `parameterInfo.match.text`, 8 x 6 of padding; opened by `(` and `,` or Ctrl+I, re-asked as the caret moves, gone when the server has none |
+| documentation popup | above the symbol's row: the hover's Markdown as lines (code in the editor face, rules as `popup.separator`), 616 wide at most, 320 tall at most; Ctrl+Shift+I at the caret, or the pointer resting on a symbol for `editor.hoverTooltipDelayMs` |
+| problems | the server's diagnostics replace the parser's errors once it published for the file: `problem.warning` (`#FACB66`, 2 px), `problem.warning.weak` (`Neutral_80`), `problem.info` (1 px) underlines and marks beside `problem.error`'s; the badge and the widget's tag follow the worst severity (`problemsWidget.tag.warning.*`, `.weakWarning.*`), the expanded card its colours (`problemsWidget.card.expanded.warning|weakWarning.*`); the quick fixes of the expanded problem as 18 px rows in `link.text.default` under its message where "No fixes available" stood |
+| usages, several declarations | the Goto frame (680 wide at 64.67) with a title row ("Usages of Record", the count at the right) and 26 px rows: the file icon, the line's text, `src/main.rs:13` right-aligned in `listItem.text.secondary`; the active file's rows first, then by file and line |
+| rename | the prompt under the toolbar titled "Rename" with the name preselected (`rename.selectOnRename`); the server's edit lands in the open documents (one undo step each) and the files on disk |
+| quick fixes | Alt+Enter: a context menu at the caret's top-left with the server's actions (disabled ones greyed); Shift+Alt+Enter applies the preferred one, else the first quick fix |
+
+What the Oak run also showed: rust-analyzer loads the fixture in about
+ten seconds on this machine (the lightning's ring and tooltip meanwhile);
+`cargo check` on save (`checkOnSave`) reports as progress too; four undo
+steps restore a typed `index.` plus `len(` and the new line (typing groups
+by transaction).
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

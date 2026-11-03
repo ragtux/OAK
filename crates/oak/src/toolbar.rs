@@ -62,6 +62,21 @@ pub struct ToolbarState {
     pub toggle_hints: [Option<SharedString>; 3],
     /// Unread notifications: a dot on the bell (estimate: batch 7).
     pub unread_notifications: usize,
+    /// M7: the lightning button's state and its tooltip's second line.
+    pub smart: SmartIndicator,
+    pub smart_detail: SharedString,
+}
+
+/// What the lightning button shows (`smartMode.*`): off is the plain
+/// icon, on the icon on `smartMode.background.enabled`, starting adds the
+/// `smartMode.border.loading` ring, an error paints
+/// `smartMode.background.error` (estimates: batch 12 has not run).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmartIndicator {
+    Off,
+    Starting,
+    On,
+    Error,
 }
 
 /// Windows' own close-button hover colour (not a theme key: the system's).
@@ -120,6 +135,7 @@ pub fn render(
     m: &Metrics,
     on_toggle: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     on_branch: impl Fn(Point<Pixels>, &mut Window, &mut App) + Clone + 'static,
+    on_smart: impl Fn(Point<Pixels>, &mut Window, &mut App) + Clone + 'static,
 ) -> impl IntoElement {
     let toggle = |ix: usize, path: &str, label: &'static str| {
         let f = on_toggle.clone();
@@ -212,10 +228,60 @@ pub fn render(
             icon_button("collab", "oak/user-add", theme, m).tooltip(Tooltip::text("Collaborate")),
         )
         .child(div().flex_1().min_w_0())
-        .child(
-            icon_button("smart-mode", "expui/actions/lightning", theme, m)
-                .tooltip(Tooltip::text("Smart Mode")),
-        )
+        .child({
+            // The lightning (M7): its tooltip names the state, a click opens
+            // the Smart Mode menu.
+            let on_smart = on_smart.clone();
+            let (bg, ring, fg, label) = match state.smart {
+                SmartIndicator::Off => (None, None, theme.icon_primary, "Smart Mode is off"),
+                SmartIndicator::Starting => (
+                    None,
+                    Some(theme.smart_mode_loading),
+                    theme.icon_primary,
+                    "Smart Mode is starting",
+                ),
+                SmartIndicator::On => (
+                    Some(theme.smart_mode_enabled),
+                    None,
+                    theme.text_bright,
+                    "Smart Mode is on",
+                ),
+                SmartIndicator::Error => (
+                    Some(theme.smart_mode_error),
+                    None,
+                    theme.text_bright,
+                    "Smart Mode failed",
+                ),
+            };
+            let detail = state.smart_detail.clone();
+            div()
+                .id("smart-mode")
+                .size(px(m.toolbar_button))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(m.smart_mode_radius))
+                .cursor_pointer()
+                .occlude()
+                .when_some(bg, |d, bg| d.bg(bg))
+                .when_some(ring, |d, ring| {
+                    d.border(px(m.smart_mode_ring)).border_color(ring)
+                })
+                .when(bg.is_none(), |d| {
+                    d.hover(|s| s.bg(theme.ghost_hovered))
+                        .active(|s| s.bg(theme.ghost_pressed))
+                })
+                .map(|d| {
+                    if detail.is_empty() {
+                        d.tooltip(Tooltip::text(label))
+                    } else {
+                        d.tooltip(Tooltip::with_detail(label, detail))
+                    }
+                })
+                .on_click(move |event, window, cx| on_smart(event.position(), window, cx))
+                .child(icon("expui/actions/lightning", m.icon_size, fg))
+        })
         .child(
             icon_button("run", "expui/run/run", theme, m)
                 .tooltip(Tooltip::text("Run & Debug"))

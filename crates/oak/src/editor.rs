@@ -12,8 +12,10 @@
 //! display row at a time through gpui's shaper; only the rows in view are
 //! shaped each frame, so the cost is the viewport, not the file.
 
+pub mod smart;
+
 use crate::actions::*;
-use crate::document::{Document, DocumentEvent, Problem};
+use crate::document::{Document, DocumentEvent, Problem, Severity};
 use crate::settings::AppSettings;
 use crate::theme::{
     metrics::{CARET_BLINK_MS, EDITOR_OVERSCROLL_LINES},
@@ -53,6 +55,34 @@ pub enum EditorEvent {
     /// A click on a run icon in `.fleet/run.json`'s gutter: the workspace
     /// runs that configuration (its index in the file).
     RunConfiguration(usize),
+    /// M7: what the view asks the workspace to ask the document's language
+    /// server. `Completion` after a typed char or `completion`;
+    /// `SignatureHelp` after `(` or `show-parameter-info`; `Hover` for the
+    /// documentation at a char offset (`show-documentation`, or the pointer
+    /// resting there); `GoToDefinition` for a Ctrl+click; `ProblemFixes`
+    /// when a problem's card expands; `ApplyProblemFix` on one of its rows;
+    /// `ResolveCompletion` for an item's documentation; `Accepted` after a
+    /// completion with the item's command, if any.
+    Completion {
+        explicit: bool,
+    },
+    SignatureHelp,
+    Hover {
+        offset: usize,
+        mouse: bool,
+    },
+    GoToDefinition {
+        offset: usize,
+    },
+    ProblemFixes(usize),
+    ApplyProblemFix {
+        problem: usize,
+        fix: usize,
+    },
+    ResolveCompletion(usize),
+    Accepted {
+        command: Option<oak_lsp::lsp_types::Command>,
+    },
 }
 
 /// The editor's sizes at the current zoom and settings: `editor.fontSize`,
@@ -480,6 +510,9 @@ pub struct EditorView {
     problem_tooltip_shown: bool,
     hover_epoch: u64,
     hover_task: Option<Task<()>>,
+    /// M7: Smart Mode's popups (completion, parameter info, documentation)
+    /// and what the workspace told the view about its server.
+    smart: smart::SmartState,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -572,6 +605,7 @@ impl EditorView {
             problem_tooltip_shown: false,
             hover_epoch: 0,
             hover_task: None,
+            smart: smart::SmartState::default(),
         }
     }
 
@@ -608,10 +642,8 @@ impl EditorView {
     /// The document's syntax errors, while `editor.markupWithoutSmartMode`
     /// shows them.
     pub fn problems(&self, cx: &mut App) -> Vec<Problem> {
-        if !self.options.markup {
-            return Vec::new();
-        }
-        self.document.update(cx, |d, _| d.problems().to_vec())
+        let markup = self.options.markup;
+        self.document.update(cx, |d, _| d.problems(markup).to_vec())
     }
 
     /// Moves the caret to the problem after (or before) it, wrapping, and
@@ -804,6 +836,43 @@ impl EditorView {
                 .justify_center()
                 .cursor_pointer()
         };
+        // The tag's colours follow the worst problem: errors red, warnings
+        // yellow, weak warnings and infos grey (M7; the warning and weak
+        // states are estimates, batch 12 has not caught them).
+        let errors = problems
+            .iter()
+            .filter(|p| p.severity == Severity::Error)
+            .count();
+        let warnings = problems
+            .iter()
+            .filter(|p| p.severity == Severity::Warning)
+            .count();
+        let (tag_bg, tag_bg_hovered, tag_text) = if errors > 0 {
+            (
+                theme.problems_error_tag_bg,
+                theme.problems_error_tag_bg_hovered,
+                theme.problems_error_tag_text,
+            )
+        } else if warnings > 0 {
+            (
+                theme.problems_warning_tag_bg,
+                theme.problems_warning_tag_bg_hovered,
+                theme.problems_warning_tag_text,
+            )
+        } else {
+            (
+                theme.problems_weak_tag_bg,
+                theme.problems_weak_tag_bg,
+                theme.problems_weak_tag_text,
+            )
+        };
+        let badge_count = if errors > 0 {
+            errors
+        } else if warnings > 0 {
+            warnings
+        } else {
+            count
+        };
         if !self.problems_open || count == 0 {
             let title = if count == 0 {
                 "No problems found"
@@ -824,18 +893,17 @@ impl EditorView {
                                         theme.problems_success_fg,
                                     ))
                             } else {
-                                let hovered = theme.problems_error_tag_bg_hovered;
-                                d.bg(theme.problems_error_tag_bg)
-                                    .hover(move |s| s.bg(hovered))
+                                d.bg(tag_bg)
+                                    .hover(move |s| s.bg(tag_bg_hovered))
                                     .px(px(m.file_status_tag_pad_x))
-                                    .text_color(theme.problems_error_tag_text)
+                                    .text_color(tag_text)
                                     .map(|d| match next_chord.clone() {
                                         Some(chord) => {
                                             d.tooltip(Tooltip::with_shortcut(title, chord))
                                         }
                                         None => d.tooltip(Tooltip::text(title)),
                                     })
-                                    .child(count.to_string())
+                                    .child(badge_count.to_string())
                             }
                         }),
                 )
@@ -847,20 +915,35 @@ impl EditorView {
                 .iter()
                 .position(|p| p.range.start <= head && head <= p.range.end.max(p.range.start + 1));
             let expanded = at_caret.or(self.problem_expanded.filter(|ix| *ix < count));
-            let label: SharedString = if count == 1 {
-                "1 error".into()
-            } else {
-                format!("{count} errors").into()
+            // "2 errors", "1 warning", "2 errors, 1 warning" (the mixed form
+            // is an estimate); infos and weak warnings count as problems.
+            let plural = |n: usize, word: &str| {
+                if n == 1 {
+                    format!("1 {word}")
+                } else {
+                    format!("{n} {word}s")
+                }
             };
-            let hovered = theme.problems_error_tag_bg_hovered;
+            let others = count - errors - warnings;
+            let mut parts = Vec::new();
+            if errors > 0 {
+                parts.push(plural(errors, "error"));
+            }
+            if warnings > 0 {
+                parts.push(plural(warnings, "warning"));
+            }
+            if others > 0 && parts.is_empty() {
+                parts.push(plural(others, "problem"));
+            }
+            let label: SharedString = parts.join(", ").into();
             let header = cutout(ui(div()))
                 .child(
                     box_20(div().id("problems-tag"))
                         .mr(px(m.problems_header_gap))
                         .px(px(m.file_status_tag_pad_x))
-                        .bg(theme.problems_error_tag_bg)
-                        .hover(move |s| s.bg(hovered))
-                        .text_color(theme.problems_error_tag_text)
+                        .bg(tag_bg)
+                        .hover(move |s| s.bg(tag_bg_hovered))
+                        .text_color(tag_text)
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_problems(cx)))
                         .child(label),
                 )
@@ -901,6 +984,7 @@ impl EditorView {
                         format!(":{}", doc.buffer.offset_to_point(p.range.start).row + 1).into();
                     let message: SharedString = p.message.clone().into();
                     let is_expanded = expanded == Some(ix);
+                    let severity = p.severity;
                     let title_row = |text_color: Hsla| {
                         div()
                             .h(px(m.problems_row_height))
@@ -916,26 +1000,61 @@ impl EditorView {
                                     .mr(px(m.problems_row_text_x
                                         - m.problems_row_pad_left
                                         - m.icon_size))
-                                    .child(
-                                        crate::assets::icon(
-                                            "oak/circle",
-                                            m.icon_size,
-                                            theme.icon_red,
-                                        )
-                                        .absolute()
-                                        .left_0()
-                                        .top_0(),
-                                    )
-                                    .child(
-                                        crate::assets::icon(
-                                            "oak/exclamation",
-                                            m.icon_size,
-                                            theme.problems_error_tag_text,
-                                        )
-                                        .absolute()
-                                        .left_0()
-                                        .top_0(),
-                                    ),
+                                    .map(|d| match severity {
+                                        // The error icon as batch 11 caught it; the
+                                        // rest expui's status icons (estimates).
+                                        Severity::Error => d
+                                            .child(
+                                                crate::assets::icon(
+                                                    "oak/circle",
+                                                    m.icon_size,
+                                                    theme.icon_red,
+                                                )
+                                                .absolute()
+                                                .left_0()
+                                                .top_0(),
+                                            )
+                                            .child(
+                                                crate::assets::icon(
+                                                    "oak/exclamation",
+                                                    m.icon_size,
+                                                    theme.problems_error_tag_text,
+                                                )
+                                                .absolute()
+                                                .left_0()
+                                                .top_0(),
+                                            ),
+                                        Severity::Warning => d.child(
+                                            crate::assets::icon(
+                                                "expui/status/warning",
+                                                m.icon_size,
+                                                theme.icon_yellow,
+                                            )
+                                            .absolute()
+                                            .left_0()
+                                            .top_0(),
+                                        ),
+                                        Severity::Weak => d.child(
+                                            crate::assets::icon(
+                                                "expui/status/warningOutline",
+                                                m.icon_size,
+                                                theme.icon_secondary,
+                                            )
+                                            .absolute()
+                                            .left_0()
+                                            .top_0(),
+                                        ),
+                                        Severity::Info => d.child(
+                                            crate::assets::icon(
+                                                "expui/status/info",
+                                                m.icon_size,
+                                                theme.icon_blue,
+                                            )
+                                            .absolute()
+                                            .left_0()
+                                            .top_0(),
+                                        ),
+                                    }),
                             )
                             .child(
                                 div()
@@ -953,18 +1072,40 @@ impl EditorView {
                             )
                     };
                     if is_expanded {
+                        // The server's quick fixes for this problem (M7), one
+                        // row each under the message; "No fixes available"
+                        // while there are none (batch 11's wording).
+                        let fixes: Vec<String> = match &self.smart.fixes {
+                            Some((for_ix, titles)) if *for_ix == ix => titles.clone(),
+                            _ => Vec::new(),
+                        };
+                        let extra = fixes.len().saturating_sub(1) as f32 * m.smart_popup_line;
                         card_height += m.problems_expanded_height + 2. * m.problems_expanded_border
-                            - 2. * m.problems_card_pad;
+                            - 2. * m.problems_card_pad
+                            + extra;
+                        let (card_bg, card_border) = match severity {
+                            Severity::Error => (
+                                theme.problems_card_error_bg,
+                                theme.problems_card_error_border,
+                            ),
+                            Severity::Warning => (
+                                theme.problems_card_warning_bg,
+                                theme.problems_card_warning_border,
+                            ),
+                            Severity::Weak | Severity::Info => {
+                                (theme.problems_card_weak_bg, theme.problems_card_weak_border)
+                            }
+                        };
                         div()
                             .id(ElementId::NamedInteger("problem-row".into(), ix as u64))
-                            .h(px(
-                                m.problems_expanded_height + 2. * m.problems_expanded_border
-                            ))
+                            .h(px(m.problems_expanded_height
+                                + 2. * m.problems_expanded_border
+                                + extra))
                             // Its border sits on the card's edge, over the card's padding.
                             .my(px(-m.problems_card_pad))
                             .border(px(m.problems_expanded_border))
-                            .border_color(theme.problems_card_error_border)
-                            .bg(theme.problems_card_error_bg)
+                            .border_color(card_border)
+                            .bg(card_bg)
                             .rounded(px(m.popup_radius))
                             .flex()
                             .flex_col()
@@ -972,12 +1113,39 @@ impl EditorView {
                                 title_row(theme.problems_card_text)
                                     .font_weight(FontWeight::SEMIBOLD),
                             )
-                            .child(
-                                div()
-                                    .pl(px(m.problems_row_text_x))
-                                    .text_color(theme.problems_card_text_secondary)
-                                    .child("No fixes available"),
-                            )
+                            .map(|d| {
+                                if fixes.is_empty() {
+                                    d.child(
+                                        div()
+                                            .pl(px(m.problems_row_text_x))
+                                            .text_color(theme.problems_card_text_secondary)
+                                            .child("No fixes available"),
+                                    )
+                                } else {
+                                    d.children(fixes.into_iter().enumerate().map(|(fix, title)| {
+                                        div()
+                                            .id(ElementId::NamedInteger(
+                                                "problem-fix".into(),
+                                                (ix * 1000 + fix) as u64,
+                                            ))
+                                            .pl(px(m.problems_row_text_x))
+                                            .pr(px(m.problems_row_pad_right))
+                                            .h(px(m.smart_popup_line))
+                                            .flex()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .text_color(theme.link)
+                                            .hover(|s| s.bg(theme.list_bg_hovered))
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(EditorEvent::ApplyProblemFix {
+                                                    problem: ix,
+                                                    fix,
+                                                });
+                                            }))
+                                            .child(SharedString::from(title))
+                                    }))
+                                }
+                            })
                             .into_any_element()
                     } else {
                         card_height += m.problems_row_height;
@@ -1437,6 +1605,7 @@ impl EditorView {
         self.reveal_carets(cx);
         self.scroll_to_cursor(cx);
         self.restart_blink(cx);
+        self.smart_after_edit(cx);
         cx.notify();
     }
 
@@ -1444,6 +1613,7 @@ impl EditorView {
         self.reveal_carets(cx);
         self.scroll_to_cursor(cx);
         self.restart_blink(cx);
+        self.smart_after_move(cx);
         cx.notify();
     }
 
@@ -2246,6 +2416,14 @@ impl EditorView {
                 cx.notify();
             }
             Hit::Text(offset) => {
+                // Ctrl+click (Cmd on macOS) goes to the declaration (M7).
+                if event.modifiers.secondary() && clicks < 2 && self.smart.on {
+                    self.go(cx, |c, b| c.set_cursor(b, offset));
+                    self.restart_blink(cx);
+                    cx.emit(EditorEvent::GoToDefinition { offset });
+                    cx.notify();
+                    return;
+                }
                 self.go(cx, |c, b| match clicks {
                     2 => {
                         let range = c.word_range_at(b, offset);
@@ -2325,6 +2503,7 @@ impl EditorView {
             cx.notify();
         }
         self.hover_problem(position, cx);
+        self.smart_track_pointer(position, cx);
     }
 
     /// The hunk whose rows hold `row` (a deletion sits on its row).
@@ -2608,6 +2787,7 @@ impl EntityInputHandler for EditorView {
             _ => self.edit(cx, |c, b| c.insert(b, text)),
         }
         self.after_edit(cx);
+        self.smart_typed(text, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -2688,9 +2868,10 @@ impl EntityInputHandler for EditorView {
 }
 
 impl Render for EditorView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status_popup = self.render_status_popup(cx);
         let problems = self.render_problems(cx);
+        let smart = self.render_smart(window, cx);
         // The badge, the widget and the hover tooltip come after the
         // element, so they paint over its washes.
         div()
@@ -2700,8 +2881,8 @@ impl Render for EditorView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::go_to_next_problem))
             .on_action(cx.listener(Self::go_to_previous_problem))
-            .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::move_down))
+            .on_action(cx.listener(Self::smart_move_up))
+            .on_action(cx.listener(Self::smart_move_down))
             .on_action(cx.listener(Self::move_left))
             .on_action(cx.listener(Self::move_right))
             .on_action(cx.listener(Self::select_up))
@@ -2712,8 +2893,8 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::select_home))
             .on_action(cx.listener(Self::select_end))
-            .on_action(cx.listener(Self::page_up))
-            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::smart_page_up))
+            .on_action(cx.listener(Self::smart_page_down))
             .on_action(cx.listener(Self::select_page_up))
             .on_action(cx.listener(Self::select_page_down))
             .on_action(cx.listener(Self::doc_start))
@@ -2732,10 +2913,10 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::duplicate_line))
             .on_action(cx.listener(Self::move_line_up))
             .on_action(cx.listener(Self::move_line_down))
-            .on_action(cx.listener(Self::newline))
+            .on_action(cx.listener(Self::smart_newline))
             .on_action(cx.listener(Self::newline_below))
             .on_action(cx.listener(Self::newline_above))
-            .on_action(cx.listener(Self::tab))
+            .on_action(cx.listener(Self::smart_tab))
             .on_action(cx.listener(Self::outdent))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
@@ -2747,7 +2928,7 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::comment_block))
             .on_action(cx.listener(Self::join_lines))
             .on_action(cx.listener(Self::toggle_case))
-            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::smart_cancel))
             .on_action(cx.listener(Self::add_caret_above))
             .on_action(cx.listener(Self::add_caret_below))
             .on_action(cx.listener(Self::add_carets_to_line_ends))
@@ -2764,6 +2945,7 @@ impl Render for EditorView {
                 editor: cx.entity(),
             })
             .children(problems)
+            .children(smart)
     }
 }
 
@@ -3014,8 +3196,8 @@ enum BoxKind {
     Occurrence,
     Bracket,
     SearchMatch,
-    /// A syntax error's underline (`problem.error`).
-    Problem,
+    /// A problem's underline (`problem.error`, `.warning`, `.warning.weak`, `.info`).
+    Problem(Severity),
 }
 
 /// The folded mark on a head row: the display byte it sits after, and the
@@ -3079,7 +3261,7 @@ pub struct Prepaint {
     /// Rows that get a scrollbar mark: search matches, and the problems'.
     mark_rows: Vec<usize>,
     caret_mark_rows: Vec<usize>,
-    problem_mark_rows: Vec<usize>,
+    problem_mark_rows: Vec<(usize, Severity)>,
     text_offset: Pixels,
     sticky: Vec<StickyLayout>,
     space_glyph: Option<ShapedLine>,
@@ -3319,23 +3501,23 @@ impl Element for EditorElement {
             }
             mark_rows.sort_unstable();
             mark_rows.dedup();
-            // The syntax errors (M6): a 2 px underline under each, one cell
+            // The problems (M6, M7): a 2 px underline under each, one cell
             // wide when the parser's missing token has no width, and a mark
-            // on the scrollbar.
-            if options.markup {
-                for p in doc.problems().to_vec() {
-                    let range = if p.range.is_empty() {
-                        p.range.start..p.range.start + 1
-                    } else {
-                        p.range.clone()
-                    };
-                    boxes.push((range, BoxKind::Problem));
-                    let pt = doc.buffer.offset_to_point(p.range.start);
-                    problem_mark_rows.push(map.display_row(pt.row, pt.column));
-                }
-                problem_mark_rows.sort_unstable();
-                problem_mark_rows.dedup();
+            // on the scrollbar; the server's diagnostics once it published,
+            // else the parser's errors while `editor.markupWithoutSmartMode`.
+            for p in doc.problems(options.markup).to_vec() {
+                let range = if p.range.is_empty() {
+                    p.range.start..p.range.start + 1
+                } else {
+                    p.range.clone()
+                };
+                boxes.push((range, BoxKind::Problem(p.severity)));
+                let pt = doc.buffer.offset_to_point(p.range.start);
+                problem_mark_rows.push((map.display_row(pt.row, pt.column), p.severity));
             }
+            // The worst severity of a row marks it.
+            problem_mark_rows.sort_unstable();
+            problem_mark_rows.dedup_by_key(|(row, _)| *row);
             let current_block = analysis::current_block(&doc.buffer, cursor.row);
             let tab_width = doc.buffer.indent.width;
             let mut shaped_rows: Vec<(usize, LineSpans)> = Vec::new();
@@ -3483,7 +3665,7 @@ impl Element for EditorElement {
                     .iter()
                     .filter(|(r, kind)| {
                         let at_end =
-                            matches!(kind, BoxKind::Problem) && last_seg && r.start == char_end;
+                            matches!(kind, BoxKind::Problem(_)) && last_seg && r.start == char_end;
                         (r.start < char_end || at_end) && r.end > seg_char_start
                     })
                     .map(|(r, kind)| {
@@ -3750,17 +3932,30 @@ impl Element for EditorElement {
                 for (range, kind) in &laid.boxes {
                     let x0 = laid.shaped.x_for_index(range.start);
                     let x1 = laid.shaped.x_for_index(range.end);
-                    if matches!(kind, BoxKind::Problem) {
+                    if let BoxKind::Problem(severity) = kind {
                         let x1 = if x1 <= x0 {
                             x0 + prepaint.space_width
                         } else {
                             x1
                         };
-                        let thickness = px(tm.problem_underline);
+                        let (color, thickness) = match severity {
+                            Severity::Error => {
+                                (theme.problem_error_underline, tm.problem_underline)
+                            }
+                            Severity::Warning => {
+                                (theme.problem_warning_underline, tm.problem_underline)
+                            }
+                            Severity::Weak => (theme.problem_weak_underline, tm.problem_underline),
+                            // `problem.info` is 1 px thick in Fleet's theme.
+                            Severity::Info => {
+                                (theme.problem_info_underline, tm.problem_underline / 2.)
+                            }
+                        };
+                        let thickness = px(thickness);
                         let top = y + lh - thickness - px(tm.problem_underline_bottom);
                         window.paint_quad(fill(
                             Bounds::new(point(row_text_x + x0, top), size(x1 - x0, thickness)),
-                            theme.problem_error_underline,
+                            color,
                         ));
                         continue;
                     }
@@ -3772,7 +3967,7 @@ impl Element for EditorElement {
                         ),
                         BoxKind::Bracket => (theme.brace_match_bg, px(0.), px(0.)),
                         BoxKind::SearchMatch => (theme.search_result_bg, px(0.), px(0.)),
-                        BoxKind::Problem => unreachable!(),
+                        BoxKind::Problem(_) => unreachable!(),
                     };
                     window.paint_quad(
                         fill(
@@ -4106,8 +4301,14 @@ impl Element for EditorElement {
                 for row in &prepaint.caret_mark_rows {
                     mark(window, *row, theme.current_line_mark);
                 }
-                for row in &prepaint.problem_mark_rows {
-                    mark(window, *row, theme.problem_error_mark);
+                for (row, severity) in &prepaint.problem_mark_rows {
+                    let color = match severity {
+                        Severity::Error => theme.problem_error_mark,
+                        Severity::Warning => theme.problem_warning_mark,
+                        Severity::Weak => theme.problem_weak_mark,
+                        Severity::Info => theme.problem_info_underline,
+                    };
+                    mark(window, *row, color);
                 }
             }
         });
