@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- The mark's W alone on its paper tile: the full wordmark is unreadable at 16 px. -->
+  <rect x="3" y="3" width="58" height="58" rx="6" fill="#fff" stroke="#000" stroke-width="6"/>
+  <path transform="translate(11 18) scale(.35)" fill="#000" d="M0 0H24L38 66L51 0H69L82 66L96 0H120L97 100H71L60 46L49 100H23Z"/>
+</svg>

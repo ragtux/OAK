@@ -1,0 +1,15 @@
+{
+  "name": "weep-site",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The static site behind weep.cc.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs weep",
+    "serve": "node build.mjs weep --serve",
+    "watch": "node build.mjs weep --serve --watch"
+  },
+  "dependencies": {
+    "marked": "^18.0.0"
+  }
+}

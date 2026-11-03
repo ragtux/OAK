@@ -1,0 +1,49 @@
+{
+  "name": "weep",
+  "title": "WEEP",
+  "host": "weep.cc",
+  "baseUrl": "/",
+  "description": "WEEP is a native code editor written in Rust on GPUI, in the shape of JetBrains Fleet: Fleet's islands layout, its theme and keymap files, its sizes and colours, read off a running copy. Free software under the MIT license, not affiliated with JetBrains.",
+  "footer": "WEEP is free software from RAGTUX LLC, under the MIT license. An independent project, not affiliated with JetBrains.",
+  "mark": "/assets/favicon.svg",
+  "cta": { "text": "Build it", "url": "/docs/install/" },
+  "styles": ["/assets/weep.css"],
+  "nav": [
+    { "text": "Manual", "url": "/docs/" },
+    { "text": "Roadmap", "url": "/docs/roadmap/" },
+    { "text": "Source", "url": "https://github.com/ragtux/WEEP" }
+  ],
+  "footerLinks": [
+    { "text": "Manual", "url": "/docs/" },
+    { "text": "Roadmap", "url": "/docs/roadmap/" },
+    { "text": "Source", "url": "https://github.com/ragtux/WEEP" },
+    { "text": "Legal", "url": "/legal/" },
+    { "text": "ragtux.com", "url": "https://ragtux.com/" }
+  ],
+  "notFound": "<p>That address is not part of this site. The <a href=\"/docs/\">manual's contents</a> is a good place to pick the thread back up.</p>",
+  "sidebar": [
+    {
+      "title": "Getting started",
+      "items": [
+        { "text": "Contents", "url": "/docs/" },
+        { "text": "What WEEP is", "url": "/docs/what-weep-is/" },
+        { "text": "Build and run", "url": "/docs/install/" }
+      ]
+    },
+    {
+      "title": "Using WEEP",
+      "items": [
+        { "text": "The window and its tools", "url": "/docs/tools/" },
+        { "text": "Settings", "url": "/docs/settings/" },
+        { "text": "Themes and keymaps", "url": "/docs/themes-and-keymaps/" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "items": [
+        { "text": "Roadmap", "url": "/docs/roadmap/" },
+        { "text": "How WEEP is measured", "url": "/docs/measured/" }
+      ]
+    }
+  ]
+}
