@@ -248,7 +248,7 @@ Each batch produces rows in `fleet-probe.md`, constants in
 | 9 | Terminal | M5 | Padding, font metrics, caret, tab title, scroll-to-bottom button, selection colour. | Scenes: `scenes/terminal.json`, `scenes/terminal2.json`, run on both editors 2026-11-02 (eleventh pass). |
 | 10 | Git and diff | M4 | Changes list rows, commit field, history table, blame column, diff colours and gutter, side-by-side split, 3-way view. | Scenes: `scenes/git*.json`, run on Fleet 2026-11-02 (ninth pass). |
 | 11 | Run and problems | M6 | Run gutter icons, run popup, build output tool, problems widget colours and layout, file status badge states. | Scene: `scenes/run.json`, run on both editors 2026-11-02 (twelfth pass). |
-| 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. | Scene: `scenes/smart.json`, run on Oak 2026-11-03 (thirteenth pass); Fleet's side needs Smart Mode on for the fixture (the Trust dialog accepted, the backend downloaded) before `winprobe.py run`. |
+| 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. | Scene: `scenes/smart.json`, run on Oak and played into the open Fleet with `attach` 2026-11-03 (thirteenth pass: the lightning, the completion popup, the documentation pane, the parameter card and the Smart Mode card measured; the declaration, usages and diagnostics shots still to catch after the Jump-to prompt derailed the run). |
 
 ## What the probes cannot settle
 
