@@ -337,6 +337,8 @@ pub struct Commit {
     /// ISO 8601, as `%aI` prints it.
     pub date: String,
     pub summary: String,
+    /// The parents' full ids (`%P`): none for a root, two or more for a merge.
+    pub parents: Vec<String>,
 }
 
 /// Who last changed one line (`git/toggle-blame`).
@@ -373,7 +375,7 @@ impl BlameLine {
 /// Five NUL-ended fields; the date in the machine's zone, as Fleet shows it
 /// (the fixture's `2026-01-01T00:00:00Z` commit reads `18:00 Dec 31, 2025`
 /// in Fleet's rows, ninth pass).
-const LOG_FORMAT: &str = "--format=%H%x00%h%x00%an%x00%ad%x00%s%x00";
+const LOG_FORMAT: &str = "--format=%H%x00%h%x00%an%x00%ad%x00%s%x00%P%x00";
 const LOG_DATE: &str = "--date=format-local:%Y-%m-%dT%H:%M:%S";
 
 impl Repo {
@@ -804,11 +806,13 @@ pub fn parse_ahead_behind(out: &str) -> Option<AheadBehind> {
     Some(AheadBehind { ahead, behind })
 }
 
-/// Parses `git log` printed with [`LOG_FORMAT`]: five NUL-ended fields per commit.
+/// Parses `git log` printed with [`LOG_FORMAT`]: six NUL-ended fields per
+/// commit, the last the parents separated by spaces.
 pub fn parse_log(out: &str) -> Vec<Commit> {
     let mut fields = out.split('\0').map(|s| s.trim_start_matches('\n'));
     let mut commits = Vec::new();
-    while let (Some(id), Some(short_id), Some(author), Some(date), Some(summary)) = (
+    while let (Some(id), Some(short_id), Some(author), Some(date), Some(summary), Some(parents)) = (
+        fields.next(),
         fields.next(),
         fields.next(),
         fields.next(),
@@ -824,6 +828,7 @@ pub fn parse_log(out: &str) -> Vec<Commit> {
             author: author.to_string(),
             date: date.to_string(),
             summary: summary.to_string(),
+            parents: parents.split_whitespace().map(str::to_string).collect(),
         });
     }
     commits
@@ -1111,12 +1116,14 @@ mod tests {
 
     #[test]
     fn parses_log_and_blame() {
-        let log = "abc123def\x00abc123d\x00Ada\x002026-11-02T10:00:00+01:00\x00First\x00\n0f0f0f0f0\x000f0f0f0\x00Bo\x002026-11-01T09:00:00+01:00\x00Second line\x00\n";
+        let log = "abc123def\x00abc123d\x00Ada\x002026-11-02T10:00:00+01:00\x00First\x000f0f0f0f0 1234abcd\x00\n0f0f0f0f0\x000f0f0f0\x00Bo\x002026-11-01T09:00:00+01:00\x00Second line\x00\x00\n";
         let commits = parse_log(log);
         assert_eq!(commits.len(), 2);
         assert_eq!(commits[0].short_id, "abc123d");
         assert_eq!(commits[0].author, "Ada");
         assert_eq!(commits[1].summary, "Second line");
+        assert_eq!(commits[0].parents, ["0f0f0f0f0", "1234abcd"], "a merge");
+        assert!(commits[1].parents.is_empty(), "a root");
         assert!(parse_log("").is_empty());
 
         let blame = "abc123def4567890 1 1 1\nauthor Ada\nauthor-mail <a>\nauthor-time 1762074000\nauthor-tz +0100\nsummary First\nfilename f\n\tline one\n0000000000000000000000000000000000000000 2 2 1\nauthor Not Committed Yet\nauthor-time 1762074001\nsummary Version of f from f\nfilename f\n\tline two\n";
