@@ -59,6 +59,12 @@ pub enum EditorEvent {
     /// Escape in the editor while an interline view (the inline usages) is
     /// open: the workspace closes it.
     CloseInterline,
+    /// A click on a code vision entry (`editor.showCodeVision`): the lens
+    /// above buffer row `row`; the workspace runs its command.
+    CodeVision {
+        row: usize,
+        lens: crate::document::Lens,
+    },
     /// M7: what the view asks the workspace to ask the document's language
     /// server. `Completion` after a typed char or `completion`;
     /// `SignatureHelp` after `(` or `show-parameter-info`; `Hover` for the
@@ -128,6 +134,14 @@ pub struct TextMetrics {
     pub icon_size: f32,
     pub folded_mark_cells: f32,
     pub folded_mark_radius: f32,
+    /// A code vision row's height, its text's size, its baseline below the
+    /// row's top and the gap between two lenses on it (a cell row, the
+    /// cell's font and one cell on the tui grid, which paints the text in
+    /// its cells as a line's).
+    pub code_vision_height: f32,
+    pub code_vision_font: f32,
+    pub code_vision_baseline: f32,
+    pub code_vision_gap: f32,
     pub sticky_shadow: f32,
     pub wrap_indent: f32,
     pub centered_columns: f32,
@@ -272,6 +286,8 @@ struct ViewOptions {
     markup: bool,
     file_status: bool,
     problem_tooltip: bool,
+    /// M7: `editor.showCodeVision`.
+    code_vision: bool,
 }
 
 impl ViewOptions {
@@ -303,6 +319,7 @@ impl ViewOptions {
             markup: settings.editor_markup_without_smart_mode(),
             file_status: settings.editor_show_file_status(),
             problem_tooltip: settings.editor_show_tooltip_on_hover(),
+            code_vision: settings.editor_show_code_vision(),
         }
     }
 
@@ -359,6 +376,10 @@ impl TextMetrics {
             icon_size: m.icon_size,
             folded_mark_cells: m.folded_mark_cells,
             folded_mark_radius: m.folded_mark_radius,
+            code_vision_height: m.code_vision_height,
+            code_vision_font: m.code_vision_font,
+            code_vision_baseline: m.code_vision_baseline,
+            code_vision_gap: m.code_vision_gap,
             sticky_shadow: m.sticky_shadow,
             wrap_indent: m.wrap_indent,
             centered_columns: m.centered_columns,
@@ -408,6 +429,9 @@ impl TextMetrics {
         self.occurrence_radius = 0.;
         self.folded_mark_cells = 1.;
         self.folded_mark_radius = 0.;
+        self.code_vision_height = cell.h;
+        self.code_vision_font = cell.font_size;
+        self.code_vision_gap = w;
         self.sticky_shadow = 0.;
         self.wrap_indent = snap_to(self.wrap_indent, w);
         self.blame_width = col(TUI_BLAME_COLS);
@@ -448,6 +472,8 @@ pub type InterlineHeight = fn(&Metrics) -> f32;
 /// split into wrapped segments.
 #[derive(Clone, Debug, Default)]
 struct RowInfo {
+    /// The first display row of the row's text; a code vision row, when
+    /// the row has one, is the display row before it.
     display_start: usize,
     /// The char column each segment starts at; `[0]` for an unwrapped row.
     /// Empty for a hidden row.
@@ -458,7 +484,12 @@ struct RowInfo {
 }
 
 /// Buffer rows to display rows: folded blocks collapse to their head, a
-/// soft-wrapped line takes one display row per segment.
+/// soft-wrapped line takes one display row per segment, and a row with
+/// code vision gets a short display row above it.
+///
+/// Display rows are `lh` tall except the code vision rows (`lens_h`), so
+/// a row's place is [`DisplayMap::top`] and the row under a point
+/// [`DisplayMap::row_at`]; rows past the end (the overscroll) are `lh`.
 #[derive(Clone, Debug, Default)]
 struct DisplayMap {
     version: Option<u64>,
@@ -466,8 +497,15 @@ struct DisplayMap {
     folds: Vec<Folded>,
     /// Interline blocks: (buffer row, display rows) after that row.
     blocks: Vec<(usize, usize)>,
+    /// Buffer rows with code vision above them (sorted).
+    lenses: Vec<usize>,
     rows: Vec<RowInfo>,
+    /// The display rows that are code vision rows (sorted).
+    lens_rows: Vec<usize>,
     total: usize,
+    /// A text row's height and a code vision row's, in pixels.
+    lh: f32,
+    lens_h: f32,
 }
 
 /// Where a line breaks when soft-wrapped at `cols` display columns: after the
@@ -518,6 +556,8 @@ impl DisplayMap {
         let mut hidden_until: Option<usize> = None;
         let folds = &self.folds;
         let blocks = &self.blocks;
+        let mut lens_ix = 0;
+        let mut lens_rows = Vec::new();
         for row in 0..line_count {
             if hidden_until.is_some_and(|end| row <= end) {
                 rows.push(RowInfo {
@@ -544,6 +584,13 @@ impl DisplayMap {
                 .iter()
                 .find(|(r, _)| *r == row)
                 .map_or(0, |(_, n)| *n);
+            while lens_ix < self.lenses.len() && self.lenses[lens_ix] < row {
+                lens_ix += 1;
+            }
+            if self.lenses.get(lens_ix) == Some(&row) {
+                lens_rows.push(next);
+                next += 1;
+            }
             rows.push(RowInfo {
                 display_start: next,
                 block,
@@ -553,23 +600,92 @@ impl DisplayMap {
             next += info.segments.len() + info.block;
         }
         self.rows = rows;
+        self.lens_rows = lens_rows;
         self.total = next;
         self.version = Some(buffer.version());
         self.wrap_cols = wrap_cols;
     }
 
     fn is_identity(&self) -> bool {
-        self.folds.is_empty() && self.wrap_cols.is_none() && self.blocks.is_empty()
+        self.folds.is_empty()
+            && self.wrap_cols.is_none()
+            && self.blocks.is_empty()
+            && self.lens_rows.is_empty()
     }
 
-    /// Whether display row `d` is one of an interline block's rows.
-    fn in_block(&self, d: usize) -> bool {
+    /// Whether display row `d` shows no text: one of an interline block's
+    /// rows or a code vision row.
+    fn is_gap(&self, d: usize) -> bool {
+        if self.is_lens(d) {
+            return true;
+        }
         if self.blocks.is_empty() || d >= self.total {
             return false;
         }
         let (row, _) = self.at(d);
         let r = &self.rows[row];
         d >= r.display_start + r.segments.len()
+    }
+
+    /// Whether display row `d` is a code vision row.
+    fn is_lens(&self, d: usize) -> bool {
+        self.lens_rows.binary_search(&d).is_ok()
+    }
+
+    /// The buffer row whose code vision row is display row `d`.
+    fn lens_at(&self, d: usize) -> Option<usize> {
+        if !self.is_lens(d) {
+            return None;
+        }
+        let row = self.rows.partition_point(|r| r.display_start <= d);
+        (row < self.rows.len()).then_some(row)
+    }
+
+    /// The code vision row above buffer row `row`, when it has one.
+    fn lens_row(&self, row: usize) -> Option<usize> {
+        let d = self.rows.get(row)?.display_start.checked_sub(1)?;
+        self.is_lens(d).then_some(d)
+    }
+
+    /// The top of display row `d`, from the top of the first.
+    fn top(&self, d: usize) -> Pixels {
+        let short = self.lens_rows.partition_point(|l| *l < d);
+        px(d as f32 * self.lh - short as f32 * (self.lh - self.lens_h))
+    }
+
+    /// Display row `d`'s height.
+    fn height(&self, d: usize) -> Pixels {
+        px(if self.is_lens(d) {
+            self.lens_h
+        } else {
+            self.lh
+        })
+    }
+
+    /// The display row under `y` (from the top of the first); rows past the
+    /// end continue at the text's height.
+    fn row_at(&self, y: Pixels) -> usize {
+        let y = f32::from(y).max(0.);
+        if self.lh <= 0. {
+            return 0;
+        }
+        if self.lens_rows.is_empty() || self.lens_h == self.lh {
+            return (y / self.lh).floor() as usize;
+        }
+        // The rows are no taller than `lh`, so the answer is at least
+        // `y / lh`; and no shorter than the shortest row.
+        let shortest = self.lh.min(self.lens_h).max(0.5);
+        let mut lo = (y / self.lh).floor() as usize;
+        let mut hi = (y / shortest).floor() as usize + 1;
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2;
+            if f32::from(self.top(mid)) <= y {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
     }
 
     /// The first display row of the block after buffer row `row`.
@@ -618,8 +734,9 @@ impl DisplayMap {
         while row > 0 && self.rows[row].segments.is_empty() {
             row -= 1;
         }
-        let seg =
-            (d - self.rows[row].display_start).min(self.rows[row].segments.len().saturating_sub(1));
+        let seg = d
+            .saturating_sub(self.rows[row].display_start)
+            .min(self.rows[row].segments.len().saturating_sub(1));
         (row, seg)
     }
 
@@ -674,6 +791,11 @@ pub struct EditorView {
     /// The pointer is over the gutter: fold chevrons show.
     gutter_hovered: bool,
     hovered_row: Option<usize>,
+    /// Code vision: each entry the last frame laid out (the buffer row it
+    /// is above, its index there, its span from the text's left at no
+    /// scroll), and the one under the pointer.
+    lens_boxes: Vec<(usize, usize, Range<Pixels>)>,
+    lens_hovered: Option<(usize, usize)>,
     /// The git line-status bar under the pointer, and the one whose popup
     /// (↓ ↑ Revert Diff ×) is open, as indices into the document's hunks.
     status_hovered: Option<usize>,
@@ -803,6 +925,8 @@ impl EditorView {
             expand_history: Vec::new(),
             expand_last: None,
             gutter_hovered: false,
+            lens_boxes: Vec::new(),
+            lens_hovered: None,
             hovered_row: None,
             status_hovered: None,
             status_popup: None,
@@ -956,7 +1080,10 @@ impl EditorView {
             return None;
         }
         let y = position.y - bounds.origin.y + self.scroll_y;
-        let d = (y / self.line_height()).floor().max(0.) as usize;
+        let d = self.map.row_at(y);
+        if self.map.is_gap(d) {
+            return None;
+        }
         let (row, seg) = self.map.at(d);
         if seg > 0 {
             return None;
@@ -1620,6 +1747,24 @@ impl EditorView {
             self.map.blocks = blocks;
             self.map.version = None;
         }
+        // Code vision rows (`editor.showCodeVision`) above the rows the
+        // server's lenses are on; none in a bare view (a preview).
+        let lenses: Vec<usize> = if self.options.code_vision && !self.bare {
+            self.document
+                .read(cx)
+                .code_vision()
+                .into_iter()
+                .map(|(row, _)| row)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if self.map.lenses != lenses {
+            self.map.lenses = lenses;
+            self.map.version = None;
+        }
+        self.map.lh = self.tm.line_height;
+        self.map.lens_h = self.tm.code_vision_height;
         let doc = self.document.read(cx);
         let buffer = &doc.buffer;
         let version = buffer.version();
@@ -1821,9 +1966,15 @@ impl EditorView {
         self.sync_map(cx);
         let lh = self.line_height();
         let point = self.cursor_position(cx);
-        let row = self.map.display_row(point.row, point.column) as f32;
-        let top = lh * row;
-        let bottom = top + lh;
+        let row = self.map.display_row(point.row, point.column);
+        // A row's code vision comes into view with it.
+        let top = self.map.top(
+            self.map
+                .lens_row(point.row)
+                .filter(|_| self.map.segment_of(point.row, point.column) == 0)
+                .unwrap_or(row),
+        );
+        let bottom = self.map.top(row) + lh;
         let height = self.last_bounds.size.height;
         if height <= px(0.) {
             return;
@@ -1848,21 +1999,21 @@ impl EditorView {
         }
         let lh = self.line_height();
         let point = self.cursor_position(cx);
-        let row = self.map.display_row(point.row, point.column) as f32;
+        let row = self.map.display_row(point.row, point.column);
         let max = self.max_scroll_y(cx);
-        self.scroll_y = (lh * row - (height - lh) / 2.).clamp(px(0.), max);
+        self.scroll_y = (self.map.top(row) - (height - lh) / 2.).clamp(px(0.), max);
     }
 
     fn center_cursor(&mut self, cx: &App) {
         self.sync_map(cx);
         let lh = self.line_height();
         let point = self.cursor_position(cx);
-        let row = self.map.display_row(point.row, point.column) as f32;
+        let row = self.map.display_row(point.row, point.column);
         let height = self.last_bounds.size.height;
         if height <= px(0.) {
             return;
         }
-        let top = lh * row;
+        let top = self.map.top(row);
         if top < self.scroll_y || top + lh > self.scroll_y + height {
             let max = self.max_scroll_y(cx);
             self.scroll_y = (top - height / 2.).clamp(px(0.), max);
@@ -1871,7 +2022,7 @@ impl EditorView {
 
     /// The scrollable extent: the display rows plus Fleet's overscroll past the end.
     fn content_height(&self) -> Pixels {
-        self.line_height() * (self.map.total as f32 + EDITOR_OVERSCROLL_LINES)
+        self.map.top(self.map.total) + self.line_height() * EDITOR_OVERSCROLL_LINES
     }
 
     fn max_scroll_y(&mut self, cx: &App) -> Pixels {
@@ -1960,7 +2111,7 @@ impl EditorView {
                 let d = self.map.display_row(point.row, point.column) as isize;
                 let mut target = (d + delta).clamp(0, last_display);
                 // Past an interline block's rows, to the text on its far side.
-                while self.map.in_block(target as usize) {
+                while self.map.is_gap(target as usize) {
                     let next = target + delta.signum();
                     if !(0..=last_display).contains(&next) {
                         target = d;
@@ -2543,11 +2694,10 @@ impl EditorView {
         {
             let height = self.last_bounds.size.height;
             if let Some(start) = self.map.block_start(row) {
-                let lh = self.line_height();
-                let end = lh * (start + rows + 2) as f32;
+                let end = self.map.top(start + rows + 2);
                 if height > px(0.) && end > self.scroll_y + height {
                     let max = self.max_scroll_y(cx);
-                    let line_top = lh * start.saturating_sub(1) as f32;
+                    let line_top = self.map.top(start.saturating_sub(1));
                     self.scroll_y = (end - height).min(line_top).clamp(px(0.), max);
                 }
             }
@@ -2562,7 +2712,7 @@ impl EditorView {
         let start = self.map.block_start(row)?;
         let rows = self.map.rows.get(row).map_or(0, |r| r.block);
         let lh = self.line_height();
-        let top = lh * start as f32 - self.scroll_y;
+        let top = self.map.top(start) - self.scroll_y;
         Some(
             div()
                 .absolute()
@@ -2640,7 +2790,13 @@ impl EditorView {
             }
         }
         let y = y_in + self.scroll_y;
-        let d = (y / lh).floor().max(0.) as usize;
+        let d = self.map.row_at(y);
+        if let Some(row) = self.map.lens_at(d) {
+            return match self.lens_hit(row, position) {
+                Some(ix) => Hit::CodeVision(row, ix),
+                None => Hit::Gap,
+            };
+        }
         let (row, seg) = self.map.at(d);
         if position.x - bounds.origin.x < px(self.tm.line_status_hit) {
             if let Some(ix) = self.hunk_at(row, cx) {
@@ -2762,10 +2918,23 @@ impl EditorView {
             Hit::RunIcon(ix) => {
                 cx.emit(EditorEvent::RunConfiguration(ix));
             }
+            Hit::CodeVision(row, ix) => {
+                let lens = self
+                    .document
+                    .read(cx)
+                    .code_vision()
+                    .into_iter()
+                    .find(|(r, _)| *r == row)
+                    .and_then(|(_, lenses)| lenses.into_iter().nth(ix));
+                if let Some(lens) = lens {
+                    cx.emit(EditorEvent::CodeVision { row, lens });
+                }
+            }
+            Hit::Gap => {}
             Hit::Sticky(row) => {
                 // A sticky line scrolls its block head to the top.
                 let d = self.map.display_row(row, 0);
-                self.scroll_y = self.line_height() * d as f32;
+                self.scroll_y = self.map.top(self.map.lens_row(row).unwrap_or(d));
                 cx.notify();
             }
             Hit::Text(offset) => {
@@ -2833,13 +3002,25 @@ impl EditorView {
         let bounds = self.last_bounds;
         let x_in = position.x - bounds.origin.x - self.text_offset();
         let in_gutter = bounds.contains(&position) && x_in < px(self.tm.gutter_width);
+        let mut lens = None;
         let row = if bounds.contains(&position) {
             let y = position.y - bounds.origin.y + self.scroll_y;
-            let d = (y / self.line_height()).floor().max(0.) as usize;
-            Some(self.map.at(d).0)
+            let d = self.map.row_at(y);
+            match self.map.lens_at(d) {
+                // A code vision row is no line's: no breakpoint hint on it.
+                Some(row) => {
+                    lens = self.lens_hit(row, position).map(|ix| (row, ix));
+                    None
+                }
+                None => Some(self.map.at(d).0),
+            }
         } else {
             None
         };
+        if lens != self.lens_hovered {
+            self.lens_hovered = lens;
+            cx.notify();
+        }
         let status = match row {
             Some(r) if self.in_status_cell(x_in) => self.tui_hunk_at(r, cx),
             Some(r) if position.x - bounds.origin.x < px(self.tm.line_status_hit) => {
@@ -2867,6 +3048,18 @@ impl EditorView {
         self.smart_track_pointer(position, cx);
     }
 
+    /// The code vision entry above buffer row `row` under a window point,
+    /// from the boxes the last frame laid out.
+    fn lens_hit(&self, row: usize, position: Point<Pixels>) -> Option<usize> {
+        let x =
+            position.x - self.last_bounds.origin.x - self.text_offset() - px(self.tm.gutter_width)
+                + self.scroll_x;
+        self.lens_boxes
+            .iter()
+            .find(|(r, _, span)| *r == row && span.contains(&x))
+            .map(|(_, ix, _)| *ix)
+    }
+
     /// The hunk whose rows hold `row` (a deletion sits on its row).
     fn hunk_at(&self, row: usize, cx: &App) -> Option<usize> {
         self.document
@@ -2888,9 +3081,8 @@ impl EditorView {
         };
         let theme = cx.global::<Theme>().clone();
         let tm = self.tm;
-        let lh = self.line_height();
         let d = self.map.display_row(row, 0);
-        let top = lh * d as f32 - self.scroll_y - px(tm.line_status_popup_above);
+        let top = self.map.top(d) - self.scroll_y - px(tm.line_status_popup_above);
         let m = *cx.global::<Metrics>();
         let button = |id: &'static str, label: &'static str, enabled: bool| {
             div()
@@ -3600,6 +3792,10 @@ enum Hit {
     LineStatus(usize),
     /// A run icon in `.fleet/run.json`'s gutter (the configuration's index).
     RunIcon(usize),
+    /// A code vision entry: the buffer row it is above and its index there.
+    CodeVision(usize, usize),
+    /// A code vision row away from its entries: nothing to do.
+    Gap,
 }
 
 /// Whether a hunk's rows hold `row`; a deletion sits on the row after it.
@@ -3788,7 +3984,7 @@ impl EntityInputHandler for EditorView {
             point(
                 element_bounds.origin.x + self.text_offset() + px(self.tm.gutter_width) + x
                     - self.scroll_x,
-                element_bounds.origin.y + lh * d as f32 - self.scroll_y,
+                element_bounds.origin.y + self.map.top(d) - self.scroll_y,
             ),
             size(px(self.tm.caret_width), lh),
         ))
@@ -4218,6 +4414,16 @@ pub struct Prepaint {
     tab_glyph: Option<ShapedLine>,
     hovered_row: Option<usize>,
     gutter_hovered: bool,
+    /// The display map the rows were laid out by (their places).
+    map: DisplayMap,
+    lenses: Vec<LensLayout>,
+}
+
+/// A code vision row in view: its display row and each lens's title with
+/// its x from the text's left (the line's first non-blank column on).
+struct LensLayout {
+    display: usize,
+    entries: Vec<(Pixels, ShapedLine)>,
 }
 
 impl IntoElement for EditorElement {
@@ -4309,9 +4515,12 @@ impl Element for EditorElement {
         ) = self.editor.update(cx, |editor, cx| {
             // A zoom or font change keeps the same first line in view.
             if editor.tm != tm {
-                let row = editor.scroll_y / px(editor.tm.line_height);
+                let first = editor.map.row_at(editor.scroll_y);
+                let into = (editor.scroll_y - editor.map.top(first)) / editor.map.height(first);
                 editor.tm = tm;
-                editor.scroll_y = px(tm.line_height) * row;
+                editor.map.lh = tm.line_height;
+                editor.map.lens_h = tm.code_vision_height;
+                editor.scroll_y = editor.map.top(first) + editor.map.height(first) * into;
             }
             editor.space_px = space_width;
             if editor.options != options {
@@ -4371,6 +4580,9 @@ impl Element for EditorElement {
             )
         });
         let run_rows: Vec<(usize, usize)> = self.editor.update(cx, |e, cx| e.run_rows(cx));
+        let lens_hovered = self.editor.read(cx).lens_hovered;
+        let mut lenses: Vec<LensLayout> = Vec::new();
+        let mut lens_boxes: Vec<(usize, usize, Range<Pixels>)> = Vec::new();
         let map = folds;
         let mut rows = Vec::new();
         let mut mark_rows = Vec::new();
@@ -4421,6 +4633,27 @@ impl Element for EditorElement {
                 None,
             )
         };
+        // Code vision titles: UI text (`editor.interline.text.*`), or the
+        // grid's cells in the tui skin.
+        let shape_lens = |text: &str, color: Hsla, window: &mut Window| match tm.cell {
+            Some(_) => shape_glyph(text, color, &theme, tm.code_vision_font, &options, window),
+            None => {
+                let text = SharedString::from(text.to_string());
+                window.text_system().shape_line(
+                    text.clone(),
+                    px(tm.code_vision_font),
+                    &[TextRun {
+                        len: text.len(),
+                        font: ui_font.clone(),
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+            }
+        };
         let space_glyph = options.whitespace.then(|| {
             shape_glyph(
                 "·",
@@ -4443,9 +4676,8 @@ impl Element for EditorElement {
         });
         document.update(cx, |doc, _| {
             let line_count = doc.buffer.line_count();
-            let first_display = (scroll_y / lh).floor().max(0.) as usize;
-            let visible = (bounds.size.height / lh).ceil() as usize + 1;
-            let last_display = (first_display + visible).min(total_rows);
+            let first_display = map.row_at(scroll_y);
+            let last_display = (map.row_at(scroll_y + bounds.size.height) + 1).min(total_rows);
             let (first_row, _) = map.at(first_display);
             let doc_folds: Vec<Fold> = doc.folds().to_vec();
             // Spans are sorted by start; walk them once for the visible window.
@@ -4503,7 +4735,7 @@ impl Element for EditorElement {
             let mut d = first_display;
             let mut row_cache: Option<(usize, String)> = None;
             while d < last_display {
-                if map.in_block(d) {
+                if map.is_gap(d) {
                     // An interline block's rows: its view lies over them.
                     d += 1;
                     continue;
@@ -4723,6 +4955,49 @@ impl Element for EditorElement {
                 });
                 d += 1;
             }
+            // Code vision rows in view: each lens's title from the line's
+            // first non-blank column, `editor.interline.text.default` and
+            // `.hovered` under the pointer.
+            if !map.lens_rows.is_empty() {
+                let vision = doc.code_vision();
+                let in_view = map
+                    .lens_rows
+                    .iter()
+                    .copied()
+                    .filter(|d| (first_display..last_display).contains(d));
+                for d in in_view {
+                    let Some(row) = map.lens_at(d) else { continue };
+                    let Some((_, row_lenses)) = vision.iter().find(|(r, _)| *r == row) else {
+                        continue;
+                    };
+                    let mut column = 0;
+                    for c in doc.buffer.line(row).chars() {
+                        match c {
+                            ' ' => column += 1,
+                            '\t' => column += tab_width - column % tab_width.max(1),
+                            _ => break,
+                        }
+                    }
+                    let mut x = space_width * column as f32;
+                    let mut entries = Vec::new();
+                    for (ix, lens) in row_lenses.iter().enumerate() {
+                        let color = if lens_hovered == Some((row, ix)) {
+                            theme.interline_text_hovered
+                        } else {
+                            theme.interline_text
+                        };
+                        let shaped = shape_lens(&lens.title, color, window);
+                        let width = shaped.width;
+                        lens_boxes.push((row, ix, x..x + width));
+                        entries.push((x, shaped));
+                        x += width + px(tm.code_vision_gap);
+                    }
+                    lenses.push(LensLayout {
+                        display: d,
+                        entries,
+                    });
+                }
+            }
             // Sticky lines: the heads of the blocks enclosing the first visible row.
             if options.sticky_lines && first_display > 0 {
                 let heads = enclosing_heads(&doc_folds, first_row);
@@ -4771,6 +5046,7 @@ impl Element for EditorElement {
             .collect();
         self.editor.update(cx, |editor, _| {
             editor.sticky_rows = sticky.iter().map(|s| s.row).collect();
+            editor.lens_boxes = lens_boxes;
             if tm.cell.is_some() {
                 // What the tui frame's right edge paints: the bar in rows and
                 // the marks Fleet's scrollbar carries.
@@ -4824,6 +5100,8 @@ impl Element for EditorElement {
             tab_glyph,
             hovered_row: hovered,
             gutter_hovered,
+            map,
+            lenses,
         }
     }
 
@@ -4902,7 +5180,7 @@ impl Element for EditorElement {
                 )
             };
             for (laid, (line_start, line_end)) in prepaint.rows.iter().zip(buffer_rows) {
-                let y = bounds.origin.y + lh * laid.display as f32 - prepaint.scroll_y;
+                let y = bounds.origin.y + prepaint.map.top(laid.display) - prepaint.scroll_y;
                 let row_text_x = if laid.continuation {
                     text_x + px(tm.wrap_indent)
                 } else {
@@ -5259,6 +5537,34 @@ impl Element for EditorElement {
                     }
                 }
             }
+            // Code vision rows: the titles with their baseline Fleet's distance
+            // below the row's top (gpui centres a line's ascent and descent).
+            // Scrolled sideways, they stop at the gutter.
+            let text_left = origin_x + px(tm.gutter_width);
+            let lens_mask = ContentMask {
+                bounds: Bounds::from_corners(
+                    point(text_left, bounds.origin.y),
+                    bounds.bottom_right(),
+                ),
+            };
+            window.with_content_mask(Some(lens_mask), |window| {
+                for lens in &prepaint.lenses {
+                    let y = bounds.origin.y + prepaint.map.top(lens.display) - prepaint.scroll_y;
+                    let h = prepaint.map.height(lens.display);
+                    for (x, shaped) in &lens.entries {
+                        let centred = (h - shaped.ascent - shaped.descent) / 2. + shaped.ascent;
+                        let dy = px(tm.code_vision_baseline) - centred;
+                        let _ = shaped.paint(
+                            point(text_x + *x, y + dy),
+                            h,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
+                }
+            });
             // Sticky lines over the top rows: the island's background, the row,
             // a 1 device px border under the last and a shadow fading below.
             if sticky_count > 0 {
@@ -5306,7 +5612,7 @@ impl Element for EditorElement {
             // The scrollbar: a thumb proportional to the view, no track. Fleet's thumb
             // starts at the text area's top and sits flush with the island's right edge;
             // the content it measures includes the overscroll past the last line.
-            let total = lh * (prepaint.total_rows as f32 + EDITOR_OVERSCROLL_LINES);
+            let total = prepaint.map.top(prepaint.total_rows) + lh * EDITOR_OVERSCROLL_LINES;
             let track_h = bounds.size.height;
             if total > track_h {
                 let thumb_h = (track_h * (track_h / total)).max(px(tm.scrollbar_thumb_min));
@@ -5327,7 +5633,7 @@ impl Element for EditorElement {
             if options.scrollbar_marks {
                 let mark = |window: &mut Window, row: usize, color: Hsla| {
                     let scale = if total > track_h { track_h / total } else { 1. };
-                    let y = bounds.origin.y + lh * row as f32 * scale;
+                    let y = bounds.origin.y + prepaint.map.top(row) * scale;
                     window.paint_quad(fill(
                         Bounds::new(
                             point(right - px(tm.scrollbar_mark_width), y),
@@ -5540,7 +5846,7 @@ fn paint_tui(
         .zip(buffer_rows.iter().copied())
         .enumerate()
     {
-        let y = bounds.origin.y + lh * laid.display as f32 - prepaint.scroll_y;
+        let y = bounds.origin.y + prepaint.map.top(laid.display) - prepaint.scroll_y;
         let row_text_x = if laid.continuation {
             text_x + px(tm.wrap_indent)
         } else {
@@ -5802,6 +6108,16 @@ fn paint_tui(
             }
         });
     }
+    // Code vision rows: a whole row of cells, the titles in the line's
+    // columns from its first non-blank one (`docs/tui-skin.md`).
+    window.with_content_mask(Some(text_mask), |window| {
+        for lens in &prepaint.lenses {
+            let y = bounds.origin.y + prepaint.map.top(lens.display) - prepaint.scroll_y;
+            for (x, shaped) in &lens.entries {
+                let _ = shaped.paint(point(text_x + *x, y), lh, TextAlign::Left, None, window, cx);
+            }
+        }
+    });
     // Sticky lines: the top rows on the editor's background, a rule along
     // the last one's bottom edge, no shadow.
     let sticky = prepaint.sticky.len();
@@ -5865,12 +6181,60 @@ mod tests {
         assert_eq!(map.block_start(1), None);
         assert_eq!(map.display_row(1, 0), 4);
         assert_eq!(map.display_row(2, 0), 5);
-        assert!(!map.in_block(0));
-        assert!((1..=3).all(|d| map.in_block(d)));
-        assert!(!map.in_block(4));
+        assert!(!map.is_gap(0));
+        assert!((1..=3).all(|d| map.is_gap(d)));
+        assert!(!map.is_gap(4));
         // A block row belongs to the row above it; text resumes after it.
         assert_eq!(map.at(2), (0, 0));
         assert_eq!(map.at(4), (1, 0));
+    }
+
+    #[test]
+    fn code_vision_rows_sit_above_their_row_and_are_short() {
+        // Fleet's 22 px lines with an 18.5 px code vision row above rows 0
+        // and 2 (the second under an interline block after row 1).
+        let buffer = Buffer::new("a\nb\nc\nd");
+        let mut map = DisplayMap {
+            lenses: vec![0, 2],
+            blocks: vec![(1, 2)],
+            lh: 22.,
+            lens_h: 18.5,
+            ..Default::default()
+        };
+        map.rebuild(&buffer, None);
+        assert!(!map.is_identity());
+        // 0: lens, 1: a, 2: b, 3-4: block, 5: lens, 6: c, 7: d.
+        assert_eq!(map.total, 8);
+        assert_eq!(map.lens_rows, vec![0, 5]);
+        assert_eq!(map.display_row(0, 0), 1);
+        assert_eq!(map.display_row(2, 0), 6);
+        assert_eq!(map.lens_at(0), Some(0));
+        assert_eq!(map.lens_at(5), Some(2));
+        assert_eq!(map.lens_at(1), None);
+        assert_eq!(map.lens_row(2), Some(5));
+        assert_eq!(map.lens_row(1), None);
+        assert!(map.is_gap(0) && map.is_gap(3) && map.is_gap(5));
+        assert!(!map.is_gap(1) && !map.is_gap(6));
+        // A code vision row above the first line belongs to no line before it.
+        assert_eq!(map.at(0), (0, 0));
+        // Places: the short rows shift what follows them.
+        assert_eq!(map.top(0), px(0.));
+        assert_eq!(map.top(1), px(18.5));
+        assert_eq!(map.top(5), px(18.5 + 4. * 22.));
+        assert_eq!(map.top(6), px(2. * 18.5 + 4. * 22.));
+        assert_eq!(map.height(5), px(18.5));
+        assert_eq!(map.height(6), px(22.));
+        for d in 0..12 {
+            let top = map.top(d);
+            assert_eq!(map.row_at(top), d, "the top of {d}");
+            assert_eq!(
+                map.row_at(top + map.height(d) - px(0.25)),
+                d,
+                "the bottom of {d}"
+            );
+        }
+        // Past the end the rows go on at the text's height (the overscroll).
+        assert_eq!(map.top(9) - map.top(8), px(22.));
     }
 
     #[test]

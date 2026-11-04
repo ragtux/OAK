@@ -6,8 +6,10 @@
 //! With Smart Mode on (M7) the language server feeds the document too: its
 //! diagnostics replace the parser's syntax errors as the problems, and its
 //! semantic tokens colour spans over the tree-sitter highlighting
-//! (`editor.semanticHighlighting`). Both are kept with the buffer version
-//! they were computed for and moved through the edits made since.
+//! (`editor.semanticHighlighting`), and its code lenses are the code vision
+//! rows above declarations (`editor.showCodeVision`). All are kept with the
+//! buffer version they were computed for and moved through the edits made
+//! since.
 
 use gpui::{Context, EventEmitter};
 use std::ops::Range;
@@ -66,6 +68,16 @@ pub struct SemanticSpan {
     pub attribute: &'static str,
 }
 
+/// A code vision entry (Fleet's `editor.showCodeVision`): a resolved code
+/// lens's title, drawn in a short row above the line holding `offset` (a
+/// char offset), and the command a click on it runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lens {
+    pub offset: usize,
+    pub title: String,
+    pub command: weep_lsp::lsp_types::Command,
+}
+
 pub struct Document {
     pub path: Option<PathBuf>,
     pub buffer: Buffer,
@@ -93,6 +105,9 @@ pub struct Document {
     /// computed at, and a counter bumped whenever they are replaced.
     semantic: Option<(u64, Vec<SemanticSpan>)>,
     semantic_generation: u64,
+    /// The server's code lenses (M7) for the version they were computed at,
+    /// sorted by offset.
+    code_vision: Option<(u64, Vec<Lens>)>,
     indent_source: Option<IndentSource>,
     /// The file's modification time when it was read or written.
     disk_modified: Option<std::time::SystemTime>,
@@ -137,6 +152,7 @@ impl Document {
             diagnostics: None,
             semantic: None,
             semantic_generation: 0,
+            code_vision: None,
             indent_source: None,
             disk_modified: None,
             conflict: false,
@@ -241,6 +257,7 @@ impl Document {
         self.folds_version = None;
         self.diagnostics = None;
         self.semantic = None;
+        self.code_vision = None;
         cx.emit(DocumentEvent::Changed);
         cx.notify();
     }
@@ -462,9 +479,11 @@ impl Document {
 
     /// Smart Mode went off (or the server left): back to the parser's errors.
     pub fn clear_server_state(&mut self, cx: &mut Context<Self>) {
-        let had = self.diagnostics.is_some() || self.semantic.is_some();
+        let had =
+            self.diagnostics.is_some() || self.semantic.is_some() || self.code_vision.is_some();
         self.diagnostics = None;
         self.semantic = None;
+        self.code_vision = None;
         self.semantic_generation += 1;
         if had {
             cx.notify();
@@ -482,6 +501,53 @@ impl Document {
         self.semantic = Some((version, spans));
         self.semantic_generation += 1;
         cx.notify();
+    }
+
+    /// The server's code lenses for buffer `version` (the code vision rows).
+    pub fn set_code_vision(&mut self, version: u64, mut lenses: Vec<Lens>, cx: &mut Context<Self>) {
+        lenses.sort_by_key(|l| l.offset);
+        if self.code_vision.as_ref().map(|(_, l)| l) == Some(&lenses) {
+            self.code_vision = Some((version, lenses));
+            return;
+        }
+        self.code_vision = Some((version, lenses));
+        cx.notify();
+    }
+
+    /// The code vision rows of the current text: each buffer row with a
+    /// lens and its lenses in order, moved through the edits made since the
+    /// server's answer (none when the log no longer reaches back to it).
+    pub fn code_vision(&self) -> Vec<(usize, Vec<Lens>)> {
+        let Some((at, lenses)) = &self.code_vision else {
+            return Vec::new();
+        };
+        let Some(edits) = self.buffer.edits_since(*at) else {
+            return Vec::new();
+        };
+        let len = self.buffer.len_chars();
+        let mut rows: Vec<(usize, Vec<Lens>)> = Vec::new();
+        for lens in lenses {
+            let offset = edits.iter().fold(lens.offset, |o, e| e.adjust(o)).min(len);
+            let row = self.buffer.offset_to_point(offset).row;
+            let moved = Lens {
+                offset,
+                ..lens.clone()
+            };
+            match rows.last_mut() {
+                Some((r, l)) if *r == row => l.push(moved),
+                _ => rows.push((row, vec![moved])),
+            }
+        }
+        rows.sort_by_key(|(r, _)| *r);
+        rows.dedup_by(|b, a| {
+            if a.0 == b.0 {
+                a.1.append(&mut b.1);
+                true
+            } else {
+                false
+            }
+        });
+        rows
     }
 
     /// Moves the diagnostics' ranges through the edits since their version.

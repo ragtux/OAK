@@ -972,6 +972,7 @@ impl Workspace {
                 | EditorEvent::ProblemFixes(_)
                 | EditorEvent::ApplyProblemFix { .. }
                 | EditorEvent::ResolveCompletion(_)
+                | EditorEvent::CodeVision { .. }
                 | EditorEvent::Accepted { .. } => this.on_smart_editor_event(&editor, event, cx),
             }
             cx.notify()

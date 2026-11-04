@@ -131,6 +131,9 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   in cells), in `text_secondary`, the hovered commit's rows filled with `git_blame_bg`.
 - **Run icons and status popups, the line-status popup:** boxes.
 - **Inlay hints:** in their own cells, in `text_tertiary`, with no pill background.
+- **Code vision:** a whole row of cells above the declaration, the lens titles (`4 implementations`)
+  in the line's columns from its first non-blank one, a cell between two, in
+  `editor.interline.text.default` (`.hovered` under the pointer); the row scrolls like a line.
 
 ### Find / replace bar
 - A command line at the bottom of the editor's island: a rule across the frame (`├──┤`) and one

@@ -496,6 +496,16 @@ Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
   third, the selected one in a read-only preview on the right with the path
   under it; `editor.interline.*`; ↑ ↓ ← → Enter and Escape, a double click
   opens; `crates/weep/src/usages.rs`),
+  code vision (`editor.showCodeVision`, the fifteenth pass's "4
+  implementations" over `pub struct Record`: the server's code lenses,
+  resolved, as 18.5 px rows above their lines that the display map lays
+  between the 22 px ones, the title in 10.2 px Inter from the line's first
+  non-blank column in `editor.interline.text.default`, `.hovered` under the
+  pointer; a click lists the lens's locations in the inline usages panel
+  headed "Implementations", or goes straight to the only one; rust-analyzer
+  is told WEEP handles `rust-analyzer.showReferences` so it sends them, and
+  its runnables are left to the gutter's run icon; asked again on
+  `workspace/codeLens/refresh` and after a "content modified" answer),
   `back` and `forward` over the positions jumped from, `rename` (the name
   in a prompt, preselected per `rename.selectOnRename`, the server's edit
   applied across open documents and files on disk), `quick-fixes` (a menu
@@ -511,9 +521,9 @@ Left for later: inlay hints (`textDocument/inlayHint`: Fleet shows
 parameter names and types inside the line, which needs the display map to
 widen lines), the run triangle in the gutter at `fn main` (a code lens),
 the inline rename (`editor.rename.current|entries` boxes
-and `rename.autoRenameOnTyping`; WEEP renames through a prompt), code
-vision (`editor.showCodeVision`: a row above declarations needs the display
-map), `goto/line` as Fleet's "Jump to" card in the Goto frame (an M3
+and `rename.autoRenameOnTyping`; WEEP renames through a prompt), Fleet's
+own panel for a code vision click (unprobed: WEEP's is the inline usages
+panel) and the separator between two lenses on one row, `goto/line` as Fleet's "Jump to" card in the Goto frame (an M3
 estimate the pass corrected on paper), `insert-snippet` (Fleet's
 `snippets.json` format is unread), `complete-statement`,
 `show-quick-fixes-preview`, `go-to-next|prev-history-item` (what Fleet's

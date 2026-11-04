@@ -60,6 +60,9 @@ enum Row {
 }
 
 pub struct UsagesPanel {
+    /// The header's word: "Usages", or a code vision lens's kind
+    /// ("Implementations", an estimate: Fleet's lens panel is unprobed).
+    title: SharedString,
     files: Vec<UsageFile>,
     collapsed: Vec<bool>,
     selected: Row,
@@ -81,8 +84,14 @@ impl Focusable for UsagesPanel {
 }
 
 impl UsagesPanel {
-    pub fn new(files: Vec<UsageFile>, open_document: OpenDocument, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        title: impl Into<SharedString>,
+        files: Vec<UsageFile>,
+        open_document: OpenDocument,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut panel = UsagesPanel {
+            title: title.into(),
             collapsed: vec![false; files.len()],
             files,
             selected: Row::File(0),
@@ -530,7 +539,8 @@ impl UsagesPanel {
         .size_full();
         let files = self.files.len();
         let summary = format!(
-            "Usages {} in {files} file{}",
+            "{} {} in {files} file{}",
+            self.title,
             self.count(),
             if files == 1 { "" } else { "s" }
         );
@@ -741,7 +751,11 @@ impl Render for UsagesPanel {
                                     .flex()
                                     .items_center()
                                     .pl(px(m.usages_pad_x))
-                                    .child(div().text_color(theme.text_primary).child("Usages"))
+                                    .child(
+                                        div()
+                                            .text_color(theme.text_primary)
+                                            .child(self.title.clone()),
+                                    )
                                     .child(
                                         div()
                                             .text_color(theme.interline_text)

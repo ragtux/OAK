@@ -463,6 +463,18 @@ pub mod metrics {
     pub const USAGES_CLOSE_SIZE: f32 = 20.;
     pub const USAGES_CLOSE_RIGHT: f32 = 14.;
     pub const USAGES_CLOSE_TOP: f32 = 13.5;
+    /// Code vision (`editor.showCodeVision`, Fleet's "code interlines";
+    /// fifteenth pass, the `smart` scene's first shot): "4 implementations"
+    /// in a row above `pub struct Record`, whose line numbers 6 and 7 stand
+    /// 40.5 apart on a 22 pitch, so the row is 18.5 tall. Its text starts at
+    /// the line's first non-blank column with its baseline 15.5 below the
+    /// row's top, in `editor.interline.text.default`; the ink 88.5 wide with
+    /// caps 7.5 tall is Inter at 10.2. Two lenses on one row (Fleet's shot
+    /// has one) are 12 apart (estimate).
+    pub const CODE_VISION_HEIGHT: f32 = 18.5;
+    pub const CODE_VISION_FONT: f32 = 10.2;
+    pub const CODE_VISION_BASELINE: f32 = 15.5;
+    pub const CODE_VISION_GAP: f32 = 12.;
     pub const FOLDED_MARK_CELLS: f32 = 3.;
     pub const FOLDED_MARK_RADIUS: f32 = 3.;
     /// The find bar (batch 5): a 416.67 × 28 field 16 from the island's right
@@ -1005,6 +1017,10 @@ scaled_metrics!(
     tree_badge_font = TREE_BADGE_FONT,
     tree_badge_plus_font = TREE_BADGE_PLUS_FONT,
     sticky_shadow = STICKY_SHADOW,
+    code_vision_height = CODE_VISION_HEIGHT,
+    code_vision_font = CODE_VISION_FONT,
+    code_vision_baseline = CODE_VISION_BASELINE,
+    code_vision_gap = CODE_VISION_GAP,
     folded_mark_cells = FOLDED_MARK_CELLS,
     folded_mark_radius = FOLDED_MARK_RADIUS,
     usages_gap_top = USAGES_GAP_TOP,

@@ -18,9 +18,11 @@
 //!   `textAttributes` keys.
 //! - `servers`: which server runs for which language, and where it is.
 //! - `markup`: Markdown from hovers and documentation as plain lines.
+//! - `lens`: code lenses as Fleet's code vision rows (runnables left out).
 
 pub mod client;
 pub mod edits;
+pub mod lens;
 pub mod markup;
 pub mod position;
 pub mod semantic;

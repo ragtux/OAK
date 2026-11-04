@@ -14,7 +14,7 @@
 //! (`editor.semanticHighlighting`).
 
 use super::*;
-use crate::document::{DocumentEvent, Problem, SemanticSpan, Severity};
+use crate::document::{DocumentEvent, Lens, Problem, SemanticSpan, Severity};
 use crate::editor::smart::Candidate;
 use crate::list_popup::{ListPopup, ListPopupEvent, ListRow};
 use crate::menu::MenuEntry;
@@ -24,8 +24,10 @@ use futures::channel::mpsc::unbounded;
 use futures::StreamExt;
 use gpui::{AnyElement, Task};
 use serde_json::Value;
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
+use std::rc::Rc;
 use weep_lsp::client::{config_from_settings, no_progress};
 use weep_lsp::edits::LineIndex;
 use weep_lsp::lsp_types as lsp;
@@ -33,9 +35,10 @@ use weep_lsp::lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
 };
 use weep_lsp::lsp_types::request::{
-    CodeActionRequest, CodeActionResolveRequest, Completion as CompletionRequest, ExecuteCommand,
-    Formatting, GotoDefinition, GotoTypeDefinition, HoverRequest, PrepareRenameRequest, References,
-    Rename, ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest,
+    CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, CodeLensResolve,
+    Completion as CompletionRequest, ExecuteCommand, Formatting, GotoDefinition,
+    GotoTypeDefinition, HoverRequest, PrepareRenameRequest, References, Rename,
+    ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest,
 };
 use weep_lsp::{Client, Encoding, Event, RequestId, ResponseError};
 use weep_syntax::Language;
@@ -82,6 +85,8 @@ pub(super) struct SmartMode {
     history: Vec<(PathBuf, usize)>,
     history_ix: usize,
     tokens_epoch: HashMap<PathBuf, u64>,
+    /// The same for the code lenses (the code vision rows).
+    lens_epoch: HashMap<PathBuf, u64>,
     /// The code actions behind the quick-fix menu and the problem card's rows.
     fix_actions: Vec<(usize, lsp::CodeActionOrCommand)>,
     /// The last completion answer's items (`completionItem/resolve` needs them).
@@ -106,6 +111,7 @@ impl SmartMode {
             history: Vec::new(),
             history_ix: 0,
             tokens_epoch: HashMap::new(),
+            lens_epoch: HashMap::new(),
             fix_actions: Vec::new(),
             completion_items: Vec::new(),
             completion_server: None,
@@ -116,6 +122,22 @@ impl SmartMode {
             card_focus: None,
         }
     }
+}
+
+/// A code lens answer while its lenses resolve: how many are still out,
+/// each lens (resolved or as it came), and whether one should be asked
+/// again.
+struct LensBatch {
+    waiting: usize,
+    lenses: Vec<Option<lsp::CodeLens>>,
+    retry: bool,
+}
+
+/// An error that means "ask again later": the content changed under the
+/// request (-32801) or the server cancelled it (-32802), as rust-analyzer
+/// does while its workspace loads.
+fn is_retry(e: &ResponseError) -> bool {
+    matches!(e.code, -32801 | -32802)
 }
 
 fn severity_of(d: &lsp::Diagnostic) -> Severity {
@@ -517,6 +539,7 @@ impl Workspace {
                 let paths: Vec<PathBuf> = self.smart.servers[ix].open.keys().cloned().collect();
                 for path in paths {
                     self.request_semantic_tokens(&path, cx);
+                    self.request_code_vision(&path, cx);
                 }
                 self.smart_refresh_editors(cx);
                 cx.notify();
@@ -576,7 +599,12 @@ impl Workspace {
                     self.request_semantic_tokens(&path, cx);
                 }
             }
-            Event::RefreshCodeLens => {}
+            Event::RefreshCodeLens => {
+                let paths: Vec<PathBuf> = self.smart.servers[ix].open.keys().cloned().collect();
+                for path in paths {
+                    self.request_code_vision(&path, cx);
+                }
+            }
             Event::Exited(code) => {
                 let server = self.smart.servers.remove(ix);
                 let name = server.client.name().to_string();
@@ -691,6 +719,7 @@ impl Workspace {
         .detach();
         if self.smart.servers[ix].ready {
             self.request_semantic_tokens(&path, cx);
+            self.request_code_vision(&path, cx);
         }
     }
 
@@ -733,6 +762,7 @@ impl Workspace {
                 }],
             });
         self.request_semantic_tokens(&path, cx);
+        self.request_code_vision(&path, cx);
     }
 
     fn smart_document_saved(&mut self, doc: &Entity<Document>, cx: &mut Context<Self>) {
@@ -772,6 +802,7 @@ impl Workspace {
             }
         }
         self.smart.tokens_epoch.remove(path);
+        self.smart.lens_epoch.remove(path);
     }
 
     /// A new view: told whether its document has a server.
@@ -952,6 +983,264 @@ impl Workspace {
         );
     }
 
+    /// Asks for the file's code lenses (Fleet's code vision) 250 ms after
+    /// the last change; whether they show is `editor.showCodeVision`'s, read
+    /// by the views, so the setting applies at once.
+    fn request_code_vision(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let epoch = self.smart.lens_epoch.entry(path.to_path_buf()).or_insert(0);
+        *epoch += 1;
+        let epoch = *epoch;
+        let path = path.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.smart.lens_epoch.get(&path) == Some(&epoch) {
+                    this.send_code_vision_request(&path, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// `textDocument/codeLens`, then `codeLens/resolve` for each lens that
+    /// came without its command (rust-analyzer's implementations); the
+    /// titles land on the document together, runnables left to the gutter.
+    fn send_code_vision_request(&mut self, path: &Path, _cx: &mut Context<Self>) {
+        let Some(ix) = self
+            .smart
+            .servers
+            .iter()
+            .position(|s| s.open.contains_key(path))
+        else {
+            return;
+        };
+        let server = &self.smart.servers[ix];
+        let provides = server
+            .client
+            .capabilities()
+            .is_some_and(|c| c.code_lens_provider.is_some());
+        if !server.ready || !provides {
+            return;
+        }
+        let Some(uri) = weep_lsp::uri(path) else {
+            return;
+        };
+        let Some(synced) = server.open.get(path) else {
+            return;
+        };
+        let buffer_version = synced.buffer_version;
+        let path = path.to_path_buf();
+        self.request::<CodeLensRequest>(
+            ix,
+            lsp::CodeLensParams {
+                text_document: lsp::TextDocumentIdentifier { uri },
+                work_done_progress_params: no_progress(),
+                partial_result_params: Default::default(),
+            },
+            move |this, result, cx| {
+                let value = match result {
+                    Ok(value) => value,
+                    Err(e) => {
+                        // Asked while the server was still loading: again.
+                        if is_retry(&e) {
+                            this.request_code_vision(&path, cx);
+                        }
+                        return;
+                    }
+                };
+                let lenses: Vec<lsp::CodeLens> =
+                    serde_json::from_value::<Option<Vec<lsp::CodeLens>>>(value)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(weep_lsp::lens::shows)
+                        .collect();
+                // Each lens resolved (or as it came); the last answer in
+                // hands them all to the document.
+                let unresolved = lenses.iter().filter(|l| l.command.is_none()).count();
+                let slots = Rc::new(RefCell::new(LensBatch {
+                    waiting: unresolved,
+                    lenses: vec![None; lenses.len()],
+                    retry: false,
+                }));
+                for (i, lens) in lenses.into_iter().enumerate() {
+                    if lens.command.is_some() {
+                        slots.borrow_mut().lenses[i] = Some(lens);
+                        continue;
+                    }
+                    let slots = slots.clone();
+                    let path = path.clone();
+                    this.request::<CodeLensResolve>(ix, lens, move |this, result, cx| {
+                        let retry = result.as_ref().is_err_and(is_retry);
+                        let resolved = result
+                            .ok()
+                            .and_then(|v| serde_json::from_value::<lsp::CodeLens>(v).ok());
+                        let done = {
+                            let mut s = slots.borrow_mut();
+                            s.lenses[i] = resolved;
+                            s.waiting -= 1;
+                            s.retry |= retry;
+                            s.waiting == 0
+                        };
+                        if done {
+                            let (all, retry) = {
+                                let mut s = slots.borrow_mut();
+                                (std::mem::take(&mut s.lenses), s.retry)
+                            };
+                            this.set_code_vision(&path, buffer_version, all, cx);
+                            if retry {
+                                this.request_code_vision(&path, cx);
+                            }
+                        }
+                    });
+                }
+                if unresolved == 0 {
+                    let all = std::mem::take(&mut slots.borrow_mut().lenses);
+                    this.set_code_vision(&path, buffer_version, all, cx);
+                }
+            },
+        );
+    }
+
+    /// The resolved lenses as the document's code vision, when the text is
+    /// still the one they were asked about (else the next answer will do).
+    fn set_code_vision(
+        &mut self,
+        path: &Path,
+        buffer_version: u64,
+        lenses: Vec<Option<lsp::CodeLens>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(server) = self
+            .smart
+            .servers
+            .iter()
+            .find(|s| s.open.contains_key(path))
+        else {
+            return;
+        };
+        let enc = server.client.encoding();
+        let Some(synced) = server.open.get(path) else {
+            return;
+        };
+        if synced.buffer_version != buffer_version {
+            return;
+        }
+        let index = LineIndex::new(&synced.text);
+        let lenses: Vec<Lens> = lenses
+            .into_iter()
+            .flatten()
+            .filter_map(|l| {
+                let command = l.command?;
+                (!weep_lsp::lens::is_runnable(&command)).then(|| Lens {
+                    offset: index.offset(l.range.start, enc),
+                    title: command.title.clone(),
+                    command,
+                })
+            })
+            .collect();
+        if let Some(doc) = self.document_at(path, cx) {
+            doc.update(cx, |d, cx| d.set_code_vision(buffer_version, lenses, cx));
+        }
+    }
+
+    /// A click on a code vision entry: its locations in the inline usages
+    /// panel under the line (one is gone to straight away); another
+    /// command goes to the server when it says it runs it.
+    fn code_vision_clicked(
+        &mut self,
+        editor: &Entity<EditorView>,
+        row: usize,
+        lens: &Lens,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(located) = self.locate(editor, Some(lens.offset), cx) else {
+            return;
+        };
+        let locations = weep_lsp::lens::locations(&lens.command);
+        if locations.is_empty() {
+            let runs = self.smart.servers[located.server]
+                .client
+                .capabilities()
+                .and_then(|c| c.execute_command_provider.as_ref())
+                .is_some_and(|p| p.commands.contains(&lens.command.command));
+            if runs {
+                self.request::<ExecuteCommand>(
+                    located.server,
+                    lsp::ExecuteCommandParams {
+                        command: lens.command.command.clone(),
+                        arguments: lens.command.arguments.clone().unwrap_or_default(),
+                        work_done_progress_params: no_progress(),
+                    },
+                    |_, _, _| {},
+                );
+            }
+            return;
+        }
+        let enc = self.encoding_of(located.server);
+        if let [only] = locations.as_slice() {
+            if let Some(path) = weep_lsp::path(&only.uri) {
+                let (range, _) = self.target_range(&path, only.range, enc, cx);
+                self.record_history(cx);
+                self.goto_position(path, range, cx);
+            }
+            return;
+        }
+        let files = self.usage_files(locations, enc, cx);
+        let title = weep_lsp::lens::heading(&lens.title);
+        self.show_usages(editor, row, title, files, cx);
+    }
+
+    /// Locations grouped by file for the inline usages panel: the active
+    /// file first, then by path and position (estimate), each line trimmed
+    /// as the list shows it.
+    fn usage_files(
+        &self,
+        locations: Vec<lsp::Location>,
+        enc: Encoding,
+        cx: &mut Context<Self>,
+    ) -> Vec<crate::usages::UsageFile> {
+        let active = self.active_editor().and_then(|e| e.read(cx).path(cx));
+        let mut found: Vec<(PathBuf, lsp::Range)> = locations
+            .into_iter()
+            .filter_map(|l| weep_lsp::path(&l.uri).map(|p| (p, l.range)))
+            .collect();
+        found.sort_by_key(|(path, range)| {
+            (
+                active.as_deref() != Some(path.as_path()),
+                path.clone(),
+                range.start,
+            )
+        });
+        let mut files: Vec<crate::usages::UsageFile> = Vec::new();
+        for (path, range) in found {
+            let (chars, _) = self.target_range(&path, range, enc, cx);
+            let line = self.line_text(&path, range.start.line as usize, cx);
+            let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+            let text: String = line.chars().skip(indent).collect();
+            let start_col = weep_lsp::position::column_from_lsp(&line, range.start.character, enc)
+                .saturating_sub(indent);
+            let usage = crate::usages::Usage {
+                hit: start_col..start_col + chars.len(),
+                range: chars,
+                row: range.start.line as usize,
+                text,
+            };
+            match files.last_mut() {
+                Some(f) if f.path == path => f.usages.push(usage),
+                _ => files.push(crate::usages::UsageFile {
+                    dir: crate::usages::dir_of(&self.root, &path),
+                    path,
+                    usages: vec![usage],
+                }),
+            }
+        }
+        files
+    }
+
     // ---- positions ---------------------------------------------------------------------
 
     /// The caret (or `offset`) of an editor as the server wants it, when
@@ -1057,6 +1346,9 @@ impl Workspace {
                 }
             }
             EditorEvent::ResolveCompletion(ix) => self.resolve_completion(editor, *ix, cx),
+            EditorEvent::CodeVision { row, lens } => {
+                self.code_vision_clicked(editor, *row, lens, cx)
+            }
             EditorEvent::Accepted {
                 command: Some(command),
             } => {
@@ -1484,12 +1776,13 @@ impl Workspace {
         &mut self,
         editor: &Entity<EditorView>,
         row: usize,
+        title: String,
         files: Vec<crate::usages::UsageFile>,
         cx: &mut Context<Self>,
     ) {
         self.close_usages(cx);
         let open_document = self.open_document_fn(cx);
-        let panel = cx.new(|cx| crate::usages::UsagesPanel::new(files, open_document, cx));
+        let panel = cx.new(|cx| crate::usages::UsagesPanel::new(title, files, open_document, cx));
         cx.subscribe(
             &panel,
             |this, panel, event: &crate::usages::UsagesEvent, cx| {
@@ -1906,46 +2199,8 @@ impl Workspace {
                     this.notify(Level::Info, title, Some("No usages found".into()), cx);
                     return;
                 }
-                // In file order, the active file first (estimate).
-                let active = this.active_editor().and_then(|e| e.read(cx).path(cx));
-                let mut found: Vec<(PathBuf, lsp::Range)> = locations
-                    .into_iter()
-                    .filter_map(|l| weep_lsp::path(&l.uri).map(|p| (p, l.range)))
-                    .collect();
-                found.sort_by_key(|(path, range)| {
-                    (
-                        active.as_deref() != Some(path.as_path()),
-                        path.clone(),
-                        range.start,
-                    )
-                });
-                // Grouped by file in that order, each usage's line trimmed as
-                // the list shows it.
-                let mut files: Vec<crate::usages::UsageFile> = Vec::new();
-                for (path, range) in found {
-                    let (chars, _) = this.target_range(&path, range, enc, cx);
-                    let line = this.line_text(&path, range.start.line as usize, cx);
-                    let indent = line.chars().take_while(|c| c.is_whitespace()).count();
-                    let text: String = line.chars().skip(indent).collect();
-                    let start_col =
-                        weep_lsp::position::column_from_lsp(&line, range.start.character, enc)
-                            .saturating_sub(indent);
-                    let usage = crate::usages::Usage {
-                        hit: start_col..start_col + chars.len(),
-                        range: chars,
-                        row: range.start.line as usize,
-                        text,
-                    };
-                    match files.last_mut() {
-                        Some(f) if f.path == path => f.usages.push(usage),
-                        _ => files.push(crate::usages::UsageFile {
-                            dir: crate::usages::dir_of(&this.root, &path),
-                            path,
-                            usages: vec![usage],
-                        }),
-                    }
-                }
-                this.show_usages(&editor, caret_row, files, cx);
+                let files = this.usage_files(locations, enc, cx);
+                this.show_usages(&editor, caret_row, "Usages".into(), files, cx);
             },
         );
     }

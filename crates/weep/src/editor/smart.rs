@@ -669,7 +669,10 @@ impl EditorView {
             return None;
         }
         let y = position.y - bounds.origin.y + self.scroll_y;
-        let d = (y / self.line_height()).floor().max(0.) as usize;
+        let d = self.map.row_at(y);
+        if self.map.is_gap(d) {
+            return None;
+        }
         let (row, seg) = self.map.at(d);
         if seg > 0 {
             return None;
@@ -743,7 +746,7 @@ impl EditorView {
         Bounds::new(
             point(
                 self.text_offset() + px(self.tm.gutter_width) + x - self.scroll_x,
-                lh * d as f32 - self.scroll_y,
+                self.map.top(d) - self.scroll_y,
             ),
             size(self.space_px, lh),
         )

@@ -17,16 +17,16 @@ use lsp_types::request::Request;
 use lsp_types::{
     ApplyWorkspaceEditParams, ClientCapabilities, ClientInfo, CodeActionCapabilityResolveSupport,
     CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
-    ConfigurationParams, GeneralClientCapabilities, HoverClientCapabilities, InitializeParams,
-    InitializeResult, InitializedParams, LogMessageParams, MarkupKind, MessageType,
-    ParameterInformationSettings, ProgressParams, ProgressParamsValue,
-    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, RenameClientCapabilities,
-    SemanticTokenModifier, SemanticTokenType, SemanticTokensClientCapabilities,
-    SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensServerCapabilities, SemanticTokensWorkspaceClientCapabilities,
-    ServerCapabilities, ShowMessageParams, SignatureHelpClientCapabilities,
-    SignatureInformationSettings, TextDocumentClientCapabilities,
+    CodeLensClientCapabilities, CodeLensWorkspaceClientCapabilities, CompletionClientCapabilities,
+    CompletionItemCapability, CompletionItemCapabilityResolveSupport, ConfigurationParams,
+    GeneralClientCapabilities, HoverClientCapabilities, InitializeParams, InitializeResult,
+    InitializedParams, LogMessageParams, MarkupKind, MessageType, ParameterInformationSettings,
+    ProgressParams, ProgressParamsValue, PublishDiagnosticsClientCapabilities,
+    PublishDiagnosticsParams, RenameClientCapabilities, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
+    SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, ShowMessageParams,
+    SignatureHelpClientCapabilities, SignatureInformationSettings, TextDocumentClientCapabilities,
     TextDocumentSyncClientCapabilities, TokenFormat, Url, WindowClientCapabilities,
     WorkDoneProgress, WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEdit,
     WorkspaceEditClientCapabilities, WorkspaceFolder,
@@ -661,6 +661,9 @@ pub fn client_capabilities() -> ClientCapabilities {
             semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
                 refresh_support: Some(true),
             }),
+            code_lens: Some(CodeLensWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             ..Default::default()
         }),
         text_document: Some(TextDocumentClientCapabilities {
@@ -734,6 +737,10 @@ pub fn client_capabilities() -> ClientCapabilities {
                 }),
                 ..Default::default()
             }),
+            // Fleet's code vision (`editor.showCodeVision`).
+            code_lens: Some(CodeLensClientCapabilities {
+                dynamic_registration: Some(false),
+            }),
             semantic_tokens: Some(SemanticTokensClientCapabilities {
                 requests: SemanticTokensClientCapabilitiesRequests {
                     range: Some(false),
@@ -788,7 +795,12 @@ pub fn client_capabilities() -> ClientCapabilities {
             position_encodings: Some(Encoding::offered()),
             ..Default::default()
         }),
-        ..Default::default()
+        // rust-analyzer sends a lens only for a command the client says it
+        // handles: `showReferences` is the code vision row's click (the
+        // runnables, not claimed, are the gutter's run icons instead).
+        experimental: Some(json!({
+            "commands": {"commands": ["rust-analyzer.showReferences"]}
+        })),
     }
 }
 
@@ -808,12 +820,16 @@ pub fn no_progress() -> WorkDoneProgressParams {
 mod tests {
     use super::*;
     use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument};
-    use lsp_types::request::{Completion, GotoDefinition, HoverRequest, SemanticTokensFullRequest};
+    use lsp_types::request::{
+        CodeLensRequest, CodeLensResolve, Completion, GotoDefinition, HoverRequest,
+        SemanticTokensFullRequest,
+    };
     use lsp_types::{
-        CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-        DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-        HoverParams, PartialResultParams, SemanticTokensParams, SemanticTokensResult,
-        TextDocumentContentChangeEvent, TextDocumentItem, VersionedTextDocumentIdentifier,
+        CodeLens, CodeLensParams, CompletionParams, CompletionResponse,
+        DidChangeTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
+        GotoDefinitionResponse, Hover, HoverParams, PartialResultParams, SemanticTokensParams,
+        SemanticTokensResult, TextDocumentContentChangeEvent, TextDocumentItem,
+        VersionedTextDocumentIdentifier,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -852,7 +868,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(
             dir.path().join("src/main.rs"),
-            "fn helper(x: u32) -> u32 {\n    x + 1\n}\n\nfn main() {\n    let total = helper(41);\n    println!(\"{total}\");\n}\n",
+            "fn helper(x: u32) -> u32 {\n    x + 1\n}\n\nfn main() {\n    let total = helper(41);\n    println!(\"{total}\");\n}\n\nstruct Probe;\n\nimpl Clone for Probe {\n    fn clone(&self) -> Probe {\n        Probe\n    }\n}\n",
         )
         .unwrap();
         dir
@@ -1071,6 +1087,35 @@ mod tests {
         assert!(decoded.iter().any(|t| t.line == 0
             && t.kind == "function"
             && t.modifiers.iter().any(|m| m == "declaration")));
+
+        // Code vision: the struct's implementations lens, resolved to a
+        // title and its locations; `main`'s runnables are the gutter's.
+        let lenses: Option<Vec<CodeLens>> = h.ask::<CodeLensRequest, _>(120, || CodeLensParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            work_done_progress_params: no_progress(),
+            partial_result_params: PartialResultParams::default(),
+        });
+        let lenses = lenses.expect("code lenses");
+        let probe = lenses
+            .iter()
+            .find(|l| l.range.start.line == 10 && crate::lens::shows(l))
+            .unwrap_or_else(|| panic!("a lens on `struct Probe`: {lenses:?}"))
+            .clone();
+        let resolved: CodeLens = if probe.command.is_some() {
+            probe
+        } else {
+            let id = h.client.request::<CodeLensResolve>(probe);
+            h.response(id, 60).expect("a resolved lens")
+        };
+        let command = resolved.command.expect("a resolved lens has a command");
+        assert_eq!(command.title, "1 implementation");
+        let found = crate::lens::locations(&command);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].range.start.line, 12);
+        assert!(lenses
+            .iter()
+            .filter(|l| l.range.start.line == 4)
+            .all(|l| !crate::lens::shows(l)));
 
         h.client.shutdown();
         let exited = h.wait(20, |e| matches!(e, Event::Exited(_)).then_some(()));
