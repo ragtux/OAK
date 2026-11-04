@@ -927,7 +927,7 @@ names the file; `~/.fleet` is not read), now the only one the driver writes.
 | find and replace fields | 28 tall, the replace field 6 below the find field (89-117 and 123-151 at x 1000) | the same |
 | Tab in the replace field (Ctrl+H focuses it when the query is not empty, so the scene's "Record" was typed there) | moves focus to the ↑ button (a focus ring on it); the scene's "Row" went nowhere | Tab did nothing → Fleet's whole order, seventeenth pass |
 | toggles' glyphs | "Aa" 16 wide, "W" 14, ".*" with an 8 × 8 asterisk | Inter text at the UI size: 15.5, 12.5 and 6 × 6 (open: Fleet's toggles may be icons or a larger size) |
-| query text | Inter (the UI font) | the editor's mono font (open) |
+| query text | Inter (the UI font) | the editor's mono font → the UI font in the find and replace fields (seventeenth pass: the placeholders' ink from 847 like Fleet's, "Record" within 1; the tui skin's cells stay monospace; the search tool's fields are unprobed and stay mono) |
 | click on the folded `{...}` | unfolds and puts the caret just inside the bracket (7:20 on `pub struct Record {`), both brackets matched | unfolded and left the caret where it was → the caret at the fold's inner start |
 | fold scene's aim | `pub struct Record` at y 241 below the code-vision row | WEEP draws the code-vision row too now: both editors' steps aim at 241; the unfold click moved from x 560 (on "Record") to 597, on the mark (585-608) |
 | code vision 6 s after launch | "4 implementations" | "0 implementations" (not reproduced in the seventeenth pass) |
@@ -961,6 +961,7 @@ and Space on a focused button; one shot after each key.
 | the text under the bar | hidden under the island's background from 3 above the field and 8 left of the chevron's box (line 1 cut after "high" in `reopen`) | shown through the fields → the bar painted on `island.background` with that margin (`FIND_BAR_COVER_*`; below the last row an estimate) |
 | the status badge | below the bar: its check at y 140-148.5 with the find row, pushed or not, 174-182.5 with the replace row (+34: the row and its gap), 88-96.5 without the bar | at the editor's top, so under the bar when the text was not pushed → set by the bar (`EditorView::set_status_top`): 140, 174 and 88, the check 1 to the left of Fleet's as before |
 | Ctrl+F on a word | the query is the word at the caret ("record") | not compared |
+| the match counter | "1/8" dimmer, at most `#5E5E60`, its ink 1071.5-1091 | `text.secondary` (`#FFFFFF85`, at most `#858687`), 1073.5-1090.5: a dimmer key, unidentified (open) |
 
 Code vision: the "0 implementations" WEEP showed 6 s after launch in the
 sixteenth pass did not come back. WEEP launched on the fixture showed "4

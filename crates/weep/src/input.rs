@@ -128,7 +128,7 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
-    /// Paint with the editor's monospace face (the find field) or the UI face.
+    /// Paint with the editor's monospace face (the search tool's fields) or the UI face.
     pub mono: bool,
     /// The tui skin: keep the cell before the text for the `›` shown while
     /// focused (true by default; a field with its own prompt turns it off).

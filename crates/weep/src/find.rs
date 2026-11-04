@@ -94,15 +94,17 @@ impl FindBar {
                 ),
                 cx,
             );
-            input.mono = true;
-            // The bar draws its own prompt cells (`/`, `↳`) in the tui skin.
+            // Fleet's fields are in the UI face, Inter (sixteenth pass); the
+            // tui skin's cells are monospace anyway. The bar draws its own
+            // prompt cells (`/`, `↳`) in the tui skin.
             input.tui_prompt = false;
             input
         });
         let replace = cx.new(|cx| {
             let mut input = TextInput::new("Replace", cx);
-            input.mono = true;
-            // The bar draws its own prompt cells (`/`, `↳`) in the tui skin.
+            // Fleet's fields are in the UI face, Inter (sixteenth pass); the
+            // tui skin's cells are monospace anyway. The bar draws its own
+            // prompt cells (`/`, `↳`) in the tui skin.
             input.tui_prompt = false;
             input
         });
