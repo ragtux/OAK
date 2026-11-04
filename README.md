@@ -28,7 +28,7 @@
 WEEP is a native code editor written in Rust on [GPUI](https://gpui.rs), built to look and
 behave like [JetBrains Fleet](https://www.jetbrains.com/fleet/): the islands layout, the
 Files, Search, Git, Terminal and Run tools, Fleet's own theme, keymap and settings files
-loaded unchanged, and every size and colour read off a running copy rather than guessed at.
+loaded unchanged, and every size and color read off a running copy rather than guessed at.
 No JVM, no account, no telemetry. It is an independent project and is not affiliated with
 JetBrains.
 
@@ -36,7 +36,7 @@ JetBrains.
 
 *WEEP on its own source: the Files tree with git status, a Rust file in the editor, the Git
 tool docked below with its commit field and changed files, and find-in-files results on the
-right — Fleet's islands at Fleet's sizes, in Fleet Dark's colours, on macOS.*
+right — Fleet's islands at Fleet's sizes, in Fleet Dark's colors, on macOS.*
 
 ## Status
 
@@ -46,9 +46,9 @@ themes and keymaps — and then adds Smart Mode through language servers in plac
 IntelliJ backend. The first Smart Mode pass is in, through rust-analyzer, which is also
 what Fleet's own Rust Smart Mode runs. Against the tables Fleet 1.48.261 ships, WEEP binds
 145 of its 203 default-chord action ids, reads 104 of its 430 `settings.json` keys and
-paints 199 of its 684 theme colour keys.
+paints 199 of its 684 theme color keys.
 
-> **Keep your work in version control.** WEEP is v0.1.0 with no release builds. It saves
+> **Keep your work in version control.** WEEP is v0.1.0, a first pre-release. It saves
 > files in place and autosaves by default, as Fleet does; many sizes on the newest surfaces
 > are still estimates until their probe scenes run against Fleet.
 
@@ -69,7 +69,7 @@ folding with the gutter chevrons and sticky lines, expand and shrink selection, 
 matching, indent guides, soft wrap, the indenter and auto-pairs, `.editorconfig`, trailing
 space trimming, autosave, line-ending and case commands, and paste from history.
 Highlighting is tree-sitter (Rust, JSON, TOML, Markdown) mapped onto Fleet's
-`textAttributes` keys, so a Fleet theme colours it unchanged.
+`textAttributes` keys, so a Fleet theme colors it unchanged.
 
 ## The tools
 
@@ -105,7 +105,7 @@ ahead; the debugger over DAP is M8.
 Fleet is the reference, and "looks like Fleet" is measured rather than felt. A probe scene
 is played into Fleet and into WEEP with real input, both are captured at the same zoom, and
 `tools/fleet-probe/compare.py` holds every island, tab-row and status-bar edge to within one
-logical pixel and every colour to the theme's exact value. Every size lives in one table
+logical pixel and every color to the theme's exact value. Every size lives in one table
 (`metrics` in `crates/weep/src/theme.rs`), and `docs/fleet-probe.md` records where each
 value came from or marks it as an estimate. `tools/fleet-probe/inventory.py` and
 `coverage.py` count what Fleet ships and how much of it WEEP covers.
@@ -122,7 +122,12 @@ Fleet distribution ships except the openly licensed fonts.
 | A Chromium (JCEF) Markdown preview | Markdown painted natively |
 | JVM, account, telemetry | None of them |
 
-## Build and run
+## Download and build
+
+The [latest release](https://github.com/ragtux/WEEP/releases/latest) carries an archive per
+platform — `linux-x64.tar.gz`, `macos-universal.zip`, `windows-x64.zip` — each with its
+`.sha256`. Nothing is signed; on macOS the first launch needs right-click > Open. From
+source:
 
 ```
 cargo run --release -p weep -- <folder-or-file>
@@ -201,10 +206,10 @@ The milestones, what each covers and what is left in each live in `docs/roadmap.
 is probed is `docs/probe-plan.md`. The manual is published at [weep.cc](https://weep.cc),
 built from `site/` in this repository.
 
-## Licences
+## Licenses
 
 WEEP is MIT; see [LICENSE](LICENSE). It bundles Inter and JetBrains Mono (SIL OFL) and icons
 from JetBrains' IntelliJ Platform `expui` set (Apache 2.0, header in every file); WEEP's own
-icons are MIT. The bundled themes are value tables in Fleet's file format carrying the colours
+icons are MIT. The bundled themes are value tables in Fleet's file format carrying the colors
 Fleet 1.48 renders with; see `docs/fleet-probe.md`. JetBrains and Fleet are trademarks of
 JetBrains s.r.o.

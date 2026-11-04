@@ -1,12 +1,23 @@
 ---
-title: Build and run
-description: Building WEEP from source with cargo on Linux, NixOS, Windows and macOS, and the weep command line.
+title: Download and run
+description: The Linux, macOS and Windows archives, building WEEP from source with cargo, and the weep command line.
 ---
 
-# Build and run
+# Download and run
 
-No release builds yet. WEEP builds with stable Rust (1.85 or newer); `rust-toolchain.toml`
-picks it, with rustfmt and clippy.
+The [latest release](https://github.com/ragtux/WEEP/releases/latest) carries one archive per
+platform, each with the binary and a `.sha256`. Nothing is signed.
+
+| Platform | Archive | Notes |
+|---|---|---|
+| Linux | `weep-<version>-linux-x64.tar.gz` | Built on Ubuntu 22.04, so glibc 2.35 or newer. Holds `weep`, plus `weep.desktop` and `weep.png` for `~/.local/share/applications` and `~/.local/share/icons/hicolor/256x256/apps` |
+| macOS | `weep-<version>-macos-universal.zip` | A `WEEP.app` for both arches. Unnotarized: the first launch needs right-click > Open |
+| Windows | `weep-<version>-windows-x64.zip` | One `weep.exe`, with a static C runtime — no Visual C++ Redistributable |
+
+## From source
+
+WEEP builds with stable Rust (1.85 or newer); `rust-toolchain.toml` picks it, with rustfmt
+and clippy.
 
 ```
 git clone https://github.com/ragtux/WEEP

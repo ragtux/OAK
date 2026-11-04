@@ -6,7 +6,7 @@
   "description": "WEEP is a native code editor written in Rust on GPUI, in the shape of JetBrains Fleet: Fleet's islands layout, its theme and keymap files, its sizes and colors, read off a running copy. Free software under the MIT license, not affiliated with JetBrains.",
   "footer": "WEEP is free software from RAGTUX LLC, under the MIT license. An independent project, not affiliated with JetBrains.",
   "mark": "/assets/favicon.svg",
-  "cta": { "text": "Build it", "url": "/docs/install/" },
+  "cta": { "text": "Download", "url": "https://github.com/ragtux/WEEP/releases/latest" },
   "styles": ["/assets/weep.css"],
   "nav": [
     { "text": "Manual", "url": "/docs/" },
@@ -27,7 +27,7 @@
       "items": [
         { "text": "Contents", "url": "/docs/" },
         { "text": "What WEEP is", "url": "/docs/what-weep-is/" },
-        { "text": "Build and run", "url": "/docs/install/" }
+        { "text": "Download and run", "url": "/docs/install/" }
       ]
     },
     {

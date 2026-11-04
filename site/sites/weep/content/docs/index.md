@@ -11,7 +11,7 @@ This manual covers what is built today; anything missing says so in place.
 > **Note** An independent project, not affiliated with JetBrains. Fleet is a trademark of
 > JetBrains s.r.o.
 
-> **Warning** v0.1.0, no release builds yet. WEEP saves in place and autosaves; keep your
+> **Warning** v0.1.0, a first pre-release. WEEP saves in place and autosaves; keep your
 > work in version control.
 
 ## Getting started
@@ -19,7 +19,7 @@ This manual covers what is built today; anything missing says so in place.
 | Page | What it covers |
 |---|---|
 | [What WEEP is](/docs/what-weep-is/) | What it is, what it is not, and how it relates to Fleet |
-| [Build and run](/docs/install/) | The toolchain, building on each platform, the command line |
+| [Download and run](/docs/install/) | The archives, building from source, the command line |
 
 ## Using WEEP
 
