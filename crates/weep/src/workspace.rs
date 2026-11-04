@@ -190,6 +190,8 @@ struct Panel {
     /// Where the `+` and the "Open Tool" button were last laid out, for the chooser.
     plus_anchor: Rc<Cell<Bounds<Pixels>>>,
     button_anchor: Rc<Cell<Bounds<Pixels>>>,
+    /// The tui skin's grid as last laid out, columns by rows of cells.
+    tui_grid: Rc<Cell<(usize, usize)>>,
 }
 
 impl Panel {
@@ -203,6 +205,7 @@ impl Panel {
             button_focus: cx.focus_handle(),
             plus_anchor: Rc::new(Cell::new(Bounds::default())),
             button_anchor: Rc::new(Cell::new(Bounds::default())),
+            tui_grid: Rc::new(Cell::new((0, 0))),
         }
     }
 
@@ -306,6 +309,8 @@ struct Pane {
     focus_handle: FocusHandle,
     /// The split's find and replace bar, over its active editor.
     find: Entity<FindBar>,
+    /// The tui skin's grid as last laid out, columns by rows of cells.
+    tui_grid: Rc<Cell<(usize, usize)>>,
 }
 
 impl Pane {
@@ -322,6 +327,7 @@ impl Pane {
             scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             find,
+            tui_grid: Rc::new(Cell::new((0, 0))),
         }
     }
 
@@ -1896,6 +1902,7 @@ impl Workspace {
             .overflow_hidden()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_tab(
         &self,
         p: usize,
@@ -1904,6 +1911,7 @@ impl Workspace {
         m: &Metrics,
         window: &Window,
         cx: &Context<Self>,
+        tui: Option<crate::skin::Cell>,
     ) -> Stateful<Div> {
         let pane = &self.panes[p];
         let tab = &pane.tabs[ix];
@@ -1955,27 +1963,50 @@ impl Workspace {
                 ix as u64,
             ))
             .group("tab")
-            .h(px(m.editor_tab_height))
-            .pl(px(m.editor_tab_pad_left))
-            .pr(px(m.editor_tab_pad_right))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .rounded(px(m.editor_tab_radius))
-            .border(px(m.editor_tab_border))
-            .border_color(border)
-            .bg(bg)
-            .text_color(text)
-            // The selected tab's label is semibold (Windows probe: 3 px wider).
-            .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
-            .cursor_pointer()
-            // The dragged tab's slot stays, empty, until the drop (batch 3).
-            .when(hidden, |d| d.opacity(0.))
-            .when(!selected, |d| {
-                d.hover(|s| {
-                    s.bg(theme.tab_bg_hovered)
-                        .text_color(theme.tab_text_hovered)
-                })
+            .map(|d| match tui {
+                Some(cell) => d
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .when(hidden, |d| d.opacity(0.))
+                    .map(|d| {
+                        if focused {
+                            d.bg(theme.list_bg_focused)
+                                .text_color(theme.list_text_focused)
+                        } else if selected {
+                            d.bg(theme.list_bg_selected).text_color(theme.text_primary)
+                        } else {
+                            d.bg(theme.island_background)
+                                .text_color(theme.text_secondary)
+                                .hover(|s| s.text_color(theme.text_primary))
+                        }
+                    })
+                    .when(selected, |d| d.font_weight(FontWeight::BOLD)),
+                None => d
+                    .h(px(m.editor_tab_height))
+                    .pl(px(m.editor_tab_pad_left))
+                    .pr(px(m.editor_tab_pad_right))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .rounded(px(m.editor_tab_radius))
+                    .border(px(m.editor_tab_border))
+                    .border_color(border)
+                    .bg(bg)
+                    .text_color(text)
+                    // The selected tab's label is semibold (Windows probe: 3 px wider).
+                    .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
+                    .cursor_pointer()
+                    // The dragged tab's slot stays, empty, until the drop (batch 3).
+                    .when(hidden, |d| d.opacity(0.))
+                    .when(!selected, |d| {
+                        d.hover(|s| {
+                            s.bg(theme.tab_bg_hovered)
+                                .text_color(theme.tab_text_hovered)
+                        })
+                    }),
             })
             .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(hovered_bg))
             .on_drop(move |dragged: &DraggedTab, _, cx| {
@@ -2018,41 +2049,151 @@ impl Workspace {
                 });
             })
             .tooltip(Tooltip::text(path_text))
-            .child(
-                div()
-                    .size(px(m.icon_size))
-                    .flex_shrink_0()
-                    .mr(px(m.editor_tab_icon_gap))
-                    .relative()
+            .map(|d| match tui {
+                Some(cell) => {
+                    let (glyph, glyph_color) = crate::skin::file_glyph(&title, theme);
+                    let cells = |n: usize| px(n as f32 * cell.w);
+                    d.child(div().w(cells(1)).flex_shrink_0())
+                        .child(
+                            div()
+                                .w(cells(1))
+                                .flex_shrink_0()
+                                .when(!focused, |d| d.text_color(glyph_color))
+                                .child(glyph),
+                        )
+                        .child(div().w(cells(1)).flex_shrink_0())
+                        .child(
+                            div()
+                                .w(cells(title.chars().count()))
+                                .flex_shrink_0()
+                                .whitespace_nowrap()
+                                .when(preview, |d| d.italic())
+                                .child(title),
+                        )
+                        .child(div().w(cells(1)).flex_shrink_0())
+                        // `●` while dirty, which the close cross replaces on hover.
+                        .child(
+                            div()
+                                .id("tab-close")
+                                .w(cells(2))
+                                .flex_shrink_0()
+                                .relative()
+                                .group("tab-close")
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    close.update(cx, |this, cx| {
+                                        this.close_tab_at(p, ix, window, cx)
+                                    });
+                                })
+                                .child(if dirty {
+                                    div().group_hover("tab-close", |s| s.invisible()).child("●")
+                                } else {
+                                    div()
+                                        .invisible()
+                                        .group_hover("tab", |s| s.visible())
+                                        .child("×")
+                                })
+                                .when(dirty, |d| {
+                                    d.child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0()
+                                            .invisible()
+                                            .group_hover("tab-close", |s| s.visible())
+                                            .child("×"),
+                                    )
+                                }),
+                        )
+                }
+                None => d
                     .child(
                         div()
-                            .absolute()
-                            .inset_0()
-                            .when(close_left, |d| d.group_hover("tab", |s| s.invisible()))
-                            .children(
-                                icon_path.map(|p| icon(p, m.icon_size, theme.icon_secondary)),
-                            ),
+                            .size(px(m.icon_size))
+                            .flex_shrink_0()
+                            .mr(px(m.editor_tab_icon_gap))
+                            .relative()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .when(close_left, |d| d.group_hover("tab", |s| s.invisible()))
+                                    .children(
+                                        icon_path
+                                            .map(|p| icon(p, m.icon_size, theme.icon_secondary)),
+                                    ),
+                            )
+                            .when(close_left, |d| {
+                                d.child(
+                                    div()
+                                        .id("tab-close-left")
+                                        .group("tab-close-left")
+                                        .absolute()
+                                        .inset_0()
+                                        .invisible()
+                                        .group_hover("tab", |s| s.visible())
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .on_click({
+                                            let close = close.clone();
+                                            move |_, window, cx| {
+                                                cx.stop_propagation();
+                                                close.update(cx, |this, cx| {
+                                                    this.close_tab_at(p, ix, window, cx)
+                                                });
+                                            }
+                                        })
+                                        .child(
+                                            icon(
+                                                "expui/general/closeSmall",
+                                                m.icon_size,
+                                                theme.tab_close_icon,
+                                            )
+                                            .group_hover("tab-close-left", move |s| {
+                                                s.text_color(close_hovered)
+                                            }),
+                                        ),
+                                )
+                            }),
                     )
-                    .when(close_left, |d| {
+                    .child(
+                        div()
+                            .whitespace_nowrap()
+                            .when(preview, |d| d.italic())
+                            .child(title),
+                    )
+                    .when(dirty, |d| {
                         d.child(
                             div()
-                                .id("tab-close-left")
-                                .group("tab-close-left")
-                                .absolute()
-                                .inset_0()
-                                .invisible()
-                                .group_hover("tab", |s| s.visible())
+                                .w(px(m.editor_tab_dot_box))
+                                .h(px(m.icon_size))
+                                .ml(px(m.editor_tab_close_gap))
+                                .flex_shrink_0()
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .on_click({
-                                    let close = close.clone();
-                                    move |_, window, cx| {
-                                        cx.stop_propagation();
-                                        close.update(cx, |this, cx| {
-                                            this.close_tab_at(p, ix, window, cx)
-                                        });
-                                    }
+                                .child(div().size(px(m.editor_tab_dot)).rounded_full().bg(text)),
+                        )
+                    })
+                    .when(!close_left, |d| {
+                        d.child(
+                            div()
+                                .id("tab-close")
+                                .size(px(m.icon_size))
+                                .flex_shrink_0()
+                                .ml(px(m.editor_tab_close_gap))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(3. * m.zoom))
+                                .group("tab-close")
+                                .hover(|s| s.bg(theme.ghost_hovered))
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    close.update(cx, |this, cx| {
+                                        this.close_tab_at(p, ix, window, cx)
+                                    });
                                 })
                                 .child(
                                     icon(
@@ -2060,58 +2201,10 @@ impl Workspace {
                                         m.icon_size,
                                         theme.tab_close_icon,
                                     )
-                                    .group_hover("tab-close-left", move |s| {
-                                        s.text_color(close_hovered)
-                                    }),
+                                    .group_hover("tab-close", move |s| s.text_color(close_hovered)),
                                 ),
                         )
                     }),
-            )
-            .child(
-                div()
-                    .whitespace_nowrap()
-                    .when(preview, |d| d.italic())
-                    .child(title),
-            )
-            .when(dirty, |d| {
-                d.child(
-                    div()
-                        .w(px(m.editor_tab_dot_box))
-                        .h(px(m.icon_size))
-                        .ml(px(m.editor_tab_close_gap))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(div().size(px(m.editor_tab_dot)).rounded_full().bg(text)),
-                )
-            })
-            .when(!close_left, |d| {
-                d.child(
-                    div()
-                        .id("tab-close")
-                        .size(px(m.icon_size))
-                        .flex_shrink_0()
-                        .ml(px(m.editor_tab_close_gap))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(3. * m.zoom))
-                        .group("tab-close")
-                        .hover(|s| s.bg(theme.ghost_hovered))
-                        .on_click(move |_, window, cx| {
-                            cx.stop_propagation();
-                            close.update(cx, |this, cx| this.close_tab_at(p, ix, window, cx));
-                        })
-                        .child(
-                            icon(
-                                "expui/general/closeSmall",
-                                m.icon_size,
-                                theme.tab_close_icon,
-                            )
-                            .group_hover("tab-close", move |s| s.text_color(close_hovered)),
-                        ),
-                )
             })
     }
 
@@ -2125,7 +2218,7 @@ impl Workspace {
     ) -> impl IntoElement {
         let pane = &self.panes[p];
         let tabs: Vec<_> = (0..pane.tabs.len())
-            .map(|ix| self.render_tab(p, ix, theme, m, window, cx))
+            .map(|ix| self.render_tab(p, ix, theme, m, window, cx, None))
             .collect();
         let overflow = pane.scroll.max_offset().x > px(0.);
         let offset = pane.scroll.offset().x;
@@ -2260,18 +2353,70 @@ impl Workspace {
                     },
                 )),
         };
+        let show_tabs = Self::settings(cx).editor_show_tabs()
+            && !Self::settings(cx).editor_distraction_free_mode();
+        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            let cell = crate::skin::Cell::measure(window, theme, m);
+            let strip: Vec<gpui::AnyElement> = if show_tabs {
+                let drop_end = cx.entity();
+                vec![div()
+                    .id(ElementId::NamedInteger("tui-tabs".into(), p as u64))
+                    .flex()
+                    .overflow_x_scroll()
+                    .track_scroll(&pane.scroll)
+                    .children((0..pane.tabs.len()).flat_map(|ix| {
+                        [
+                            self.render_tab(p, ix, theme, m, window, cx, Some(cell))
+                                .into_any_element(),
+                            div().w(px(cell.w)).flex_shrink_0().into_any_element(),
+                        ]
+                    }))
+                    .child(
+                        div()
+                            .id("tabs-end")
+                            .w(px(2. * cell.w))
+                            .h(px(cell.h))
+                            .flex_shrink_0()
+                            .on_drop(move |dragged: &DraggedTab, _, cx| {
+                                let (fp, fi) = (dragged.pane, dragged.index);
+                                drop_end.update(cx, |this, cx| {
+                                    this.dragging_tab = None;
+                                    this.move_tab((fp, fi), p, None, cx);
+                                });
+                            }),
+                    )
+                    .into_any_element()]
+            } else {
+                Vec::new()
+            };
+            let focused = pane.focus_handle.contains_focused(window, cx);
+            return self
+                .island(theme, m)
+                .track_focus(&pane.focus_handle)
+                .flex_1()
+                .min_w_0()
+                .child(crate::skin::framed(
+                    cell,
+                    &pane.tui_grid,
+                    strip,
+                    body.size_full().into_any_element(),
+                    theme,
+                    *m,
+                    focused,
+                ))
+                .into_any_element();
+        }
         self.island(theme, m)
             .track_focus(&pane.focus_handle)
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
-            .when(
-                Self::settings(cx).editor_show_tabs()
-                    && !Self::settings(cx).editor_distraction_free_mode(),
-                |d| d.child(self.render_tab_row(p, theme, m, window, cx)),
-            )
+            .when(show_tabs, |d| {
+                d.child(self.render_tab_row(p, theme, m, window, cx))
+            })
             .child(body)
+            .into_any_element()
     }
 
     /// A panel's tab row: its tools, then the `+` that opens the chooser.
@@ -2633,13 +2778,17 @@ impl Workspace {
                     .child(other.label())
                     .into_any_element(),
             };
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .child(self.render_panel_tabs(side, theme, m, window, cx))
-                .child(div().flex_1().min_h_0().child(body))
-                .into_any_element()
+            if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+                self.render_tui_panel(side, body, theme, m, window, cx)
+            } else {
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(self.render_panel_tabs(side, theme, m, window, cx))
+                    .child(div().flex_1().min_h_0().child(body))
+                    .into_any_element()
+            }
         };
         self.island(theme, m)
             .track_focus(&panel.focus_handle)
@@ -2649,6 +2798,142 @@ impl Workspace {
                 _ => d.w(px(panel.size * m.zoom)).h_full(),
             })
             .child(content)
+    }
+
+    /// A panel in the tui skin: a frame round the island's whole cells, the
+    /// tool tabs set into its top edge as labels (the frame's line shows
+    /// between them), and the tool inside, one cell in from every side and
+    /// sized in whole cells. The grid is read back while painting, so a
+    /// resize settles one frame later.
+    fn render_tui_panel(
+        &self,
+        side: Side,
+        body: gpui::AnyElement,
+        theme: &Theme,
+        m: &Metrics,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        use crate::skin::Cell as Grid;
+        let panel = self.panel(side);
+        let cell = Grid::measure(window, theme, m);
+        let cols = panel.tui_grid.get().0;
+        let panel_focused = panel.focus_handle.contains_focused(window, cx);
+        // One label: ` name ` on the island's colour, so it cuts the frame;
+        // the active tab in reverse video. Widths are whole cells.
+        let label = |text: String, active: bool, focused: bool| {
+            let chars = text.chars().count();
+            div()
+                .h(px(cell.h))
+                .w(px(chars as f32 * cell.w))
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .cursor_pointer()
+                .map(|d| {
+                    if focused {
+                        d.bg(theme.list_bg_focused)
+                            .text_color(theme.list_text_focused)
+                    } else if active {
+                        d.bg(theme.list_bg_selected).text_color(theme.text_primary)
+                    } else {
+                        d.bg(theme.island_background)
+                            .text_color(theme.text_secondary)
+                            .hover(|s| s.text_color(theme.text_primary))
+                    }
+                })
+                .when(active, |d| d.font_weight(FontWeight::BOLD))
+                .child(text)
+        };
+        let mut used = 2; // the corner and one cell of line before the first tab
+        let mut strip: Vec<gpui::AnyElement> = Vec::new();
+        for (ix, tab) in panel.tools.iter().enumerate() {
+            let active = ix == panel.active;
+            let closable = matches!(tab.tool, Tool::Terminal | Tool::Run);
+            let failed = tab.tool == Tool::Run
+                && self
+                    .run_view(tab.instance)
+                    .is_some_and(|v| v.read(cx).failed());
+            let mut text = format!(" {}", self.tool_tab_label(*tab, cx));
+            if failed {
+                text.push_str(" !");
+            }
+            text.push(' ');
+            let width = text.chars().count() + if closable { 2 } else { 0 };
+            if used + width + 1 > cols.saturating_sub(5) && ix > 0 {
+                break; // no room: the rest stay behind `+`, as Fleet clips them
+            }
+            used += width + 1;
+            let select = cx.entity();
+            let menu = cx.entity();
+            let close = cx.entity();
+            strip.push(
+                div()
+                    .id(ElementId::NamedInteger(
+                        format!("tui-panel-tab-{}", side.index()).into(),
+                        ix as u64,
+                    ))
+                    .flex()
+                    .flex_shrink_0()
+                    .on_click(move |_, window, cx| {
+                        select.update(cx, |this, cx| {
+                            this.panel_mut(side).active = ix;
+                            this.focus_tool_tab(side, ix, window, cx);
+                            cx.notify();
+                        })
+                    })
+                    .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+                        let position = event.position;
+                        menu.update(cx, |this, cx| this.panel_tab_menu(side, ix, position, cx));
+                    })
+                    .child(
+                        label(text, active, active && panel_focused)
+                            .when(failed, |d| d.text_color(theme.icon_red)),
+                    )
+                    .when(closable, |d| {
+                        d.child(
+                            div()
+                                .id("tui-panel-tab-close")
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    close.update(cx, |this, cx| {
+                                        this.close_tool_tab(side, ix, window, cx)
+                                    });
+                                })
+                                .child(
+                                    label("× ".into(), active, active && panel_focused)
+                                        .hover(|s| s.text_color(theme.icon_red)),
+                                ),
+                        )
+                    })
+                    .into_any_element(),
+            );
+            // A cell of the frame's line between labels.
+            strip.push(div().w(px(cell.w)).flex_shrink_0().into_any_element());
+        }
+        let anchor = panel.plus_anchor.clone();
+        let anchor_read = panel.plus_anchor.clone();
+        let open = cx.entity();
+        strip.push(
+            div()
+                .id(ElementId::NamedInteger(
+                    "tui-panel-plus".into(),
+                    side.index() as u64,
+                ))
+                .relative()
+                .on_click(move |_, window, cx| {
+                    let bounds = anchor_read.get();
+                    open.update(cx, |this, cx| this.open_chooser(side, bounds, window, cx));
+                })
+                .child(
+                    canvas(move |bounds, _, _| anchor.set(bounds), |_, _, _, _| {})
+                        .absolute()
+                        .size_full(),
+                )
+                .child(label(" + ".into(), false, false))
+                .into_any_element(),
+        );
+        crate::skin::framed(cell, &panel.tui_grid, strip, body, theme, *m, panel_focused)
+            .into_any_element()
     }
 
     /// The 8 px gap beside a panel: the splitter (batch 2).
@@ -2799,6 +3084,7 @@ impl Workspace {
         &self,
         theme: &Theme,
         m: &Metrics,
+        tui: Option<crate::skin::Cell>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut crumbs: Vec<SharedString> = Vec::new();
@@ -2840,6 +3126,11 @@ impl Workspace {
             );
         }
         let entity = cx.entity();
+        if let Some(cell) = tui {
+            return self
+                .render_tui_status_bar(cell, crumbs, right, theme, m, cx)
+                .into_any_element();
+        }
         let sep = |theme: &Theme| {
             div()
                 .px(px(7. * m.zoom))
@@ -2887,6 +3178,84 @@ impl Workspace {
                         .child(t)
                 }),
             ))
+            .into_any_element()
+    }
+
+    /// The status bar in the tui skin: one row of cells, as tmux draws it. The
+    /// workspace's name in reverse video, the breadcrumbs, and on the right
+    /// the line ending, caret, encoding and language between `│` rules. The
+    /// text starts in the panels' first column of content.
+    fn render_tui_status_bar(
+        &self,
+        cell: crate::skin::Cell,
+        crumbs: Vec<SharedString>,
+        right: Vec<SharedString>,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let cells = |n: usize| px(n as f32 * cell.w);
+        let seg = |text: String| {
+            div()
+                .w(cells(text.chars().count()))
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .child(text)
+        };
+        let rule = |text: &'static str| seg(text.into()).text_color(theme.text_tertiary);
+        let name = format!(" {} ", self.file_tree.read(cx).root_name());
+        let entity = cx.entity();
+        div()
+            .h(px(cell.h))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .pl(px(m.island_margin + cell.w))
+            .pr(px(m.island_margin + cell.w))
+            .text_color(theme.status_text)
+            .child(
+                seg(name)
+                    .bg(theme.list_bg_focused)
+                    .text_color(theme.list_text_focused)
+                    .font_weight(FontWeight::BOLD),
+            )
+            .child(div().w(cells(1)).flex_shrink_0())
+            .child(div().flex().min_w_0().overflow_hidden().children(
+                crumbs.into_iter().enumerate().flat_map(|(i, c)| {
+                    let mut parts = Vec::new();
+                    if i > 0 {
+                        parts.push(rule(" / "));
+                    }
+                    parts.push(seg(c.to_string()));
+                    parts
+                }),
+            ))
+            .child(div().flex_1())
+            .children(right.into_iter().enumerate().flat_map(|(i, t)| {
+                let entity = entity.clone();
+                let item = div()
+                    .id(ElementId::NamedInteger("status".into(), i as u64))
+                    .flex_shrink_0()
+                    .when(i == 0, |d| {
+                        d.cursor_pointer()
+                            .hover(|s| s.text_color(theme.text_primary))
+                            .on_click(move |_, window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.change_line_endings(&ChangeLineEndings, window, cx)
+                                })
+                            })
+                    })
+                    .child(seg(t.to_string()));
+                let mut parts = Vec::new();
+                if i > 0 {
+                    parts.push(rule(" │ ").into_any_element());
+                }
+                parts.push(item.into_any_element());
+                parts
+            }))
     }
 }
 
@@ -3141,7 +3510,11 @@ impl Render for Workspace {
                     .child(middle),
             )
             .when(Self::settings(cx).editor_show_status_bar(), |d| {
-                d.child(self.render_status_bar(&theme, &m, cx))
+                d.child({
+                    let tui = (crate::skin::Skin::current(cx) == crate::skin::Skin::Tui)
+                        .then(|| crate::skin::Cell::measure(window, &theme, &m));
+                    self.render_status_bar(&theme, &m, tui, cx)
+                })
             })
             .children(chooser)
             .children(prompt)

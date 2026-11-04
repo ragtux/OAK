@@ -1,6 +1,6 @@
 //! WEEP: a native Rust/GPUI code editor in the shape of JetBrains Fleet.
 //!
-//! `weep [path ...] [--theme <name|file>] [--zoom <level>] [--size WxH]`
+//! `weep [path ...] [--theme <name|file>] [--zoom <level>] [--skin fleet|tui] [--size WxH]`
 //! opens a folder (or a file's folder, with the file in a tab) in the
 //! Fleet-style shell: the toolbar, the tool panels, the editor splits with
 //! their tabs, the status bar. Settings come from `~/.config/weep/settings.json`
@@ -35,6 +35,7 @@ mod search_tool;
 mod settings;
 mod settings_schema;
 mod settings_view;
+mod skin;
 mod terminal;
 mod theme;
 mod toolbar;
@@ -53,6 +54,7 @@ struct Args {
     paths: Vec<PathBuf>,
     theme: Option<String>,
     zoom: Option<f32>,
+    skin: Option<String>,
     size: Option<(f32, f32)>,
     /// `--scratch`: open a new scratch file, as Fleet's launcher does.
     scratch: bool,
@@ -63,6 +65,7 @@ fn parse_args() -> Args {
         paths: Vec::new(),
         theme: None,
         zoom: None,
+        skin: None,
         size: None,
         scratch: false,
     };
@@ -71,6 +74,7 @@ fn parse_args() -> Args {
         match a.as_str() {
             "--theme" => args.theme = it.next(),
             "--zoom" => args.zoom = it.next().and_then(|z| z.parse().ok()),
+            "--skin" => args.skin = it.next(),
             "--scratch" => args.scratch = true,
             "--size" => {
                 args.size = it.next().and_then(|s| {
@@ -80,7 +84,7 @@ fn parse_args() -> Args {
             }
             "-h" | "--help" => {
                 println!(
-                    "usage: weep [path ...] [--theme dark|dark_purple|light|<file.json>] [--zoom 0.7..2.0] [--size WxH] [--scratch]"
+                    "usage: weep [path ...] [--theme dark|dark_purple|light|<file.json>] [--zoom 0.7..2.0] [--skin fleet|tui] [--size WxH] [--scratch]"
                 );
                 std::process::exit(0);
             }
@@ -191,12 +195,23 @@ fn main() {
     };
     let (root, open) = workspace::resolve_args(&args.paths);
     let scratch = args.scratch;
+    let skin = args
+        .skin
+        .or_else(|| std::env::var("WEEP_SKIN").ok())
+        .map(|s| {
+            skin::Skin::parse(&s).unwrap_or_else(|| {
+                eprintln!("weep: unknown skin {s:?}; using fleet");
+                skin::Skin::Fleet
+            })
+        })
+        .unwrap_or_default();
     let window_size = args.size.unwrap_or((1280., 800.));
 
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             settings::init(overrides, cx);
+            cx.set_global(skin);
             settings::watch(cx);
             if let Err(e) = cx.text_system().add_fonts(assets::fonts()) {
                 eprintln!("weep: could not register the bundled fonts: {e}");

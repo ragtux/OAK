@@ -20,6 +20,7 @@ use crate::assets::{file_icon, icon};
 use crate::input::{InputEvent, TextInput};
 use crate::scrollbar::scrollbar;
 use crate::settings::AppSettings;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::Entity;
 use gpui::{
@@ -210,6 +211,10 @@ struct Row {
     depth: usize,
     /// The index path into the tree, to find the node again.
     index: Vec<usize>,
+    /// For the tui skin's guides: whether this is its folder's last entry,
+    /// and for each ancestor level below the root whether a line runs on.
+    last: bool,
+    rails: Vec<bool>,
 }
 
 pub struct FileTree {
@@ -229,6 +234,8 @@ pub struct FileTree {
     statuses: HashMap<PathBuf, Status>,
     focus_handle: FocusHandle,
     scroll: UniformListScrollHandle,
+    /// The tui skin's grid as last laid out, columns by rows of cells.
+    tui_grid: (usize, usize),
 }
 
 impl EventEmitter<FileTreeEvent> for FileTree {}
@@ -280,6 +287,7 @@ impl FileTree {
             statuses: HashMap::new(),
             focus_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            tui_grid: (0, 0),
         };
         tree.rebuild_rows();
         tree
@@ -421,12 +429,21 @@ impl FileTree {
             expanded: true,
             depth: 0,
             index: Vec::new(),
+            last: true,
+            rails: Vec::new(),
         });
-        fn walk(node: &Node, depth: usize, index: &mut Vec<usize>, rows: &mut Vec<Row>) {
+        fn walk(
+            node: &Node,
+            depth: usize,
+            index: &mut Vec<usize>,
+            rails: &mut Vec<bool>,
+            rows: &mut Vec<Row>,
+        ) {
             let Some(children) = &node.children else {
                 return;
             };
             for (i, child) in children.iter().enumerate() {
+                let last = i + 1 == children.len();
                 index.push(i);
                 rows.push(Row {
                     path: child.path.clone(),
@@ -435,14 +452,18 @@ impl FileTree {
                     expanded: child.expanded,
                     depth,
                     index: index.clone(),
+                    last,
+                    rails: rails.clone(),
                 });
                 if child.is_dir && child.expanded {
-                    walk(child, depth + 1, index, rows);
+                    rails.push(!last);
+                    walk(child, depth + 1, index, rails, rows);
+                    rails.pop();
                 }
                 index.pop();
             }
         }
-        walk(&self.root, 1, &mut Vec::new(), &mut rows);
+        walk(&self.root, 1, &mut Vec::new(), &mut Vec::new(), &mut rows);
         self.rows = rows;
         let last = self.rows.len().saturating_sub(1);
         if let Some(s) = self.selected {
@@ -929,6 +950,7 @@ impl FileTree {
         theme: &Theme,
         m: &Metrics,
         entity: &gpui::Entity<FileTree>,
+        tui: Option<(Cell, usize)>,
     ) -> gpui::Stateful<gpui::Div> {
         let row = &self.rows[ix];
         let selected = self.is_selected(ix);
@@ -1004,15 +1026,118 @@ impl FileTree {
             .as_ref()
             .filter(|r| r.path == row.path)
             .map(|r| r.input.clone());
+        let not_renaming = renaming.is_none();
+        let body: gpui::AnyElement = match tui {
+            Some((cell, cols)) => self.tui_row_body(
+                ix,
+                cell,
+                cols,
+                selected,
+                focused,
+                highlighted,
+                text_color,
+                status,
+                renaming,
+                theme,
+                m,
+            ),
+            None => div()
+                .h_full()
+                .w_full()
+                .flex()
+                .items_center()
+                .pl(px(indent))
+                .pr(px(m.panel_pad_x))
+                .rounded(px(m.tree_row_radius))
+                .when(selected && focused, |d| d.bg(theme.list_bg_focused))
+                .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
+                .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                .when(highlighted, |d| {
+                    d.border(px(m.tree_highlight_border))
+                        .border_color(theme.tree_focus_border)
+                })
+                // The renamed row: Fleet's focus ring around icon and field.
+                .when(renaming.is_some(), |d| {
+                    d.border(px(m.input_focus_border))
+                        .border_color(theme.input_focus_border)
+                })
+                .when(!is_root, |d| {
+                    d.child(
+                        div()
+                            .size(px(m.icon_size))
+                            .flex_shrink_0()
+                            .mr(px(m.tree_icon_gap))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .map(|d| {
+                                if row.is_dir {
+                                    let chevron = if row.expanded {
+                                        "expui/general/chevronDown"
+                                    } else {
+                                        "expui/general/chevronRight"
+                                    };
+                                    d.child(icon(chevron, m.icon_size, theme.icon_secondary))
+                                } else {
+                                    d.child(icon(
+                                        file_icon(&first),
+                                        m.icon_size,
+                                        theme.icon_secondary,
+                                    ))
+                                }
+                            }),
+                    )
+                })
+                .map(|d| match renaming {
+                    Some(input) => d.child(div().flex_1().min_w_0().h_full().child(input)),
+                    None => d.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .min_w_0()
+                            // The root row's label runs to the island's edge and is clipped
+                            // there, without an ellipsis (Windows probe).
+                            .map(|d| {
+                                if is_root {
+                                    d.whitespace_nowrap()
+                                } else {
+                                    d.truncate()
+                                }
+                            })
+                            .text_color(text_color)
+                            .child(first)
+                            .children(rest.into_iter().flat_map(|name| {
+                                [
+                                    div()
+                                        .px(px(5. * m.zoom))
+                                        .text_color(theme.text_tertiary)
+                                        .child("/"),
+                                    div().child(name),
+                                ]
+                            })),
+                    ),
+                })
+                .children(badge.map(|b| {
+                    div()
+                        .ml_auto()
+                        .size(px(m.tree_badge_box))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(b)
+                }))
+                .into_any_element(),
+        };
         // The row keeps the 26 px pitch; the background inside it is 24 tall
         // (Windows probe), so the hover and selection washes sit 1 px in.
         div()
             .id(id)
-            .h(px(m.tree_row_height))
-            .py(px(m.tree_row_inset))
+            .h(px(tui.map_or(m.tree_row_height, |(cell, _)| cell.h)))
+            .when(tui.is_none(), |d| d.py(px(m.tree_row_inset)))
             .w_full()
             .cursor_pointer()
-            .when(renaming.is_none(), |d| {
+            .when(not_renaming, |d| {
                 d.on_mouse_down(MouseButton::Left, {
                     let entity = entity.clone();
                     move |event, window, cx| {
@@ -1055,93 +1180,164 @@ impl FileTree {
                     entity.update(cx, |this, cx| this.drop_onto(ix, &paths, cx));
                 }
             })
+            .child(body)
+    }
+
+    /// A row in the tui skin, one cell high and `cols` cells wide: the guides,
+    /// a mark cell (the folder's chevron or the file's glyph), a gap, the
+    /// name, and the git status as a letter in the last column. The washes
+    /// are square and run the full row, like a terminal's reverse video.
+    #[allow(clippy::too_many_arguments)]
+    fn tui_row_body(
+        &self,
+        ix: usize,
+        cell: Cell,
+        cols: usize,
+        selected: bool,
+        focused: bool,
+        highlighted: bool,
+        text_color: gpui::Hsla,
+        status: Option<Status>,
+        renaming: Option<Entity<TextInput>>,
+        theme: &Theme,
+        m: &Metrics,
+    ) -> gpui::AnyElement {
+        let row = &self.rows[ix];
+        let is_root = row.index.is_empty();
+        let mark = |text: &'static str, color| {
+            div()
+                .w(px(cell.w))
+                .flex_shrink_0()
+                .text_color(color)
+                .child(text)
+        };
+        let (glyph, glyph_color) = if row.is_dir {
+            (if row.expanded { "▾" } else { "▸" }, theme.icon_secondary)
+        } else {
+            skin::file_glyph(&row.names[0], theme)
+        };
+        let letter = status.and_then(|s| {
+            Some(match s {
+                Status::Added => ("A", theme.icon_green),
+                Status::Untracked => ("?", theme.icon_green),
+                Status::Modified => ("M", theme.icon_blue),
+                Status::Renamed => ("R", theme.icon_blue),
+                Status::Deleted => ("D", theme.icon_red),
+                Status::Conflict => ("U", theme.icon_yellow),
+                Status::Ignored => return None,
+            })
+        });
+        let name: SharedString = row.names.join(" / ").into();
+        div()
+            .h(px(cell.h))
+            .w(px(cols as f32 * cell.w))
+            .flex()
+            .items_center()
+            .when(selected && focused, |d| d.bg(theme.list_bg_focused))
+            .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
+            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+            .when(highlighted, |d| {
+                d.border(px(m.tree_highlight_border))
+                    .border_color(theme.tree_focus_border)
+            })
+            .when(!is_root, |d| {
+                d.child(skin::guides(
+                    cell,
+                    row.rails.clone(),
+                    row.last,
+                    theme.text_tertiary,
+                    *m,
+                ))
+            })
+            .child(mark(glyph, glyph_color))
+            .child(div().w(px(cell.w)).flex_shrink_0())
+            .map(|d| match renaming {
+                Some(input) => d.child(div().flex_1().min_w_0().h_full().child(input)),
+                None => d.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_color(text_color)
+                        .when(is_root, |d| d.font_weight(gpui::FontWeight::BOLD))
+                        .child(name),
+                ),
+            })
+            .children(letter.map(|(text, color)| mark(text, color)))
+            .into_any_element()
+    }
+
+    /// The tree in the tui skin: rows of whole cells filling the tool's
+    /// area, which the panel sizes in whole cells inside its frame.
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::measure(window, &theme, &m);
+        let focused = self.focus_handle.is_focused(window);
+        let count = self.rows.len();
+        let entity = cx.entity();
+        let inner_cols = self.tui_grid.0;
+        let measure = {
+            let entity = entity.clone();
+            gpui::canvas(
+                move |bounds, _, cx| {
+                    let grid = (
+                        Cell::fit(bounds.size.width, cell.w),
+                        Cell::fit(bounds.size.height, cell.h),
+                    );
+                    entity.update(cx, |this, cx| {
+                        if this.tui_grid != grid {
+                            this.tui_grid = grid;
+                            cx.notify();
+                        }
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let theme_for_rows = theme.clone();
+        let base = self.scroll.0.borrow().base_handle.clone();
+        div()
+            .size_full()
+            .relative()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .child(measure)
             .child(
                 div()
-                    .h_full()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .pl(px(indent))
-                    .pr(px(m.panel_pad_x))
-                    .rounded(px(m.tree_row_radius))
-                    .when(selected && focused, |d| d.bg(theme.list_bg_focused))
-                    .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
-                    .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
-                    .when(highlighted, |d| {
-                        d.border(px(m.tree_highlight_border))
-                            .border_color(theme.tree_focus_border)
-                    })
-                    // The renamed row: Fleet's focus ring around icon and field.
-                    .when(renaming.is_some(), |d| {
-                        d.border(px(m.input_focus_border))
-                            .border_color(theme.input_focus_border)
-                    })
-                    .when(!is_root, |d| {
-                        d.child(
-                            div()
-                                .size(px(m.icon_size))
-                                .flex_shrink_0()
-                                .mr(px(m.tree_icon_gap))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .map(|d| {
-                                    if row.is_dir {
-                                        let chevron = if row.expanded {
-                                            "expui/general/chevronDown"
-                                        } else {
-                                            "expui/general/chevronRight"
-                                        };
-                                        d.child(icon(chevron, m.icon_size, theme.icon_secondary))
-                                    } else {
-                                        d.child(icon(
-                                            file_icon(&first),
-                                            m.icon_size,
-                                            theme.icon_secondary,
-                                        ))
-                                    }
-                                }),
-                        )
-                    })
-                    .map(|d| match renaming {
-                        Some(input) => d.child(div().flex_1().min_w_0().h_full().child(input)),
-                        None => d.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .min_w_0()
-                                // The root row's label runs to the island's edge and is clipped
-                                // there, without an ellipsis (Windows probe).
-                                .map(|d| {
-                                    if is_root {
-                                        d.whitespace_nowrap()
-                                    } else {
-                                        d.truncate()
-                                    }
+                    .size_full()
+                    .child(
+                        uniform_list("file-tree", count, move |range, _window, cx| {
+                            let this = entity.read(cx);
+                            range
+                                .map(|ix| {
+                                    this.render_row(
+                                        ix,
+                                        focused,
+                                        &theme_for_rows,
+                                        &m,
+                                        &entity,
+                                        Some((cell, inner_cols)),
+                                    )
                                 })
-                                .text_color(text_color)
-                                .child(first)
-                                .children(rest.into_iter().flat_map(|name| {
-                                    [
-                                        div()
-                                            .px(px(5. * m.zoom))
-                                            .text_color(theme.text_tertiary)
-                                            .child("/"),
-                                        div().child(name),
-                                    ]
-                                })),
-                        ),
-                    })
-                    .children(badge.map(|b| {
-                        div()
-                            .ml_auto()
-                            .size(px(m.tree_badge_box))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(b)
-                    })),
+                                .collect()
+                        })
+                        .track_scroll(&self.scroll)
+                        .size_full(),
+                    )
+                    .child(scrollbar(
+                        "file-tree-scrollbar",
+                        &base,
+                        m.scrollbar_thumb,
+                        &theme,
+                        &m,
+                    )),
             )
     }
 }
@@ -1149,6 +1345,12 @@ impl FileTree {
 impl Render for FileTree {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_options(cx);
+        let tui = Skin::current(cx) == Skin::Tui;
+        let content = if tui {
+            Some(self.render_tui(window, cx))
+        } else {
+            None
+        };
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let focused = self.focus_handle.is_focused(window);
@@ -1169,24 +1371,37 @@ impl Render for FileTree {
             .on_action(cx.listener(Self::select_action))
             .size_full()
             .relative()
-            .child(
-                div().size_full().px(px(m.panel_pad_x)).child(
-                    uniform_list("file-tree", count, move |range, _window, cx| {
-                        let this = entity.read(cx);
-                        range
-                            .map(|ix| this.render_row(ix, focused, &theme_for_rows, &m, &entity))
-                            .collect()
-                    })
-                    .track_scroll(&self.scroll)
-                    .size_full(),
-                ),
-            )
-            .child(scrollbar(
-                "file-tree-scrollbar",
-                &base,
-                m.scrollbar_thumb,
-                &theme,
-                &m,
-            ))
+            .map(|d| match content {
+                Some(tui) => d.child(tui),
+                None => d
+                    .child(
+                        div().size_full().px(px(m.panel_pad_x)).child(
+                            uniform_list("file-tree", count, move |range, _window, cx| {
+                                let this = entity.read(cx);
+                                range
+                                    .map(|ix| {
+                                        this.render_row(
+                                            ix,
+                                            focused,
+                                            &theme_for_rows,
+                                            &m,
+                                            &entity,
+                                            None,
+                                        )
+                                    })
+                                    .collect()
+                            })
+                            .track_scroll(&self.scroll)
+                            .size_full(),
+                        ),
+                    )
+                    .child(scrollbar(
+                        "file-tree-scrollbar",
+                        &base,
+                        m.scrollbar_thumb,
+                        &theme,
+                        &m,
+                    )),
+            })
     }
 }
