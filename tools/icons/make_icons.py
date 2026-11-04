@@ -1,27 +1,48 @@
 #!/usr/bin/env python3
-"""Render WEEP's logo into the Windows application icon.
+"""Render WEEP's logo into the application icons each platform wants.
 
-    python tools/windows/make_icon.py        writes crates/weep/assets/icons/weep/weep.ico
+    python tools/icons/make_icons.py         writes all three
+    python tools/icons/make_icons.py --ico   just Windows
+
+    crates/weep/assets/icons/weep/weep.ico    Windows: build.rs links it as the
+                                              icon and version resource
+    crates/weep/assets/icons/weep/weep.icns   macOS: WEEP.app's CFBundleIconFile
+    crates/weep/assets/icons/weep/weep.png    Linux: the .desktop entry's icon
 
 The drawing is `crates/weep/assets/icons/weep/logo.svg` (WEEP's own, MIT): a leaf
 on the 16-unit grid, its outline at 25% fill with a 1-unit stroke, and a stem
 with two veins. Pillow cannot read SVG, so the paths are copied here; keep the
 two in step. The leaf is painted in WEEP's dark-theme foreground (#E0E1E4, the
-toolbar logo's colour) on a rounded square of the panel background (#18191B),
+toolbar logo's color) on a rounded square of the panel background (#18191B),
 both measured off a screenshot of the running app.
 
 Each size is drawn 8x larger and downsampled, so the small sizes stay crisp
-rather than being shrunk from 256. Needs Pillow.
+rather than being shrunk from 256. Needs Pillow; `iconutil` is not needed, the
+.icns is written here (its entries are PNGs).
 """
+import io
 import os
+import struct
 import sys
 
 from PIL import Image, ImageDraw
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-OUT = os.path.join(REPO, "crates", "weep", "assets", "icons", "weep", "weep.ico")
+ICONS = os.path.join(REPO, "crates", "weep", "assets", "icons", "weep")
+OUT = os.path.join(ICONS, "weep.ico")
+OUT_ICNS = os.path.join(ICONS, "weep.icns")
+OUT_PNG = os.path.join(ICONS, "weep.png")
 
 SIZES = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
+# The .icns entry types, each a PNG at its pixel size: the 1x sizes (icp*) and
+# the Retina pairs (ic11 is 16@2x, ic14 256@2x), as Apple's icon sets carry them.
+ICNS_TYPES = [
+    (b"icp4", 16), (b"icp5", 32), (b"ic11", 32), (b"ic12", 64),
+    (b"ic07", 128), (b"ic13", 256), (b"ic08", 256), (b"ic14", 512),
+    (b"ic09", 512), (b"ic10", 1024),
+]
+# Linux desktop icon: one PNG, at the size the menus and docks ask for most.
+PNG_SIZE = 256
 SUPERSAMPLE = 8
 BACKGROUND = (0x18, 0x19, 0x1B, 255)
 FOREGROUND = (0xE0, 0xE1, 0xE4)
@@ -83,10 +104,46 @@ def render(size):
     return im.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def main():
+def write_ico():
     images = [render(s) for s in SIZES]
     images[-1].save(OUT, format="ICO", sizes=[(s, s) for s in SIZES], append_images=images[:-1])
     print(OUT)
+
+
+def write_icns():
+    """An .icns is "icns" + total length, then type + length + payload per entry."""
+    drawn = {}
+    entries = []
+    for kind, size in ICNS_TYPES:
+        if size not in drawn:
+            buf = io.BytesIO()
+            render(size).save(buf, format="PNG")
+            drawn[size] = buf.getvalue()
+        png = drawn[size]
+        entries.append(kind + struct.pack(">I", len(png) + 8) + png)
+    body = b"".join(entries)
+    with open(OUT_ICNS, "wb") as f:
+        f.write(b"icns" + struct.pack(">I", len(body) + 8) + body)
+    print(OUT_ICNS)
+
+
+def write_png():
+    render(PNG_SIZE).save(OUT_PNG, format="PNG")
+    print(OUT_PNG)
+
+
+def main():
+    wanted = [a for a in sys.argv[1:] if a.startswith("--")]
+    for flag in wanted:
+        if flag not in ("--ico", "--icns", "--png"):
+            print(f"usage: make_icons.py [--ico] [--icns] [--png]", file=sys.stderr)
+            return 2
+    if not wanted or "--ico" in wanted:
+        write_ico()
+    if not wanted or "--icns" in wanted:
+        write_icns()
+    if not wanted or "--png" in wanted:
+        write_png()
 
 
 if __name__ == "__main__":

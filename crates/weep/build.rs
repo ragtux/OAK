@@ -4,7 +4,7 @@
 //! resource script written here carries none; a second RT_MANIFEST would collide.
 //!
 //! The icon is `assets/icons/weep/weep.ico`, rendered from the logo by
-//! `tools/windows/make_icon.py`. The version comes from the crate's.
+//! `tools/icons/make_icons.py`. The version comes from the crate's.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

@@ -42,6 +42,18 @@ site-media:
     done
     @echo "site/sites/weep/assets/img/app refreshed from docs/img/app"
 
+# Linux: release build, checks and dist/weep-<version>-linux-<arch>.tar.gz
+package-linux:
+    tools/linux/package.sh
+
+# macOS: release build of both arches, WEEP.app and dist/weep-<version>-macos-universal.zip
+package-macos:
+    tools/macos/package.sh
+
 # Windows: release build, checks and dist/weep-<version>-windows-<arch>.zip
 package-windows:
     pwsh -NoProfile -File tools/windows/package.ps1
+
+# Re-render the application icons from the logo (needs Pillow)
+icons:
+    python3 tools/icons/make_icons.py

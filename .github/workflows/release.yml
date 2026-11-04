@@ -1,0 +1,106 @@
+# Builds WEEP for Linux, macOS and Windows and attaches the archives to a release.
+#
+# Runs on a v* tag, or by hand (Actions > Release > Run workflow) with the tag to
+# attach to. Each job runs the platform's own packaging script, the same one used by
+# hand, so a local build and a release build produce the same archive:
+#
+#   tools/linux/package.sh      weep-<version>-linux-x64.tar.gz
+#   tools/macos/package.sh      weep-<version>-macos-universal.zip
+#   tools/windows/package.ps1   weep-<version>-windows-x64.zip
+#
+# Linux is built on Ubuntu 22.04 deliberately: the tarball needs that glibc or newer.
+# macOS is built on the arm64 runner and joined with lipo, so one zip serves both
+# Apple architectures. Nothing is signed or notarized.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to attach the builds to (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-22.04
+            package: tools/linux/package.sh
+          - name: macos-universal
+            os: macos-14
+            package: tools/macos/package.sh
+          - name: windows-x64
+            os: windows-latest
+            package: pwsh -NoProfile -File tools/windows/package.ps1
+    steps:
+      - uses: actions/checkout@v4
+
+      # gpui links libxcb and libxkbcommon, and font-kit freetype and fontconfig.
+      - name: Install the build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libfontconfig-dev libfreetype6-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libssl-dev libvulkan-dev libgl1-mesa-dev
+
+      - name: The toolchain rust-toolchain.toml asks for
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: release-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: release-${{ matrix.name }}-
+
+      - name: Build and package
+        shell: bash
+        run: ${{ matrix.package }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload the archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ls -l dist
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --verify-tag --prerelease \
+                 --title "WEEP $TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber

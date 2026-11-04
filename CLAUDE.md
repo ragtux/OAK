@@ -33,7 +33,11 @@ crates/weep-lsp      A language server on its pipes (no gpui), Fleet's Smart Mod
 crates/weep-git      Git through the `git` binary (no gpui): branch and branches, per-file status with the index state, stage/unstage/commit, line status against HEAD, a file's diff and HEAD's text, history, blame, fetch, push, pull, revert and ahead/behind (Repo, Status, StatusEntry, Hunk, Commit, BlameLine, Branch); a Myers line diff and git's hunks as side-by-side rows (LineOp), dates as Fleet prints them; the parsers are tested without git
 docs/                fleet-probe.md (measurements and provenance), roadmap.md (milestones), probe-plan.md (method and harnesses)
 tools/fleet-probe    scripts: inventory Fleet's actions/settings/theme keys, coverage vs WEEP, extract themes, measure screenshots
-tools/windows        make_icon.py (weep.ico from the logo), package.ps1 (release build, checks, dist/ zip)
+tools/icons          make_icons.py (weep.ico, weep.icns and weep.png from the logo)
+tools/linux          package.sh (release build, checks, dist/ tar.gz with the .desktop entry)
+tools/macos          package.sh (release build of both arches, WEEP.app, dist/ zip)
+tools/windows        package.ps1 (release build, checks, dist/ zip)
+.github/workflows    release.yml (a v* tag builds all three and attaches them to the release)
 ```
 
 ## Commands

@@ -135,11 +135,26 @@ A stable toolchain (1.85+) builds it on Linux (with a Vulkan driver), on Windows
 MSVC Build Tools, and on macOS with Xcode's command line tools. When the repository sits on
 a network share or volume, point `CARGO_TARGET_DIR` at a local disk.
 
-On Windows, `pwsh tools/windows/package.ps1` (or `just package-windows`) makes the release
-zip in `dist/`: one `weep.exe` with the licences of what it bundles. A release build is a GUI
-program with its icon and version resource (`crates/weep/build.rs`) and a static C runtime
-(`.cargo/config.toml`), so it needs no Visual C++ Redistributable; started from a terminal it
-still prints `--help` and its diagnostics there.
+## Packaging
+
+One script per platform builds the release archive into `dist/`, each with the binary and
+the licenses of what it bundles:
+
+| Platform | Command | Archive |
+| --- | --- | --- |
+| Linux | `tools/linux/package.sh` (`just package-linux`) | `weep-<version>-linux-x64.tar.gz`, with the `.desktop` entry and its icon |
+| macOS | `tools/macos/package.sh` (`just package-macos`) | `weep-<version>-macos-universal.zip`, a `WEEP.app` for both arches |
+| Windows | `pwsh tools/windows/package.ps1` (`just package-windows`) | `weep-<version>-windows-x64.zip` |
+
+`.github/workflows/release.yml` runs the three on a `v*` tag and attaches the archives,
+with their `.sha256` files, to the release; Linux is built on Ubuntu 22.04, so the tarball
+needs that glibc or newer. Nothing is signed or notarized: on macOS the first launch needs
+right-click > Open.
+
+On Windows a release build is a GUI program with its icon and version resource
+(`crates/weep/build.rs`) and a static C runtime (`.cargo/config.toml`), so it needs no
+Visual C++ Redistributable; started from a terminal it still prints `--help` and its
+diagnostics there.
 
 `weep --theme dark|dark_purple|light` picks a bundled theme; `--theme path.json` loads any
 Fleet-format theme, including one from `~/.config/JetBrains/Fleet/themes`. Settings come
