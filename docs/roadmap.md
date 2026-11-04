@@ -120,7 +120,7 @@ click, rendered spaces, the wrap rule, the find bar's Tab order and focus
 ring, its current match on reopening, when it pushes the text down, the text
 it hides, the status badge under it and the fields' focus border (1 px on
 whole device pixels), its width and the query's font. Still open from them: the
-toggles' glyphs, the match counter's colour (dimmer in Fleet), one
+toggles' glyphs, the match counter's digits (3 wider in Fleet), one
 wrap column more than Fleet, the Outline and VerticalThin carets, and the
 sticky lines (the fixture has no Rust file longer than the window). Left for later: the smooth caret (`editor.caretSmoothAnimation`
 is read, not animated), an "in selection" button on the find bar (the mode

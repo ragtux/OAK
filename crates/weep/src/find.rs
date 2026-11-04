@@ -726,10 +726,12 @@ impl Render for FindBar {
         // holds the focus; the chevron sits outside the field.
         let find_frame_focused = find_focused || ring.is_some_and(|b| b != Stop::Chevron);
         let counter = self.counter_text();
+        // `text.tertiary`: Fleet's "1/8" peaks at `#5E5E60` on the Mac where
+        // `text.secondary` text peaks at `#858687` (seventeenth pass).
         let counter_color = if self.error.is_some() {
             theme.text_dangerous
         } else {
-            theme.text_secondary
+            theme.text_tertiary
         };
         let toggle =
             |id: &'static str, label: &'static str, on: bool, which: Toggle, stop: Stop| {
