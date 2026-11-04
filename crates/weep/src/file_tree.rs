@@ -1322,7 +1322,9 @@ impl FileTree {
     fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         self.tui_bars.clear();
         let theme = cx.global::<Theme>().clone();
-        let m = *cx.global::<Metrics>();
+        let mut m = *cx.global::<Metrics>();
+        // The rename row's focus border on this window's device pixels.
+        m.input_focus_border = f32::from(crate::theme::device_line(window, m.input_focus_border));
         let cell = Cell::current(cx);
         let focused = self.focus_handle.is_focused(window);
         let total = self.rows.len();
@@ -1422,7 +1424,9 @@ impl Render for FileTree {
             None
         };
         let theme = cx.global::<Theme>().clone();
-        let m = *cx.global::<Metrics>();
+        let mut m = *cx.global::<Metrics>();
+        // The rename row's focus border on this window's device pixels.
+        m.input_focus_border = f32::from(crate::theme::device_line(window, m.input_focus_border));
         let focused = self.focus_handle.is_focused(window);
         let count = self.rows.len();
         let entity = cx.entity();

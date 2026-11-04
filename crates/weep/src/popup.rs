@@ -294,7 +294,7 @@ impl Render for Prompt {
                                 // gpui paints a shadow under the whole box: fill the
                                 // field as the popup under it, so the outline shows outside.
                                 d.bg(theme.popup_bg.blend(theme.input_bg))
-                                    .border(px(m.input_focus_border))
+                                    .border(crate::theme::device_line(window, m.input_focus_border))
                                     .border_color(theme.input_focus_border)
                                     .shadow(vec![BoxShadow {
                                         color: theme.input_focus_outline,

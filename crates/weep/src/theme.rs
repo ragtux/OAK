@@ -9,7 +9,7 @@
 
 use crate::assets::{self, MONO_FONT, UI_FONT};
 use anyhow::{anyhow, Context as _, Result};
-use gpui::{FontWeight, Global, Hsla, Rgba, SharedString};
+use gpui::{px, FontWeight, Global, Hsla, Pixels, Rgba, SharedString, Window};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use weep_theme::Color;
@@ -516,7 +516,11 @@ pub mod metrics {
     /// Estimates: the field's corner radius and its separators' height, and a
     /// text button's horizontal padding ("Replace", "Replace All").
     pub const INPUT_RADIUS: f32 = 4.;
-    pub const INPUT_FOCUS_BORDER: f32 = 4. / 3.;
+    /// A field's focus border: 1 px on whole device pixels (`device_line`),
+    /// which is 2 device px both at 150 % (the 1.33 of batch 5) and on a
+    /// 200 % Mac (1, the `find-tab` scene: 1255-1256 where 1.33 put the
+    /// field's content and the buttons' rings 0.5 to the left).
+    pub const INPUT_FOCUS_BORDER: f32 = 1.;
     pub const FIND_BAR_SEPARATOR_HEIGHT: f32 = 16.;
     /// With a query typed, Fleet's find bar pushes the text down by its own
     /// band: 12 above, 28, 12 below (the `find` scene: line 1 from 87 to 139).
@@ -2225,6 +2229,13 @@ impl Theme {
         }
         None
     }
+}
+
+/// A line `width` wide (zoomed already) rounded to whole device pixels and
+/// at least one: Fleet's 1 px borders are 2 device px at 150 % and 200 %.
+pub fn device_line(window: &Window, width: f32) -> Pixels {
+    let scale = window.scale_factor();
+    px((width * scale).round().max(1.) / scale)
 }
 
 #[cfg(test)]

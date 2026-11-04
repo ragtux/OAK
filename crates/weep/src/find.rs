@@ -678,7 +678,7 @@ fn separator(theme: &Theme, m: &Metrics) -> Div {
 
 /// A field's frame: `inputField.border.default`, or when `focused` the 1.33
 /// focus border inside the 2 px focus outline (batch 5).
-fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
+fn frame(focused: bool, window: &Window, theme: &Theme, m: &Metrics) -> Div {
     div()
         .h(px(m.find_bar_height))
         .w(px(m.find_bar_width))
@@ -692,7 +692,7 @@ fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
                 // gpui paints a shadow under the whole box, so a clear field
                 // would show the outline inside it: fill it as what is under it.
                 d.bg(theme.island_background.blend(theme.input_bg))
-                    .border(px(m.input_focus_border))
+                    .border(crate::theme::device_line(window, m.input_focus_border))
                     .border_color(theme.input_focus_border)
                     .shadow(vec![BoxShadow {
                         color: theme.input_focus_outline,
@@ -825,7 +825,7 @@ impl Render for FindBar {
             .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.close(cx)))
         };
         let find_row = div().flex().items_center().child(chevron).child(
-            frame(find_frame_focused, &theme, &m)
+            frame(find_frame_focused, window, &theme, &m)
                 .pl(px(m.find_bar_pad_left))
                 .pr(px(m.find_bar_pad_right))
                 .child(div().flex_1().min_w_0().h_full().child(self.find.clone()))
@@ -901,7 +901,7 @@ impl Render for FindBar {
                         .flex_shrink_0(),
                 )
                 .child(
-                    frame(replace_focused, &theme, &m)
+                    frame(replace_focused, window, &theme, &m)
                         .pl(px(m.find_bar_pad_left))
                         .pr(px(m.find_bar_pad_right - m.find_bar_replace_button_pad_x))
                         .child(

@@ -467,7 +467,7 @@ impl Render for RunPopup {
                 )
                 .child(
                     div().px(px(m.goto_pad - 1.)).flex_shrink_0().flex().child(
-                        frame(field_focused, &theme, &m)
+                        frame(field_focused, window, &theme, &m)
                             .pl(px(m.goto_pad))
                             .child(div().flex_1().min_w_0().h_full().child(self.input.clone())),
                     ),

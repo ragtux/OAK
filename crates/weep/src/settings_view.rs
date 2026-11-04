@@ -890,7 +890,7 @@ impl Render for SettingsView {
                             .flex_shrink_0()
                             .flex()
                             .child(
-                                frame(focused, &theme, &m)
+                                frame(focused, window, &theme, &m)
                                     .h(px(m.settings_field_height))
                                     .pl(px(m.settings_control_pad_x))
                                     .gap(px(m.popup_row_icon_gap))

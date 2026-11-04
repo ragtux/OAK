@@ -567,7 +567,7 @@ impl Render for GitTool {
                     .mt(px(m.git_field_top))
                     .px(px(m.panel_pad_x))
                     .child(
-                        crate::search_tool::frame(focused, &theme, &m)
+                        crate::search_tool::frame(focused, window, &theme, &m)
                             .h(px(m.git_field_height))
                             .child(
                                 div()
@@ -1011,7 +1011,7 @@ impl Render for HistoryTool {
                     .mt(px(m.git_field_top))
                     .px(px(m.panel_pad_x))
                     .child(
-                        crate::search_tool::frame(focused, &theme, &m)
+                        crate::search_tool::frame(focused, window, &theme, &m)
                             .h(px(m.git_field_height))
                             .gap(px(m.popup_row_icon_gap))
                             .child(icon(

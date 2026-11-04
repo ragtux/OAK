@@ -646,7 +646,7 @@ pub fn toggle_button(
 }
 
 /// A field's frame with the focus ring (batch 5's find field).
-pub fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
+pub fn frame(focused: bool, window: &Window, theme: &Theme, m: &Metrics) -> Div {
     div()
         .h(px(m.search_field_height))
         .flex_1()
@@ -662,7 +662,7 @@ pub fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
                 // gpui paints a shadow under the whole box, so a clear field
                 // would show the outline inside it: fill it as what is under it.
                 d.bg(theme.island_background.blend(theme.input_bg))
-                    .border(px(m.input_focus_border))
+                    .border(crate::theme::device_line(window, m.input_focus_border))
                     .border_color(theme.input_focus_border)
                     .shadow(vec![BoxShadow {
                         color: theme.input_focus_outline,
@@ -723,7 +723,7 @@ impl Render for SearchTool {
             .gap(px(m.find_bar_chevron_gap))
             .child(chevron)
             .child(
-                frame(query_focused, &theme, &m)
+                frame(query_focused, window, &theme, &m)
                     .child(div().flex_1().min_w_0().h_full().child(self.query.clone()))
                     .child(div().w(px(m.find_bar_separator_gap_left)).flex_shrink_0())
                     .child(toggle(
@@ -745,7 +745,7 @@ impl Render for SearchTool {
                 .gap(px(m.find_bar_chevron_gap))
                 .child(div().size(px(m.icon_size)).flex_shrink_0())
                 .child(
-                    frame(replace_focused, &theme, &m)
+                    frame(replace_focused, window, &theme, &m)
                         .pr(px(m.find_bar_pad_right - m.text_button_pad_x / 2.))
                         .child(
                             div()
@@ -780,7 +780,7 @@ impl Render for SearchTool {
             .gap(px(m.find_bar_chevron_gap))
             .child(div().size(px(m.icon_size)).flex_shrink_0())
             .child(
-                frame(mask_focused, &theme, &m)
+                frame(mask_focused, window, &theme, &m)
                     .child(div().flex_1().min_w_0().h_full().child(self.mask.clone())),
             );
         let rows: Vec<_> = self

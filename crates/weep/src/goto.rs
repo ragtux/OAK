@@ -1358,6 +1358,7 @@ impl GotoPanel {
     fn render_field(
         &self,
         focused: bool,
+        window: &Window,
         theme: &Theme,
         m: &Metrics,
         cx: &Context<Self>,
@@ -1405,7 +1406,7 @@ impl GotoPanel {
             .flex_shrink_0()
             .flex()
             .child(
-                frame(focused, theme, m)
+                frame(focused, window, theme, m)
                     .pl(px(m.goto_pad))
                     .child(div().flex_1().min_w_0().h_full().child(self.input.clone()))
                     .when(text_search, |d| {
@@ -1438,7 +1439,7 @@ impl GotoPanel {
                     .flex_shrink_0()
                     .flex()
                     .child(
-                        frame(focused, theme, m)
+                        frame(focused, window, theme, m)
                             .pl(px(m.goto_pad))
                             .child(div().flex_1().min_w_0().h_full().child(s.replace.clone())),
                     )
@@ -1461,7 +1462,7 @@ impl GotoPanel {
                 .gap(px(m.goto_block_gap))
                 .child(
                     // Fleet: the folder field 492 wide beside the 164 px mask (batch 7).
-                    frame(folder_focused, theme, m)
+                    frame(folder_focused, window, theme, m)
                         .flex_none()
                         .w(px(m.goto_width
                             - 2. * m.goto_pad
@@ -1482,7 +1483,7 @@ impl GotoPanel {
                         )),
                 )
                 .child(
-                    frame(mask_focused, theme, m)
+                    frame(mask_focused, window, theme, m)
                         .flex_none()
                         .w(px(m.search_mask_width))
                         .flex_basis(px(m.search_mask_width))
@@ -1679,7 +1680,7 @@ impl Render for GotoPanel {
                         d.child(self.render_tabs(&theme, &m, cx))
                     }
                 })
-                .child(self.render_field(field_focused, &theme, &m, cx))
+                .child(self.render_field(field_focused, window, &theme, &m, cx))
                 .when(
                     self.mode.tab() == Tab::Goto && self.mode != GotoMode::Workspaces,
                     |d| d.child(self.render_filters(&theme, &m, cx)),
