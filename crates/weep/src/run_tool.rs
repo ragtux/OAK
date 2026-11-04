@@ -40,6 +40,8 @@ pub struct RunView {
     _pump: Option<Task<()>>,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: std::rc::Rc<std::cell::Cell<(usize, usize)>>,
+    /// The lists' scroll bars on the island's frame (the tui skin).
+    tui_bars: crate::skin::FrameBars,
     /// The tui skin's first visible output row (rule 6: whole rows).
     tui_scroll: RowScroll,
 }
@@ -66,6 +68,7 @@ impl RunView {
             scroll: ScrollHandle::new(),
             _pump: None,
             tui_grid: Default::default(),
+            tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
         };
         view.start(cx);
@@ -256,7 +259,13 @@ impl RunView {
     /// The tool in the tui skin: row 1 is the command line in the secondary
     /// colour with `[ ▶ Rerun ] [ ■ Stop ]` at its right end, a rule with
     /// the state set in (`running`, `exit 0`), then the output on the grid.
+    /// The scroll bars this view's lists set on its island's frame.
+    pub fn tui_bars(&self) -> crate::skin::FrameBars {
+        self.tui_bars.clone()
+    }
+
     fn render_tui(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.tui_bars.clear();
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
@@ -335,8 +344,7 @@ impl RunView {
             visible,
             div().flex().flex_col().children(rows).into_any_element(),
             cell,
-            &theme,
-            m,
+            &self.tui_bars,
         );
         div()
             .id("run-tool")

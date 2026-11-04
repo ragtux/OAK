@@ -2720,7 +2720,18 @@ impl Workspace {
                             }
                             edges
                         }
-                        _ => crate::skin::Edges::default(),
+                        Some(TabView::Settings(settings)) => {
+                            settings.read(cx).tui_edges(cell, theme, *m)
+                        }
+                        Some(TabView::Diff(diff)) => crate::skin::Edges {
+                            right: Some(diff.read(cx).tui_bars().edge(
+                                cell,
+                                theme.scrollbar_thumb,
+                                *m,
+                            )),
+                            ..Default::default()
+                        },
+                        None => crate::skin::Edges::default(),
                     },
                     body.size_full().into_any_element(),
                     theme,
@@ -3293,44 +3304,23 @@ impl Workspace {
                 .child(label(" + ".into(), false, false))
                 .into_any_element(),
         );
-        let mut edges = crate::skin::Edges::default();
-        // The Files tree's and the Search results' scroll bar is the frame's
-        // right edge, beside their rows, the thumb in whole rows. The rows
-        // are read while painting, after the tool has laid them out.
-        let bar = match panel.tools.get(panel.active).map(|t| t.tool) {
-            Some(Tool::Files) => Some(self.file_tree.read(cx).tui_bar()),
-            Some(Tool::Search) => Some(self.search_tool.read(cx).tui_bar()),
+        // A tool's lists set their scroll bars on the frame's right edge,
+        // beside their rows, the thumb in whole rows.
+        let tab = panel.tools.get(panel.active).copied();
+        let bars = match tab.map(|t| t.tool) {
+            Some(Tool::Files) => Some(self.file_tree.read(cx).tui_bars()),
+            Some(Tool::Search) => Some(self.search_tool.read(cx).tui_bars()),
+            Some(Tool::Git) => Some(self.git_tool.read(cx).tui_bars()),
+            Some(Tool::History) => Some(self.history_tool.read(cx).tui_bars()),
+            Some(Tool::Run) => tab
+                .and_then(|t| self.run_view(t.instance))
+                .map(|v| v.read(cx).tui_bars()),
             _ => None,
         };
-        if let Some(bar) = bar {
-            let thumb = theme.scrollbar_thumb;
-            let m = *m;
-            edges.right = Some(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, _| {
-                        let (above, top, visible, total) = bar.get();
-                        let bounds = gpui::Bounds::new(
-                            gpui::point(bounds.origin.x, bounds.origin.y + cell.rows(above)),
-                            gpui::size(bounds.size.width, cell.rows(visible)),
-                        );
-                        crate::skin::paint_scrollbar(
-                            window,
-                            bounds,
-                            cell,
-                            top as f32,
-                            visible as f32,
-                            total as f32,
-                            None,
-                            thumb,
-                            &m,
-                        );
-                    },
-                )
-                .size_full()
-                .into_any_element(),
-            );
-        }
+        let edges = crate::skin::Edges {
+            right: bars.map(|b| b.edge(cell, theme.scrollbar_thumb, *m)),
+            ..Default::default()
+        };
         crate::skin::framed_edges(
             cell,
             &panel.tui_grid,

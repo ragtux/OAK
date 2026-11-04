@@ -90,14 +90,12 @@ pub struct SearchTool {
     scroll: ScrollHandle,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The lists' scroll bars on the island's frame (the tui skin).
+    tui_bars: crate::skin::FrameBars,
     /// The tui skin's first shown result: the results scroll by whole rows (rule 6).
     tui_scroll: RowScroll,
     /// A result row the tui skin brings into view when it next lays out.
     tui_reveal: Option<usize>,
-    /// Where the tui skin's results sit and what they show (the rows above
-    /// them in the body, the first shown, how many fit, how many in all),
-    /// read by the panel's frame when it paints the scroll bar.
-    tui_bar: Rc<std::cell::Cell<(usize, usize, usize, usize)>>,
 }
 
 impl EventEmitter<SearchToolEvent> for SearchTool {}
@@ -145,17 +143,10 @@ impl SearchTool {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
             tui_reveal: None,
-            tui_bar: Rc::default(),
         }
-    }
-
-    /// Where the tui skin's results sit and what they show (the rows above
-    /// them, the first shown, how many fit, how many in all), which the
-    /// panel paints on its frame as the scroll bar.
-    pub fn tui_bar(&self) -> Rc<std::cell::Cell<(usize, usize, usize, usize)>> {
-        self.tui_bar.clone()
     }
 
     /// `find-in-path` / `replace-in-path`: seeds the query with `seed` (the
@@ -833,6 +824,7 @@ impl Render for SearchTool {
             .child(
                 div()
                     .id("search-results")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .px(px(m.panel_pad_x))
@@ -864,7 +856,13 @@ impl SearchTool {
     /// with their labels in a fixed column and the toggles after the query,
     /// a rule with the count set in, then the results as a tree with the
     /// Files tool's guides. Everything is whole cells.
+    /// The scroll bars this view's lists set on its island's frame.
+    pub fn tui_bars(&self) -> crate::skin::FrameBars {
+        self.tui_bars.clone()
+    }
+
     fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.tui_bars.clear();
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
@@ -993,7 +991,15 @@ impl SearchTool {
         let reveal = self.tui_reveal.take();
         crate::file_tree::reveal_rows(&mut self.tui_scroll, reveal, total, visible);
         let top = self.tui_scroll.top;
-        self.tui_bar.set((above, top, visible, total));
+        let bar = {
+            let entity = cx.entity();
+            self.tui_bars.add(top, visible, total, move |to, cx| {
+                entity.update(cx, |this, cx| {
+                    this.tui_scroll.top = to;
+                    cx.notify();
+                })
+            })
+        };
         let rows: Vec<gpui::AnyElement> = all_rows
             .into_iter()
             .skip(top)
@@ -1024,6 +1030,7 @@ impl SearchTool {
             .child(
                 div()
                     .id("search-results")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
@@ -1035,6 +1042,7 @@ impl SearchTool {
                         }
                     }))
                     // The scroll bar is the panel frame's right edge (workspace).
+                    .child(bar)
                     .children(rows),
             )
             .into_any_element()

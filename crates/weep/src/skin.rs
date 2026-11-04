@@ -369,6 +369,12 @@ pub struct Edges {
     /// 2 is the centre of the second row above it (a one-row command line
     /// under the rule).
     pub rules_from_bottom: Vec<usize>,
+    /// Rules across the frame counted down from the top edge: 2 is the row
+    /// under the body's first row.
+    pub rules_from_top: Vec<usize>,
+    /// Vertical rules `(column, row)` in the frame's cells: from the rule
+    /// across `row` (`┬`) down to the bottom edge (`┴`).
+    pub vrules: Vec<(usize, usize)>,
 }
 
 /// An island in the tui skin: `frame` round its whole cells (`grid`, read
@@ -429,11 +435,29 @@ pub fn framed_edges(
         .rules_from_bottom
         .iter()
         .filter_map(|k| rows.saturating_sub(1).checked_sub(*k))
+        .chain(edges.rules_from_top.iter().copied())
+        .collect();
+    let vrules: Vec<(usize, usize)> = edges
+        .vrules
+        .iter()
+        .copied()
+        .filter(|&(col, row)| col > 0 && col + 1 < cols && row + 1 < rows)
         .collect();
     let paint = canvas(
         |_, _, _| (),
         move |bounds: Bounds<Pixels>, _, window, _| {
             paint_frame(window, bounds.origin, cell, cols, rows, &rules, color, &m);
+            let t = stroke(window, &m);
+            let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+            for &(col, row) in &vrules {
+                let x = snap(window, ox + col as f32 * cell.w + cell.w / 2.) - t / 2.;
+                let y0 = snap(window, oy + row as f32 * cell.h + cell.h / 2.) - t / 2.;
+                let y1 = snap(window, oy + (rows - 1) as f32 * cell.h + cell.h / 2.) + t / 2.;
+                window.paint_quad(gpui::fill(
+                    Bounds::new(point(px(x), px(y0)), size(px(t), px(y1 - y0))),
+                    color,
+                ));
+            }
         },
     )
     .absolute()
@@ -945,5 +969,185 @@ pub fn toggle(
     } else {
         d.text_color(theme.toggle_off_text)
             .hover(|s| s.bg(theme.toggle_off_bg_hovered))
+    }
+}
+
+// ---- scroll bars on an island's frame ----------------------------------------
+
+/// One list's scroll bar on its island's right frame line: the list's first
+/// row, the rows it shows and all its rows, the window `y` of its first row
+/// (recorded while prepainting, so the frame paints it in the same frame)
+/// and how to move it.
+/// Moves a list's first row (a `FrameBar`'s drag or page).
+type ScrollTo = Box<dyn Fn(usize, &mut App)>;
+
+struct FrameBar {
+    top: usize,
+    visible: usize,
+    total: usize,
+    y: Shared<f32>,
+    scroll_to: ScrollTo,
+}
+
+impl FrameBar {
+    /// The thumb's first row and length, as `paint_scrollbar` places it.
+    fn thumb(&self) -> (usize, usize) {
+        let rows = self.visible;
+        let len = ((rows as f32 * rows as f32 / self.total as f32).round() as usize).clamp(1, rows);
+        let room = (rows - len) as f32;
+        let max = (self.total - rows) as f32;
+        let start = ((self.top as f32 / max).clamp(0., 1.) * room).round() as usize;
+        (start, len)
+    }
+}
+
+/// The scroll bars a view's lists set on its island's right frame line
+/// (`Edges.right`), so a tool or tab keeps its lists' bars on the frame
+/// as the editor does. The view clears it at the start of each render and
+/// each list `add`s its bar; the island paints them with `edge`. A bar
+/// drags by whole rows and a click on its rail pages.
+#[derive(Clone, Default)]
+pub struct FrameBars {
+    bars: Rc<std::cell::RefCell<Vec<Rc<FrameBar>>>>,
+    /// The bar being dragged and where in its thumb it was grabbed.
+    drag: Rc<Shared<Option<(usize, f32)>>>,
+}
+
+impl FrameBars {
+    /// Forgets the last render's bars.
+    pub fn clear(&self) {
+        self.bars.borrow_mut().clear();
+    }
+
+    /// A list of `total` rows showing `visible` from `top`: returns the
+    /// element to lay over the list (absolute, at its first row) that
+    /// tells the frame where the list is. Nothing when it all fits.
+    pub fn add(
+        &self,
+        top: usize,
+        visible: usize,
+        total: usize,
+        scroll_to: impl Fn(usize, &mut App) + 'static,
+    ) -> AnyElement {
+        if visible == 0 || total <= visible {
+            return div().into_any_element();
+        }
+        let bar = Rc::new(FrameBar {
+            top,
+            visible,
+            total,
+            y: Shared::new(f32::NAN),
+            scroll_to: Box::new(scroll_to),
+        });
+        self.bars.borrow_mut().push(bar.clone());
+        canvas(
+            move |bounds, _, _| bar.y.set(f32::from(bounds.origin.y)),
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+    }
+
+    /// The island's right edge (`Edges.right`): each bar beside its list,
+    /// on the frame line, with its drag and paging.
+    pub fn edge(&self, cell: Cell, thumb: Hsla, m: Metrics) -> AnyElement {
+        let bars = self.bars.clone();
+        let drag = self.drag.clone();
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let bars: Vec<Rc<FrameBar>> = bars.borrow().clone();
+                let x = bounds.origin.x;
+                for bar in &bars {
+                    if bar.y.get().is_nan() {
+                        continue;
+                    }
+                    let b = Bounds::new(
+                        point(x, px(bar.y.get())),
+                        size(px(cell.w), cell.rows(bar.visible)),
+                    );
+                    paint_scrollbar(
+                        window,
+                        b,
+                        cell,
+                        bar.top as f32,
+                        bar.visible as f32,
+                        bar.total as f32,
+                        None,
+                        thumb,
+                        &m,
+                    );
+                }
+                let hit = {
+                    let bars = bars.clone();
+                    move |p: gpui::Point<Pixels>| {
+                        if p.x < x || p.x >= x + px(cell.w) {
+                            return None;
+                        }
+                        bars.iter().position(|b| {
+                            let y = b.y.get();
+                            !y.is_nan()
+                                && f32::from(p.y) >= y
+                                && f32::from(p.y) < y + b.visible as f32 * cell.h
+                        })
+                    }
+                };
+                let (down_bars, down_drag) = (bars.clone(), drag.clone());
+                window.on_mouse_event(move |e: &gpui::MouseDownEvent, phase, _, cx| {
+                    if !phase.bubble() || e.button != gpui::MouseButton::Left {
+                        return;
+                    }
+                    let Some(i) = hit(e.position) else {
+                        return;
+                    };
+                    let bar = &down_bars[i];
+                    let (start, len) = bar.thumb();
+                    let rel = f32::from(e.position.y) - bar.y.get();
+                    let row = (rel / cell.h).floor() as usize;
+                    if row < start {
+                        (bar.scroll_to)(bar.top.saturating_sub(bar.visible), cx);
+                    } else if row >= start + len {
+                        let max = bar.total - bar.visible;
+                        (bar.scroll_to)((bar.top + bar.visible).min(max), cx);
+                    } else {
+                        down_drag.set(Some((i, rel - start as f32 * cell.h)));
+                    }
+                    cx.stop_propagation();
+                });
+                let (move_bars, move_drag) = (bars, drag.clone());
+                window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, _, cx| {
+                    let Some((i, grab)) = move_drag.get() else {
+                        return;
+                    };
+                    if !phase.bubble() {
+                        return;
+                    }
+                    let Some(bar) = move_bars.get(i).filter(|_| e.dragging()) else {
+                        move_drag.set(None);
+                        return;
+                    };
+                    let (_, len) = bar.thumb();
+                    let room = (bar.visible - len) as f32 * cell.h;
+                    if room <= 0. {
+                        return;
+                    }
+                    let y = f32::from(e.position.y) - bar.y.get() - grab;
+                    let max = (bar.total - bar.visible) as f32;
+                    let to = ((y / room).clamp(0., 1.) * max).round() as usize;
+                    if to != bar.top {
+                        (bar.scroll_to)(to, cx);
+                    }
+                });
+                let up_drag = drag.clone();
+                window.on_mouse_event(move |_: &gpui::MouseUpEvent, _, _, _| {
+                    up_drag.set(None);
+                });
+            },
+        )
+        .size_full()
+        .into_any_element()
     }
 }

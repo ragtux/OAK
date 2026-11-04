@@ -30,7 +30,6 @@ use gpui::{
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use weep_git::Status;
 use weep_settings::{ClickMode, KeyboardNavigation};
 
@@ -246,15 +245,13 @@ pub struct FileTree {
     scroll: UniformListScrollHandle,
     /// The tui skin's grid as last laid out, columns by rows of cells.
     tui_grid: (usize, usize),
+    /// The lists' scroll bars on the island's frame (the tui skin).
+    tui_bars: crate::skin::FrameBars,
     /// The tui skin's first shown row: the tree scrolls by whole rows (rule 6).
     tui_scroll: RowScroll,
     /// A row the tui skin brings into view when it next lays out (the
     /// keyboard's row, a revealed file).
     tui_reveal: Option<usize>,
-    /// The rows the tui skin last showed (the rows above them in the body,
-    /// none; the first shown; how many fit; how many in all), read by the
-    /// panel's frame when it paints the scroll bar.
-    tui_bar: Rc<std::cell::Cell<(usize, usize, usize, usize)>>,
 }
 
 impl EventEmitter<FileTreeEvent> for FileTree {}
@@ -307,18 +304,12 @@ impl FileTree {
             focus_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             tui_grid: (0, 0),
+            tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
             tui_reveal: None,
-            tui_bar: Rc::default(),
         };
         tree.rebuild_rows();
         tree
-    }
-
-    /// The rows the tui skin shows (as `SearchTool::tui_bar`), which the
-    /// panel paints on its frame as the scroll bar.
-    pub fn tui_bar(&self) -> Rc<std::cell::Cell<(usize, usize, usize, usize)>> {
-        self.tui_bar.clone()
     }
 
     /// Scrolls the Fleet skin's list to `ix` and has the tui skin's rows
@@ -1323,7 +1314,13 @@ impl FileTree {
     /// area, which the panel sizes in whole cells inside its frame. Only the
     /// rows that fit are laid out, from `tui_scroll.top`: the wheel moves it
     /// by whole rows and the keyboard's row is brought into view (rule 6).
+    /// The scroll bars this view's lists set on its island's frame.
+    pub fn tui_bars(&self) -> crate::skin::FrameBars {
+        self.tui_bars.clone()
+    }
+
     fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        self.tui_bars.clear();
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
@@ -1335,7 +1332,15 @@ impl FileTree {
         let visible = if fit == 0 { total } else { fit };
         reveal_rows(&mut self.tui_scroll, self.tui_reveal.take(), total, visible);
         let top = self.tui_scroll.top;
-        self.tui_bar.set((0, top, visible, total));
+        let bar = {
+            let entity = entity.clone();
+            self.tui_bars.add(top, visible, total, move |to, cx| {
+                entity.update(cx, |this, cx| {
+                    this.tui_scroll.top = to;
+                    cx.notify();
+                })
+            })
+        };
         let measure = {
             let entity = entity.clone();
             gpui::canvas(
@@ -1375,6 +1380,7 @@ impl FileTree {
             .child(
                 div()
                     .id("file-tree-rows")
+                    .relative()
                     .size_full()
                     .overflow_hidden()
                     .flex()
@@ -1385,6 +1391,7 @@ impl FileTree {
                         }
                     }))
                     // The scroll bar is the panel frame's right edge (workspace).
+                    .child(bar)
                     .children(rows),
             )
     }

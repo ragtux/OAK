@@ -11,7 +11,7 @@
 
 use crate::assets::{file_icon, icon};
 use crate::editor::{styled_line, TextMetrics};
-use crate::git_tool::{checkbox, status_text_color, tui_list, tui_list_bar, CheckState};
+use crate::git_tool::{checkbox, status_text_color, tui_list, CheckState};
 use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{metrics::DIFF_CONTEXT_LINES, Metrics, Theme};
 use gpui::{
@@ -140,6 +140,8 @@ pub struct DiffView {
     scroll: ScrollHandle,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The lists' scroll bars on the island's frame (the tui skin).
+    tui_bars: crate::skin::FrameBars,
     /// The tui skin's first visible row of the boxes (rule 6: whole rows).
     tui_scroll: RowScroll,
     /// The box `expand` opened, for the tui skin to scroll to its top.
@@ -172,6 +174,7 @@ impl DiffView {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
             tui_reveal: None,
         };
@@ -196,6 +199,7 @@ impl DiffView {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
             tui_reveal: None,
         };
@@ -1095,7 +1099,13 @@ impl DiffView {
     /// box per file with its name and stats set into the top edge and the
     /// buttons at its right end; an open box holds the two sides split by a
     /// vertical rule that joins the frame, each with its numbers in cells.
+    /// The scroll bars this view's lists set on its island's frame.
+    pub fn tui_bars(&self) -> crate::skin::FrameBars {
+        self.tui_bars.clone()
+    }
+
     fn render_tui(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.tui_bars.clear();
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
@@ -1174,7 +1184,7 @@ impl DiffView {
         }
         self.tui_scroll.top = self.tui_scroll.top.min(total.saturating_sub(visible));
         let top = self.tui_scroll.top;
-        let box_cols = cols.saturating_sub(usize::from(tui_list_bar(total, visible)));
+        let box_cols = cols;
         // Only the boxes in view, the first one shifted up by its rows above.
         let mut boxes: Vec<gpui::AnyElement> = Vec::new();
         let mut first: Option<usize> = None;
@@ -1227,8 +1237,7 @@ impl DiffView {
                     )
                     .into_any_element(),
                 cell,
-                &theme,
-                m,
+                &self.tui_bars,
             ))
             .into_any_element()
     }

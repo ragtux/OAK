@@ -56,6 +56,7 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 | `file_glyph` | a file's glyph and colour by extension |
 | `redraw` | another frame, for grids read back while painting |
 | `RowScroll` | a list's first row in whole rows: wheel, reveal, reset (rule 6) |
+| `FrameBars` | the scroll bars a view's lists set on its island's right frame line, dragged and paged by rows |
 
 ## Elements
 
@@ -254,9 +255,6 @@ Run with `--skin tui` and a scratch `WEEP_CONFIG_DIR`, and capture only WEEP's w
 input lands only while the window is active, so run one probe at a time.
 
 Open points:
-- The Settings tab and the Git, History, Changed Files and Run views draw their scroll bars in
-  their own last column, or deferred onto the frame (Settings): `workspace.rs` gives a tab
-  other than the editor no `Edges`, and a tool other than Files and Search no `Edges.right`.
 - The documentation box beside the completion box draws its own line next to the completion
   box's frame instead of sharing one column.
 - A live window resize is clamped in code (whole rows kept) but not yet seen on screen.

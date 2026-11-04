@@ -48,6 +48,8 @@ pub struct SettingsView {
     focus_handle: FocusHandle,
     /// The tui skin's grid as last laid out, columns by rows of cells.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The lists' scroll bars on the island's frame (the tui skin).
+    tui_bars: crate::skin::FrameBars,
     /// The tui skin's page and page list, scrolled by whole rows (rule 6).
     tui_scroll: skin::RowScroll,
     tui_tree_scroll: skin::RowScroll,
@@ -110,6 +112,7 @@ impl SettingsView {
             tree_scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             tui_grid: Rc::new(std::cell::Cell::new((0, 0))),
+            tui_bars: Default::default(),
             tui_scroll: skin::RowScroll::default(),
             tui_tree_scroll: skin::RowScroll::default(),
             tui_extent: [(0, 0); 2],
@@ -1090,6 +1093,20 @@ impl SettingsView {
         cx.notify();
     }
 
+    /// What the tab sets on its island's frame in the tui skin: the rule
+    /// under the search row (`├──┤`), the rule between the page list and
+    /// the page from it to the bottom edge (`┬ │ ┴`), and the page's
+    /// scroll bar on the right edge.
+    pub fn tui_edges(&self, cell: Cell, theme: &Theme, m: Metrics) -> skin::Edges {
+        let cols = self.tui_grid.get().0;
+        skin::Edges {
+            rules_from_top: vec![2],
+            vrules: vec![(Self::tui_tree_cols(cols) + 1, 2)],
+            right: Some(self.tui_bars.edge(cell, theme.scrollbar_thumb, m)),
+            ..Default::default()
+        }
+    }
+
     fn render_tui(
         &mut self,
         count: Option<usize>,
@@ -1098,92 +1115,15 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        self.tui_bars.clear();
         let cell = Cell::current(cx);
-        let (cols, rows) = self.tui_grid.get();
+        let cols = self.tui_grid.get().0;
         let visible = self.tui_visible();
         let tree_cols = Self::tui_tree_cols(cols);
         let width = self.tui_content_cols(cell);
         let measure = skin::measure(cell, &self.tui_grid);
-        // The island's frame is `border_focused` while the focus is in here:
-        // the rules joining it take its colour.
-        let line = if self.focus_handle.contains_focused(window, cx) {
-            theme.border_focused
-        } else {
-            theme.border
-        };
         let tree = self.render_tui_tree(tree_cols, visible, cell, theme, cx);
         let content = self.render_tui_content(width, visible, cell, theme, m, cx);
-        // Row 1 is a rule joining the frame (`├──┤`); column `tree_cols` a
-        // rule from it down to the frame's bottom edge (`┬ │ ┴`), the list's
-        // scroll bar on it. Through the cells' centres.
-        let rules = {
-            let m = *m;
-            gpui::canvas(
-                |_, _, _| (),
-                move |bounds, _, window, _| {
-                    let t = skin::stroke(window, &m);
-                    let o = bounds.origin;
-                    let y = skin::snap(window, f32::from(o.y) + 1.5 * cell.h) - t / 2.;
-                    let x0 = skin::snap(window, f32::from(o.x));
-                    let x1 = skin::snap(window, f32::from(o.x) + cols as f32 * cell.w);
-                    window.paint_quad(gpui::fill(
-                        Bounds::new(point(px(x0), px(y)), gpui::size(px(x1 - x0), px(t))),
-                        line,
-                    ));
-                    let x = skin::snap(
-                        window,
-                        f32::from(o.x) + tree_cols as f32 * cell.w + cell.w / 2.,
-                    ) - t / 2.;
-                    let y1 = skin::snap(window, f32::from(o.y) + rows as f32 * cell.h);
-                    window.paint_quad(gpui::fill(
-                        Bounds::new(point(px(x), px(y)), gpui::size(px(t), px(y1 - y))),
-                        line,
-                    ));
-                },
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        };
-        // The half cells from the body's edges to the frame's lines lie
-        // outside the body, which clips: drawn deferred, as the popups are.
-        let joins = {
-            let m = *m;
-            gpui::canvas(
-                |_, _, _| (),
-                move |bounds, _, window, _| {
-                    if cols < 2 || rows < 2 {
-                        return;
-                    }
-                    let t = skin::stroke(window, &m);
-                    let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
-                    let y = skin::snap(window, oy + 1.5 * cell.h) - t / 2.;
-                    let left = skin::snap(window, ox - cell.w / 2.) - t / 2.;
-                    let right = skin::snap(window, ox + cols as f32 * cell.w);
-                    let end = skin::snap(window, ox + (cols as f32 + 0.5) * cell.w) + t / 2.;
-                    let x0 = skin::snap(window, ox) + t;
-                    for (a, b) in [(left, x0), (right - t, end)] {
-                        window.paint_quad(gpui::fill(
-                            Bounds::new(point(px(a), px(y)), gpui::size(px(b - a), px(t))),
-                            line,
-                        ));
-                    }
-                    let x =
-                        skin::snap(window, ox + tree_cols as f32 * cell.w + cell.w / 2.) - t / 2.;
-                    let y0 = skin::snap(window, oy + rows as f32 * cell.h) - t;
-                    let y1 = skin::snap(window, oy + (rows as f32 + 0.5) * cell.h) + t / 2.;
-                    window.paint_quad(gpui::fill(
-                        Bounds::new(point(px(x), px(y0)), gpui::size(px(t), px(y1 - y0))),
-                        line,
-                    ));
-                },
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        };
         // Row 0: one cell in, the search field (its first cell the mark:
         // `⌕`, or the input's `›` while focused), then the scope: `Global`
         // filled, the workspace, Plugins, ending one cell in.
@@ -1238,14 +1178,26 @@ impl SettingsView {
                     .child(SharedString::from(root)),
             )
             .child(div().flex_shrink_0().text_color(theme.link).child(plugins));
-        let page_bar = deferred(
-            self.tui_bar(TuiBar::Page, cell, cx)
+        // The page's scroll bar is the frame's right edge (`tui_edges`).
+        let page_bar = {
+            let (total, page_rows) = self.tui_extent[TuiBar::Page as usize];
+            let entity = cx.entity();
+            div()
                 .absolute()
-                .left(cell.cols(cols))
+                .left_0()
                 .top(cell.rows(2))
                 .w(cell.cols(1))
-                .h(cell.rows(visible)),
-        );
+                .h(cell.rows(visible))
+                .child(
+                    self.tui_bars
+                        .add(self.tui_scroll.top, page_rows, total, move |to, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.tui_scroll.top = to;
+                                cx.notify();
+                            })
+                        }),
+                )
+        };
         let list_bar = self
             .tui_bar(TuiBar::List, cell, cx)
             .absolute()
@@ -1266,8 +1218,6 @@ impl SettingsView {
             .text_color(theme.text_primary)
             .child(measure)
             .child(div().absolute().top_0().left_0().child(search))
-            .child(rules)
-            .child(deferred(joins))
             .child(
                 div()
                     .id("settings-tree-tui")
