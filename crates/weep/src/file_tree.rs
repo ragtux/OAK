@@ -74,6 +74,14 @@ impl Render for DragGhost {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
+        if Skin::current(cx) == Skin::Tui {
+            let (glyph, color) = if self.icon == "expui/nodes/folder" {
+                ("▸", theme.icon_secondary)
+            } else {
+                skin::file_glyph(&self.title, &theme)
+            };
+            return crate::workspace::tui_ghost(glyph, color, &self.title, false, &theme, &m, cx);
+        }
         div()
             .h(px(m.tree_row_height - 2. * m.tree_row_inset))
             .px(px(m.popup_row_pad_x))
@@ -89,6 +97,7 @@ impl Render for DragGhost {
             .text_color(theme.list_text)
             .child(icon(self.icon, m.icon_size, theme.icon_secondary))
             .child(self.title.clone())
+            .into_any_element()
     }
 }
 
@@ -291,6 +300,11 @@ impl FileTree {
         };
         tree.rebuild_rows();
         tree
+    }
+
+    /// The tree's scroll, which the tui skin's panel paints on its frame.
+    pub fn tui_scroll(&self) -> gpui::ScrollHandle {
+        self.scroll.0.borrow().base_handle.clone()
     }
 
     pub fn root_name(&self) -> String {
@@ -1171,7 +1185,12 @@ impl FileTree {
                 })
             })
             .drag_over::<DraggedPaths>(move |style, _, _, _| {
-                style.bg(drag_bg).border_1().border_color(drag_border)
+                // The tui skin's drop target is its row filled, no outline.
+                if tui.is_some() {
+                    style.bg(drag_bg)
+                } else {
+                    style.bg(drag_bg).border_1().border_color(drag_border)
+                }
             })
             .on_drop({
                 let entity = entity.clone();
@@ -1236,10 +1255,8 @@ impl FileTree {
             .when(selected && focused, |d| d.bg(theme.list_bg_focused))
             .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
             .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
-            .when(highlighted, |d| {
-                d.border(px(m.tree_highlight_border))
-                    .border_color(theme.tree_focus_border)
-            })
+            // The keyboard's highlighted row: filled as hovered, not outlined.
+            .when(highlighted && !selected, |d| d.bg(theme.list_bg_hovered))
             .when(!is_root, |d| {
                 d.child(skin::guides(
                     cell,
@@ -1301,7 +1318,6 @@ impl FileTree {
             .size_full()
         };
         let theme_for_rows = theme.clone();
-        let base = self.scroll.0.borrow().base_handle.clone();
         div()
             .size_full()
             .relative()
@@ -1310,34 +1326,26 @@ impl FileTree {
             .line_height(px(cell.h))
             .child(measure)
             .child(
-                div()
-                    .size_full()
-                    .child(
-                        uniform_list("file-tree", count, move |range, _window, cx| {
-                            let this = entity.read(cx);
-                            range
-                                .map(|ix| {
-                                    this.render_row(
-                                        ix,
-                                        focused,
-                                        &theme_for_rows,
-                                        &m,
-                                        &entity,
-                                        Some((cell, inner_cols)),
-                                    )
-                                })
-                                .collect()
-                        })
-                        .track_scroll(&self.scroll)
-                        .size_full(),
-                    )
-                    .child(scrollbar(
-                        "file-tree-scrollbar",
-                        &base,
-                        m.scrollbar_thumb,
-                        &theme,
-                        &m,
-                    )),
+                div().size_full().child(
+                    uniform_list("file-tree", count, move |range, _window, cx| {
+                        let this = entity.read(cx);
+                        range
+                            .map(|ix| {
+                                this.render_row(
+                                    ix,
+                                    focused,
+                                    &theme_for_rows,
+                                    &m,
+                                    &entity,
+                                    Some((cell, inner_cols)),
+                                )
+                            })
+                            .collect()
+                    })
+                    .track_scroll(&self.scroll)
+                    .size_full(),
+                ),
+                // The scroll bar is the panel frame's right edge (workspace).
             )
     }
 }

@@ -15,6 +15,7 @@ use crate::scrollbar::scrollbar;
 use crate::search_tool::frame;
 use crate::settings::{self, AppSettings};
 use crate::settings_schema::{option_label, values_equal, Item, Kind, SECTIONS};
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     deferred, div, point, prelude::*, px, App, BoxShadow, Context, ElementId, Entity, FocusHandle,
@@ -22,6 +23,7 @@ use gpui::{
 };
 use serde_json::Value;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// A row of the section tree: a section, or one of its titled groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +44,8 @@ pub struct SettingsView {
     content_scroll: ScrollHandle,
     tree_scroll: ScrollHandle,
     focus_handle: FocusHandle,
+    /// The tui skin's grid as last laid out, columns by rows of cells.
+    tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
 }
 
 impl Focusable for SettingsView {
@@ -87,6 +91,7 @@ impl SettingsView {
             content_scroll: ScrollHandle::new(),
             tree_scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
+            tui_grid: Rc::new(std::cell::Cell::new((0, 0))),
         }
     }
 
@@ -183,7 +188,22 @@ impl SettingsView {
     fn select(&mut self, row: TreeRow, cx: &mut Context<Self>) {
         self.selected = row;
         let m = *cx.global::<Metrics>();
-        let y = self.offset_of(row, &m);
+        let y = if Skin::current(cx) == Skin::Tui {
+            let cell = Cell::current(cx);
+            let width = self.tui_content_cols(cell);
+            let lines = self.tui_lines(width);
+            let at = lines
+                .iter()
+                .position(|l| match (l, row) {
+                    (TuiLine::Section(a), TreeRow::Section(b)) => *a == b,
+                    (TuiLine::Group(a, b, _), TreeRow::Group(c, d)) => (*a, *b) == (c, d),
+                    _ => false,
+                })
+                .unwrap_or(0);
+            at as f32 * cell.h
+        } else {
+            self.offset_of(row, &m)
+        };
         self.content_scroll.set_offset(point(px(0.), px(-y)));
         cx.notify();
     }
@@ -800,6 +820,9 @@ impl Render for SettingsView {
         let m = *cx.global::<Metrics>();
         let focused = self.search.read(cx).is_focused(window);
         let count = (!self.query.is_empty()).then(|| self.total_count());
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(count, &theme, &m, cx).into_any_element();
+        }
         div()
             .key_context("SettingsTool")
             .track_focus(&self.focus_handle)
@@ -898,5 +921,669 @@ impl Render for SettingsView {
                             .child(self.render_content(&theme, &m, cx)),
                     ),
             )
+            .into_any_element()
+    }
+}
+
+// ---- the tui skin -----------------------------------------------------------------------
+
+/// One row of the page in the tui skin.
+#[derive(Clone, Debug)]
+enum TuiLine {
+    /// A section's title, bold.
+    Section(usize),
+    /// A group's heading: a rule with the title set in.
+    Group(usize, usize, &'static str),
+    Item(&'static Item),
+    /// A line of an item's description, under its label.
+    Description(String, bool),
+    Blank,
+}
+
+/// The page list's width in cells.
+const TUI_TREE_COLS: usize = 24;
+/// A dropdown's or a field's width in cells.
+const TUI_VALUE_COLS: usize = 24;
+
+/// `text` wrapped on words into lines of at most `width` chars.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= width => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_string()),
+        }
+    }
+    lines
+}
+
+/// `text` cut to `width` chars, the last one an ellipsis when cut.
+fn fit(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+impl SettingsView {
+    /// The page list's columns for a view `cols` wide.
+    fn tui_tree_cols(cols: usize) -> usize {
+        TUI_TREE_COLS.min(cols / 3)
+    }
+
+    /// The page's columns: right of the list and its rule, less the scroll
+    /// bar's column.
+    fn tui_content_cols(&self, _cell: Cell) -> usize {
+        let cols = self.tui_grid.get().0;
+        cols.saturating_sub(Self::tui_tree_cols(cols) + 3)
+    }
+
+    /// The page as rows: each section's title, its groups' headings, the
+    /// items and their descriptions wrapped to `width`.
+    fn tui_lines(&self, width: usize) -> Vec<TuiLine> {
+        let mut lines = Vec::new();
+        for (s, section) in SECTIONS.iter().enumerate() {
+            if self.section_count(s) == 0 {
+                continue;
+            }
+            if !lines.is_empty() {
+                lines.push(TuiLine::Blank);
+            }
+            lines.push(TuiLine::Section(s));
+            for (g, group) in section.groups.iter().enumerate() {
+                if self.group_count(s, g) == 0 {
+                    continue;
+                }
+                if let Some(title) = group.title {
+                    lines.push(TuiLine::Blank);
+                    lines.push(TuiLine::Group(s, g, title));
+                }
+                for item in group.items.iter().filter(|i| self.matches(i)) {
+                    lines.push(TuiLine::Item(item));
+                    if let Some(d) = item.description {
+                        let indent = 2 + if item.indent { 2 } else { 0 };
+                        for line in wrap(d, width.saturating_sub(indent + 1).max(8)) {
+                            lines.push(TuiLine::Description(line, item.indent));
+                        }
+                    }
+                }
+            }
+        }
+        lines
+    }
+
+    fn render_tui(
+        &mut self,
+        count: Option<usize>,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let cell = Cell::current(cx);
+        let (cols, rows) = self.tui_grid.get();
+        let tree_cols = Self::tui_tree_cols(cols);
+        let width = self.tui_content_cols(cell);
+        let measure = {
+            let grid = self.tui_grid.clone();
+            gpui::canvas(
+                move |bounds, window, _| {
+                    let fit = (
+                        Cell::fit(bounds.size.width, cell.w),
+                        Cell::fit(bounds.size.height, cell.h),
+                    );
+                    if grid.get() != fit {
+                        grid.set(fit);
+                        skin::redraw(window);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        // The rule under the search row and the one between the regions,
+        // joined (`┬`), through the cells' centres.
+        let rules = {
+            let color = theme.border;
+            let m = *m;
+            gpui::canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    let t = skin::stroke(window, &m);
+                    let o = bounds.origin;
+                    let y = skin::snap(window, f32::from(o.y) + 1.5 * cell.h) - t / 2.;
+                    let x0 = skin::snap(window, f32::from(o.x));
+                    let x1 = skin::snap(window, f32::from(o.x) + cols as f32 * cell.w);
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds::new(point(px(x0), px(y)), gpui::size(px(x1 - x0), px(t))),
+                        color,
+                    ));
+                    let x = skin::snap(
+                        window,
+                        f32::from(o.x) + tree_cols as f32 * cell.w + cell.w / 2.,
+                    ) - t / 2.;
+                    let y1 = skin::snap(window, f32::from(o.y) + rows as f32 * cell.h);
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds::new(point(px(x), px(y)), gpui::size(px(t), px(y1 - y))),
+                        color,
+                    ));
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let row = || {
+            div()
+                .h(px(cell.h))
+                .flex()
+                .flex_shrink_0()
+                .whitespace_nowrap()
+        };
+        // Row 0: the search field, then the scope: `Global` filled, the
+        // workspace, Plugins.
+        let search = row()
+            .w(cell.cols(cols))
+            .child(
+                div()
+                    .w(cell.cols(2))
+                    .flex_shrink_0()
+                    .text_color(theme.text_tertiary)
+                    .child("⌕"),
+            )
+            .child(div().flex_1().min_w_0().h_full().child(self.search.clone()))
+            .child(div().w(cell.cols(2)).flex_shrink_0())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .bg(theme.tab_bg_selected_focused)
+                    .text_color(theme.tab_text_selected)
+                    .font_weight(FontWeight::BOLD)
+                    .child(SharedString::from(match count {
+                        Some(n) => format!(" Global {n} "),
+                        None => " Global ".to_string(),
+                    })),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme.text_secondary)
+                    .child(SharedString::from(format!(" {}  ", self.root_name))),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme.link)
+                    .child("Plugins"),
+            );
+        let tree = self.render_tui_tree(tree_cols, cell, theme, cx);
+        let content = self.render_tui_content(width, cell, theme, m, cx);
+        let scroll = self.content_scroll.clone();
+        let thumb = theme.scrollbar_thumb;
+        let mm = *m;
+        let scrollbar = gpui::canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let visible = f32::from(bounds.size.height);
+                skin::paint_scrollbar(
+                    window,
+                    bounds,
+                    cell,
+                    -f32::from(scroll.offset().y),
+                    visible,
+                    visible + f32::from(scroll.max_offset().y),
+                    None,
+                    thumb,
+                    &mm,
+                );
+            },
+        )
+        .absolute()
+        .left(cell.cols(cols.saturating_sub(1)))
+        .top(cell.rows(2))
+        .w(cell.cols(1))
+        .h(cell.rows(rows.saturating_sub(2)));
+        div()
+            .key_context("SettingsTool")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::page_up))
+            .size_full()
+            .relative()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .text_color(theme.text_primary)
+            .child(measure)
+            .child(div().absolute().top_0().left_0().child(search))
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(cell.rows(2))
+                    .w(cell.cols(tree_cols))
+                    .h(cell.rows(rows.saturating_sub(2)))
+                    .child(tree),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(cell.cols(tree_cols + 2))
+                    .top(cell.rows(2))
+                    .w(cell.cols(width))
+                    .h(cell.rows(rows.saturating_sub(2)))
+                    .child(content),
+            )
+            .child(scrollbar)
+            .child(rules)
+    }
+
+    /// The page list: a row per section and titled group, the selected one
+    /// filled.
+    fn render_tui_tree(
+        &self,
+        cols: usize,
+        cell: Cell,
+        theme: &Theme,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let entity = cx.entity();
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        let mut push = |row: TreeRow, text: String, count: Option<usize>| {
+            let selected = self.selected == row;
+            let entity = entity.clone();
+            let id = match row {
+                TreeRow::Section(s) => ElementId::NamedInteger("settings-section".into(), s as u64),
+                TreeRow::Group(s, g) => {
+                    ElementId::NamedInteger("settings-group".into(), (s * 100 + g) as u64)
+                }
+            };
+            let count = count.map(|n| format!(" {n}")).unwrap_or_default();
+            let room = cols.saturating_sub(count.chars().count() + 1);
+            rows.push(
+                div()
+                    .id(id)
+                    .h(px(cell.h))
+                    .w(cell.cols(cols))
+                    .flex_shrink_0()
+                    .flex()
+                    .whitespace_nowrap()
+                    .cursor_pointer()
+                    .text_color(theme.list_text)
+                    .when(selected, |d| {
+                        d.bg(theme.list_bg_selected).font_weight(FontWeight::BOLD)
+                    })
+                    .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                    .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select(row, cx)))
+                    .child(SharedString::from(fit(&text, room)))
+                    .child(
+                        div()
+                            .text_color(theme.text_secondary)
+                            .child(SharedString::from(count)),
+                    )
+                    .into_any_element(),
+            );
+        };
+        for (s, section) in SECTIONS.iter().enumerate() {
+            let count = self.section_count(s);
+            if count == 0 {
+                continue;
+            }
+            let titled = section.groups.iter().any(|g| g.title.is_some());
+            let mark = if titled { "▾" } else { " " };
+            push(
+                TreeRow::Section(s),
+                format!(" {mark} {}", section.title),
+                (!self.query.is_empty() && !titled).then_some(count),
+            );
+            if titled {
+                for (g, group) in section.groups.iter().enumerate() {
+                    let n = self.group_count(s, g);
+                    if let (Some(title), true) = (group.title, n > 0) {
+                        push(
+                            TreeRow::Group(s, g),
+                            format!("     {title}"),
+                            (!self.query.is_empty()).then_some(n),
+                        );
+                    }
+                }
+            }
+        }
+        div()
+            .id("settings-tree")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.tree_scroll)
+            .flex()
+            .flex_col()
+            .children(rows)
+    }
+
+    /// The page: the rows of `tui_lines`, `width` cells wide.
+    fn render_tui_content(
+        &mut self,
+        width: usize,
+        cell: Cell,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let lines = self.tui_lines(width);
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        let row = || {
+            div()
+                .h(px(cell.h))
+                .w(cell.cols(width))
+                .flex()
+                .flex_shrink_0()
+                .whitespace_nowrap()
+        };
+        for line in lines {
+            rows.push(match line {
+                TuiLine::Blank => row().into_any_element(),
+                TuiLine::Section(s) => row()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme.text_primary)
+                    .child(SECTIONS[s].title)
+                    .into_any_element(),
+                TuiLine::Group(_, _, title) => row()
+                    .relative()
+                    .child(skin::rule(cell, width, theme.border, *m))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(cell.cols(2))
+                            .bg(theme.island_background)
+                            .text_color(theme.text_primary)
+                            .font_weight(FontWeight::BOLD)
+                            .child(SharedString::from(format!(" {title} "))),
+                    )
+                    .into_any_element(),
+                TuiLine::Description(text, indent) => row()
+                    .pl(cell.cols(2 + if indent { 2 } else { 0 }))
+                    .text_color(theme.text_secondary)
+                    .child(text)
+                    .into_any_element(),
+                TuiLine::Item(item) => self.render_tui_item(item, width, cell, theme, m, cx),
+            });
+        }
+        if rows.is_empty() {
+            rows.push(
+                row()
+                    .text_color(theme.text_tertiary)
+                    .child("Nothing matches")
+                    .into_any_element(),
+            );
+        }
+        div()
+            .id("settings-content")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.content_scroll)
+            .flex()
+            .flex_col()
+            .children(rows)
+    }
+
+    /// A setting as a row: `● Label ........ value`, the mark when the key is
+    /// set in WEEP's file, the leader dots in `text_tertiary`, the value
+    /// right-aligned (`[x]`, `[ dark      ▾ ]`, a field).
+    fn render_tui_item(
+        &mut self,
+        item: &'static Item,
+        width: usize,
+        cell: Cell,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let entity = cx.entity();
+        let value = current(item, cx);
+        let modified = cx.global::<AppSettings>().settings.is_own(item.key);
+        let indent = if item.indent { 2 } else { 0 };
+        let key = item.key;
+        let value_cols = TUI_VALUE_COLS.min(width / 2).max(8);
+        let keymap = key == "keymap";
+        let (control, control_cols): (gpui::AnyElement, usize) = match item.kind {
+            Kind::Checkbox => {
+                let on = value.as_bool().unwrap_or(false);
+                (
+                    div()
+                        .text_color(if on {
+                            theme.text_primary
+                        } else {
+                            theme.text_secondary
+                        })
+                        .child(skin::checkbox(on))
+                        .into_any_element(),
+                    3,
+                )
+            }
+            Kind::Dropdown(options) => {
+                let cols = if keymap {
+                    value_cols.saturating_sub(9).max(8)
+                } else {
+                    value_cols
+                };
+                let text = fit(&option_label(options, &value), cols - 6);
+                let pad = cols - 6 - text.chars().count();
+                let open = entity.clone();
+                let list = (self.dropdown == Some(key)).then(|| {
+                    self.render_tui_options(item, options, &value, cols, cell, theme, m, cx)
+                });
+                (
+                    div()
+                        .id(ElementId::Name(format!("settings-drop-{key}").into()))
+                        .relative()
+                        .w(cell.cols(cols))
+                        .flex_shrink_0()
+                        .cursor_pointer()
+                        .text_color(theme.dropdown_text)
+                        .hover(|s| s.bg(theme.list_bg_hovered))
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            open.update(cx, |this, cx| {
+                                this.dropdown = match this.dropdown {
+                                    Some(k) if k == key => None,
+                                    _ => Some(key),
+                                };
+                                cx.notify();
+                            })
+                        })
+                        .child(SharedString::from(format!(
+                            "[ {text}{} ▾ ]",
+                            " ".repeat(pad)
+                        )))
+                        .children(list)
+                        .into_any_element(),
+                    cols,
+                )
+            }
+            Kind::Text | Kind::Number => {
+                let input = self.field(item, cx);
+                // `[ value       ]`: the field between brackets, on `input_bg`.
+                (
+                    div()
+                        .w(cell.cols(value_cols))
+                        .h(px(cell.h))
+                        .flex()
+                        .flex_shrink_0()
+                        .text_color(theme.text_secondary)
+                        .child(div().w(cell.cols(2)).flex_shrink_0().child("["))
+                        .child(
+                            div()
+                                .w(cell.cols(value_cols - 4))
+                                .h(px(cell.h))
+                                .flex_shrink_0()
+                                .bg(theme.input_bg)
+                                .child(input),
+                        )
+                        .child(div().w(cell.cols(2)).flex_shrink_0().child(" ]"))
+                        .into_any_element(),
+                    value_cols,
+                )
+            }
+            Kind::Link => (
+                div()
+                    .id(ElementId::Name(format!("settings-link-{key}").into()))
+                    .text_color(theme.link)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.list_bg_hovered))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(EditSettingsFile), cx)
+                    })
+                    .child("Edit in settings.json")
+                    .into_any_element(),
+                21,
+            ),
+        };
+        let extra = if keymap { 9 } else { 0 };
+        let label_cols = Cell::text_cols(item.label);
+        let room = width.saturating_sub(2 + indent + 2 + control_cols + extra);
+        let label_cols = label_cols.min(room);
+        let dots = room - label_cols;
+        let label: gpui::AnyElement = if label_cols < Cell::text_cols(item.label) {
+            SharedString::from(fit(item.label, label_cols)).into_any_element()
+        } else {
+            self.highlighted(item.label, theme).into_any_element()
+        };
+        let toggle = entity.clone();
+        let checkbox = matches!(item.kind, Kind::Checkbox);
+        let on = value.as_bool().unwrap_or(false);
+        div()
+            .id(ElementId::Name(format!("settings-row-{key}").into()))
+            .h(px(cell.h))
+            .w(cell.cols(width))
+            .flex()
+            .flex_shrink_0()
+            .whitespace_nowrap()
+            .when(checkbox, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(theme.list_bg_hovered))
+                    .on_click(move |_, _, cx| {
+                        toggle.update(cx, |this, cx| this.set(key, Value::Bool(!on), cx))
+                    })
+            })
+            .child(
+                div()
+                    .w(cell.cols(2 + indent))
+                    .flex_shrink_0()
+                    .text_color(theme.settings_modified)
+                    .when(modified, |d| d.child("●")),
+            )
+            .child(
+                div()
+                    .w(cell.cols(label_cols))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .text_color(theme.text_primary)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .w(cell.cols(dots + 2))
+                    .flex_shrink_0()
+                    .text_color(theme.text_tertiary)
+                    .child(SharedString::from(if dots > 0 {
+                        format!(" {} ", ".".repeat(dots))
+                    } else {
+                        String::new()
+                    })),
+            )
+            .child(control)
+            .when(keymap, |d| {
+                d.child(div().w(cell.cols(1)).flex_shrink_0()).child(
+                    skin::button("settings-edit-keymap", "Edit", false, theme, cell).on_click(
+                        |_, window, cx| window.dispatch_action(Box::new(EditKeymapFile), cx),
+                    ),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// The open dropdown's options as a box under its control, the chosen
+    /// one filled.
+    #[allow(clippy::too_many_arguments)]
+    fn render_tui_options(
+        &self,
+        item: &'static Item,
+        options: &'static [(&'static str, &'static str)],
+        value: &Value,
+        cols: usize,
+        cell: Cell,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let key = item.key;
+        let entity = cx.entity();
+        let close = entity.clone();
+        let rows = options.iter().enumerate().map(|(ix, (json, label))| {
+            let chosen = serde_json::from_str::<Value>(json)
+                .map(|v| values_equal(&v, value))
+                .unwrap_or(false);
+            let entity = entity.clone();
+            let json = *json;
+            div()
+                .id(ElementId::NamedInteger("settings-option".into(), ix as u64))
+                .h(px(cell.h))
+                .flex_shrink_0()
+                .pl(cell.cols(1))
+                .cursor_pointer()
+                .whitespace_nowrap()
+                .text_color(theme.popup_text)
+                .when(chosen, |d| {
+                    d.bg(theme.list_bg_focused)
+                        .text_color(theme.list_text_focused)
+                })
+                .when(!chosen, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    entity.update(cx, |this, cx| {
+                        if let Ok(v) = serde_json::from_str::<Value>(json) {
+                            this.set(key, v, cx);
+                        }
+                        this.dropdown = None;
+                        cx.notify();
+                    })
+                })
+                .child(SharedString::from(fit(label, cols.saturating_sub(4))))
+        });
+        let body = div().flex().flex_col().children(rows).into_any_element();
+        deferred(
+            div()
+                .id("settings-dropdown")
+                .occlude()
+                .absolute()
+                .top(px(cell.h))
+                .left_0()
+                .on_mouse_down_out(move |_, _, cx| {
+                    close.update(cx, |this, cx| {
+                        this.dropdown = None;
+                        cx.notify();
+                    })
+                })
+                .child(skin::boxed(
+                    cell,
+                    cols,
+                    options.len() + 2,
+                    Vec::new(),
+                    Vec::new(),
+                    body,
+                    theme.popup_bg,
+                    theme.popup_border,
+                    theme,
+                    *m,
+                )),
+        )
     }
 }

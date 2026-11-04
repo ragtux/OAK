@@ -243,6 +243,150 @@ struct SplitterDrag {
     side: Side,
 }
 
+// ---- the tui skin's window grid -------------------------------------------------
+
+/// A rectangle of whole cells on the tui skin's window grid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CellRect {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+}
+
+/// Where everything sits on the tui skin's grid: islands one empty cell
+/// apart (the gap is the splitter), a cell of margin at the window's left
+/// and right, the status bar on the last row.
+#[derive(Debug, Default, PartialEq)]
+struct TuiGeometry {
+    left: Option<CellRect>,
+    bottom: Option<CellRect>,
+    right: Option<CellRect>,
+    panes: Vec<CellRect>,
+    splitters: Vec<(Side, CellRect)>,
+    status: Option<CellRect>,
+}
+
+/// The fewest columns the editor keeps between the side panels.
+const TUI_MIN_CENTRE: usize = 12;
+
+/// The tool chooser's width in the tui skin, frame included.
+const TUI_CHOOSER_COLS: usize = 24;
+
+/// Lays the islands on a `cols` x `rows` grid. `panels` are the left,
+/// bottom and right panels' wanted extents in cells, `None` when closed.
+fn tui_geometry(
+    cols: usize,
+    rows: usize,
+    panels: [Option<usize>; 3],
+    panes: usize,
+    status: bool,
+) -> TuiGeometry {
+    let status_rows = usize::from(status && rows > 1);
+    let island_rows = rows - status_rows;
+    let [left, bottom, right] = panels;
+    let (mut lc, mut rc) = (left.unwrap_or(0), right.unwrap_or(0));
+    let side = |n: usize| if n > 0 { n + 1 } else { 0 };
+    let room = cols.saturating_sub(2 + TUI_MIN_CENTRE);
+    while side(lc) + side(rc) > room && (lc > 4 || rc > 4) {
+        if rc >= lc && rc > 4 {
+            rc -= 1;
+        } else {
+            lc -= 1;
+        }
+    }
+    if side(lc) + side(rc) > room {
+        (lc, rc) = (0, 0);
+    }
+    let mut bc = bottom.unwrap_or(0);
+    bc = bc.min(island_rows.saturating_sub(5));
+    if bc < 3 {
+        bc = 0;
+    }
+    let centre_x = 1 + side(lc);
+    let centre_w = cols.saturating_sub(centre_x + 1 + side(rc));
+    let pane_rows = island_rows.saturating_sub(side(bc));
+    let mut g = TuiGeometry::default();
+    if lc > 0 {
+        g.left = Some(CellRect {
+            x: 1,
+            y: 0,
+            w: lc,
+            h: island_rows,
+        });
+        g.splitters.push((
+            Side::Left,
+            CellRect {
+                x: 1 + lc,
+                y: 0,
+                w: 1,
+                h: island_rows,
+            },
+        ));
+    }
+    if rc > 0 {
+        let x = cols - 1 - rc;
+        g.right = Some(CellRect {
+            x,
+            y: 0,
+            w: rc,
+            h: island_rows,
+        });
+        g.splitters.push((
+            Side::Right,
+            CellRect {
+                x: x - 1,
+                y: 0,
+                w: 1,
+                h: island_rows,
+            },
+        ));
+    }
+    if bc > 0 {
+        g.bottom = Some(CellRect {
+            x: centre_x,
+            y: pane_rows + 1,
+            w: centre_w,
+            h: bc,
+        });
+        g.splitters.push((
+            Side::Bottom,
+            CellRect {
+                x: centre_x,
+                y: pane_rows,
+                w: centre_w,
+                h: 1,
+            },
+        ));
+    }
+    let n = panes.max(1);
+    let each = centre_w.saturating_sub(n - 1) / n;
+    let mut x = centre_x;
+    for p in 0..n {
+        let w = if p + 1 == n {
+            (centre_x + centre_w).saturating_sub(x)
+        } else {
+            each
+        };
+        g.panes.push(CellRect {
+            x,
+            y: 0,
+            w,
+            h: pane_rows,
+        });
+        x += w + 1;
+    }
+    if status_rows > 0 {
+        g.status = Some(CellRect {
+            x: 0,
+            y: island_rows,
+            w: cols,
+            h: 1,
+        });
+    }
+    g
+}
+
 // ---- editor splits --------------------------------------------------------------
 
 /// What a tab shows: a file in an editor, the Settings tool, or a diff
@@ -353,6 +497,10 @@ impl Render for TabGhost {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
+        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            let (glyph, color) = crate::skin::file_glyph(&self.title, &theme);
+            return tui_ghost(glyph, color, &self.title, self.dirty, &theme, &m, cx);
+        }
         div()
             .p(px(0.))
             .rounded(px(m.editor_tab_radius + m.editor_tab_drag_ring))
@@ -370,7 +518,51 @@ impl Render for TabGhost {
                 &theme,
                 &m,
             ))
+            .into_any_element()
     }
+}
+
+/// What the pointer drags in the tui skin (a tab, the tree's rows): a
+/// one-row box, ` ◆ name ● ` in a frame of `drag_border_highlight`.
+pub(crate) fn tui_ghost(
+    glyph: &'static str,
+    color: gpui::Hsla,
+    title: &str,
+    dirty: bool,
+    theme: &Theme,
+    m: &Metrics,
+    cx: &App,
+) -> gpui::AnyElement {
+    let cell = crate::skin::Cell::current(cx);
+    let mut text = format!(" {title} ");
+    if dirty {
+        text.push_str("● ");
+    }
+    let cols = 2 + 2 + crate::skin::Cell::text_cols(&text);
+    crate::skin::boxed(
+        cell,
+        cols,
+        3,
+        Vec::new(),
+        Vec::new(),
+        div()
+            .flex()
+            .whitespace_nowrap()
+            .text_color(theme.text_primary)
+            .child(
+                div()
+                    .w(cell.cols(2))
+                    .text_color(color)
+                    .child(format!(" {glyph}")),
+            )
+            .child(text)
+            .into_any_element(),
+        theme.popup_bg,
+        theme.drag_border_highlight,
+        theme,
+        *m,
+    )
+    .into_any_element()
 }
 
 /// A tab's content: icon, title, the modified dot, the close box.
@@ -505,6 +697,9 @@ pub struct Workspace {
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
     last_title: String,
+    /// The tui skin's content area (under the toolbar) as last laid out:
+    /// the window grid's origin and extent.
+    tui_area: Rc<Cell<Bounds<Pixels>>>,
 }
 
 impl Focusable for Workspace {
@@ -612,6 +807,7 @@ impl Workspace {
             window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
+            tui_area: Rc::new(Cell::new(Bounds::default())),
         };
         this.init_workbench(window, cx);
         // `launchTerminalOnOpen`: a shell in the bottom panel, the editor keeping the focus.
@@ -1754,6 +1950,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let m = *cx.global::<Metrics>();
+        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            return self.tui_splitter_moved(side, pointer, cx);
+        }
         let viewport = window.viewport_size();
         let half = m.island_margin / 2.;
         let (size, min) = match side {
@@ -1783,6 +1982,73 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The tui skin's grid: the content area's origin, columns and rows.
+    fn tui_grid(&self, cell: crate::skin::Cell) -> (Point<Pixels>, usize, usize) {
+        let area = self.tui_area.get();
+        (
+            area.origin,
+            crate::skin::Cell::fit(area.size.width, cell.w),
+            crate::skin::Cell::fit(area.size.height, cell.h),
+        )
+    }
+
+    /// Where the islands sit on the tui skin's grid now.
+    fn tui_layout(&self, cell: crate::skin::Cell, cx: &App) -> TuiGeometry {
+        let m = cx.global::<Metrics>();
+        let (_, cols, rows) = self.tui_grid(cell);
+        let extent = |side: Side| {
+            let panel = self.panel(side);
+            panel.open.then(|| {
+                let pitch = if side == Side::Bottom { cell.h } else { cell.w };
+                ((panel.size * m.zoom / pitch).round() as usize).max(4)
+            })
+        };
+        tui_geometry(
+            cols,
+            rows,
+            [
+                extent(Side::Left),
+                extent(Side::Bottom),
+                extent(Side::Right),
+            ],
+            self.panes.len(),
+            Self::settings(cx).editor_show_status_bar(),
+        )
+    }
+
+    /// A splitter dragged in the tui skin: the gap lands on the cell under
+    /// the pointer, so a panel grows and shrinks by whole columns (rows).
+    fn tui_splitter_moved(&mut self, side: Side, pointer: Point<Pixels>, cx: &mut Context<Self>) {
+        let m = *cx.global::<Metrics>();
+        let cell = crate::skin::Cell::current(cx);
+        let (origin, cols, rows) = self.tui_grid(cell);
+        let col = (f32::from(pointer.x - origin.x) / cell.w).floor().max(0.) as usize;
+        let row = (f32::from(pointer.y - origin.y) / cell.h).floor().max(0.) as usize;
+        let island_rows =
+            rows.saturating_sub(usize::from(Self::settings(cx).editor_show_status_bar()));
+        let (cells, pitch, min) = match side {
+            Side::Left => (col.saturating_sub(1), cell.w, m.panel_min_width),
+            Side::Right => (cols.saturating_sub(2 + col), cell.w, m.panel_min_width),
+            Side::Bottom => (
+                island_rows.saturating_sub(row + 1),
+                cell.h,
+                m.panel_min_height,
+            ),
+        };
+        let size = cells as f32 * pitch;
+        let panel = self.panel_mut(side);
+        if size < min {
+            if panel.open {
+                panel.open = false;
+                panel.size = min / m.zoom;
+            }
+        } else {
+            panel.open = true;
+            panel.size = size / m.zoom;
+        }
+        cx.notify();
+    }
+
     // ---- the chooser ----------------------------------------------------------
 
     fn open_chooser(
@@ -1793,10 +2059,21 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let m = *cx.global::<Metrics>();
-        let origin = point(
-            anchor.origin.x + px(m.popup_offset_x),
-            anchor.origin.y + anchor.size.height + px(m.popup_offset_y),
-        );
+        let origin = if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            // On the grid: the box's corner on the cell under the anchor's
+            // first one, kept inside the window's columns.
+            let cell = crate::skin::Cell::current(cx);
+            let (o, cols, _) = self.tui_grid(cell);
+            let col = (f32::from(anchor.origin.x - o.x) / cell.w).round().max(0.) as usize;
+            let row = (f32::from(anchor.bottom() - o.y) / cell.h).round().max(0.) as usize;
+            let col = col.min(cols.saturating_sub(TUI_CHOOSER_COLS + 1));
+            point(o.x + cell.cols(col), o.y + cell.rows(row))
+        } else {
+            point(
+                anchor.origin.x + px(m.popup_offset_x),
+                anchor.origin.y + anchor.size.height + px(m.popup_offset_y),
+            )
+        };
         let chooser = Chooser {
             side,
             origin,
@@ -1964,26 +2241,15 @@ impl Workspace {
             ))
             .group("tab")
             .map(|d| match tui {
+                // The fill is the label's own; the tab's last cell is the
+                // frame's line between tabs (see the children below).
                 Some(cell) => d
                     .h(px(cell.h))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
                     .cursor_pointer()
-                    .when(hidden, |d| d.opacity(0.))
-                    .map(|d| {
-                        if focused {
-                            d.bg(theme.list_bg_focused)
-                                .text_color(theme.list_text_focused)
-                        } else if selected {
-                            d.bg(theme.list_bg_selected).text_color(theme.text_primary)
-                        } else {
-                            d.bg(theme.island_background)
-                                .text_color(theme.text_secondary)
-                                .hover(|s| s.text_color(theme.text_primary))
-                        }
-                    })
-                    .when(selected, |d| d.font_weight(FontWeight::BOLD)),
+                    .when(hidden, |d| d.opacity(0.)),
                 None => d
                     .h(px(m.editor_tab_height))
                     .pl(px(m.editor_tab_pad_left))
@@ -2051,9 +2317,63 @@ impl Workspace {
             .tooltip(Tooltip::text(path_text))
             .map(|d| match tui {
                 Some(cell) => {
-                    let (glyph, glyph_color) = crate::skin::file_glyph(&title, theme);
+                    let (glyph, glyph_color) = match &tab.view {
+                        TabView::Editor(_) => crate::skin::file_glyph(&title, theme),
+                        TabView::Settings(_) => ("≡", theme.text_secondary),
+                        TabView::Diff(_) => ("±", theme.text_secondary),
+                    };
                     let cells = |n: usize| px(n as f32 * cell.w);
-                    d.child(div().w(cells(1)).flex_shrink_0())
+                    let gap = || div().w(cells(1)).flex_shrink_0();
+                    // The close cell: `●` while dirty, inside the label, which
+                    // the cross replaces on hover; a clean tab's cross takes
+                    // the cell of line after it, so nothing is reserved.
+                    let close_cell = div()
+                        .id("tab-close")
+                        .w(cells(1))
+                        .h(px(cell.h))
+                        .flex_shrink_0()
+                        .relative()
+                        .group("tab-close")
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            close.update(cx, |this, cx| this.close_tab_at(p, ix, window, cx));
+                        })
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .invisible()
+                                .group_hover("tab", |s| s.visible())
+                                .when(!dirty, |d| {
+                                    d.bg(theme.island_background)
+                                        .text_color(theme.text_secondary)
+                                })
+                                .group_hover("tab-close", |s| {
+                                    s.text_color(theme.tab_close_icon_hovered)
+                                })
+                                .child("×"),
+                        );
+                    let label = div()
+                        .h(px(cell.h))
+                        .flex()
+                        .flex_shrink_0()
+                        .map(|d| {
+                            if focused {
+                                d.bg(theme.tab_bg_selected_focused)
+                                    .text_color(theme.tab_text_selected)
+                            } else if selected {
+                                d.bg(theme.tab_bg_selected)
+                                    .text_color(theme.tab_text_selected)
+                            } else {
+                                d.bg(theme.island_background)
+                                    .text_color(theme.text_secondary)
+                                    .group_hover("tab", |s| s.text_color(theme.text_primary))
+                            }
+                        })
+                        .when(selected, |d| d.font_weight(FontWeight::BOLD))
+                        .child(gap())
                         .child(
                             div()
                                 .w(cells(1))
@@ -2061,7 +2381,7 @@ impl Workspace {
                                 .when(!focused, |d| d.text_color(glyph_color))
                                 .child(glyph),
                         )
-                        .child(div().w(cells(1)).flex_shrink_0())
+                        .child(gap())
                         .child(
                             div()
                                 .w(cells(title.chars().count()))
@@ -2070,41 +2390,21 @@ impl Workspace {
                                 .when(preview, |d| d.italic())
                                 .child(title),
                         )
-                        .child(div().w(cells(1)).flex_shrink_0())
-                        // `●` while dirty, which the close cross replaces on hover.
-                        .child(
-                            div()
-                                .id("tab-close")
-                                .w(cells(2))
-                                .flex_shrink_0()
-                                .relative()
-                                .group("tab-close")
-                                .on_click(move |_, window, cx| {
-                                    cx.stop_propagation();
-                                    close.update(cx, |this, cx| {
-                                        this.close_tab_at(p, ix, window, cx)
-                                    });
-                                })
-                                .child(if dirty {
-                                    div().group_hover("tab-close", |s| s.invisible()).child("●")
-                                } else {
-                                    div()
-                                        .invisible()
-                                        .group_hover("tab", |s| s.visible())
-                                        .child("×")
-                                })
-                                .when(dirty, |d| {
-                                    d.child(
-                                        div()
-                                            .absolute()
-                                            .top_0()
-                                            .left_0()
-                                            .invisible()
-                                            .group_hover("tab-close", |s| s.visible())
-                                            .child("×"),
-                                    )
-                                }),
+                        .child(gap());
+                    if dirty {
+                        d.child(
+                            label
+                                .child(
+                                    close_cell.child(
+                                        div().group_hover("tab", |s| s.invisible()).child("●"),
+                                    ),
+                                )
+                                .child(gap()),
                         )
+                        .child(gap())
+                    } else {
+                        d.child(label).child(close_cell)
+                    }
                 }
                 None => d
                     .child(
@@ -2306,7 +2606,15 @@ impl Workspace {
             Some(tab) => match &tab.view {
                 TabView::Editor(editor) => {
                     let find = pane.find.read(cx);
-                    let pushed = find.open && !find.query(cx).is_empty();
+                    // The tui skin's find bar is a command line under the
+                    // text (its rows end the body); Fleet's pushes the text down.
+                    let (pushed, under) =
+                        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+                            let cell = crate::skin::Cell::current(cx);
+                            (false, cell.rows(find.tui_rows()))
+                        } else {
+                            (find.open && !find.query(cx).is_empty(), px(0.))
+                        };
                     let conflict = editor.read(cx).document.read(cx).conflict;
                     div()
                         .flex_1()
@@ -2316,6 +2624,7 @@ impl Workspace {
                             div()
                                 .size_full()
                                 .when(pushed, |d| d.pt(px(m.find_bar_push)))
+                                .pb(under)
                                 .child(editor.clone()),
                         )
                         .child(pane.find.clone())
@@ -2328,6 +2637,9 @@ impl Workspace {
                 }
                 TabView::Diff(diff) => div().flex_1().min_h_0().relative().child(diff.clone()),
             },
+            None if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui => {
+                self.render_tui_welcome(p, theme, cx)
+            }
             None => div()
                 .flex_1()
                 .min_h_0()
@@ -2364,13 +2676,11 @@ impl Workspace {
                     .flex()
                     .overflow_x_scroll()
                     .track_scroll(&pane.scroll)
-                    .children((0..pane.tabs.len()).flat_map(|ix| {
-                        [
-                            self.render_tab(p, ix, theme, m, window, cx, Some(cell))
-                                .into_any_element(),
-                            div().w(px(cell.w)).flex_shrink_0().into_any_element(),
-                        ]
-                    }))
+                    // Each tab ends in its cell of line, so tabs sit one cell apart.
+                    .children(
+                        (0..pane.tabs.len())
+                            .map(|ix| self.render_tab(p, ix, theme, m, window, cx, Some(cell))),
+                    )
                     .child(
                         div()
                             .id("tabs-end")
@@ -2390,15 +2700,27 @@ impl Workspace {
                 Vec::new()
             };
             let focused = pane.focus_handle.contains_focused(window, cx);
-            return self
-                .island(theme, m)
+            // The island's fill and place are the window grid's (`render_tui_area`).
+            return div()
+                .size_full()
                 .track_focus(&pane.focus_handle)
-                .flex_1()
-                .min_w_0()
-                .child(crate::skin::framed(
+                .child(crate::skin::framed_edges(
                     cell,
                     &pane.tui_grid,
                     strip,
+                    // The editor's badge and scroll bar sit on the frame.
+                    // The find bar's rule joins the frame (`├──┤`).
+                    match pane.active_tab().map(|t| &t.view) {
+                        Some(TabView::Editor(editor)) => {
+                            let mut edges = crate::editor::EditorView::tui_edges(editor, cell, cx);
+                            let find = pane.find.read(cx).tui_rows();
+                            if find > 0 {
+                                edges.rules_from_bottom.push(find);
+                            }
+                            edges
+                        }
+                        _ => crate::skin::Edges::default(),
+                    },
                     body.size_full().into_any_element(),
                     theme,
                     *m,
@@ -2746,9 +3068,14 @@ impl Workspace {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let panel = self.panel(side);
+        let tui = crate::skin::Skin::current(cx) == crate::skin::Skin::Tui;
         let content: gpui::AnyElement = if panel.tools.is_empty() {
-            self.render_empty_panel(side, theme, m, cx)
-                .into_any_element()
+            if tui {
+                self.render_tui_empty_panel(side, theme, m, window, cx)
+            } else {
+                self.render_empty_panel(side, theme, m, cx)
+                    .into_any_element()
+            }
         } else {
             let tab = panel
                 .tools
@@ -2778,7 +3105,7 @@ impl Workspace {
                     .child(other.label())
                     .into_any_element(),
             };
-            if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            if tui {
                 self.render_tui_panel(side, body, theme, m, window, cx)
             } else {
                 div()
@@ -2790,6 +3117,13 @@ impl Workspace {
                     .into_any_element()
             }
         };
+        if tui {
+            // Placed and filled on the window grid by `render_tui_area`.
+            return div()
+                .size_full()
+                .track_focus(&panel.focus_handle)
+                .child(content);
+        }
         self.island(theme, m)
             .track_focus(&panel.focus_handle)
             .flex_shrink_0()
@@ -2819,8 +3153,10 @@ impl Workspace {
         let cell = Grid::current(cx);
         let cols = panel.tui_grid.get().0;
         let panel_focused = panel.focus_handle.contains_focused(window, cx);
-        // One label: ` name ` on the island's colour, so it cuts the frame;
-        // the active tab in reverse video. Widths are whole cells.
+        // A tab is ` name ` set into the top edge, as the editor's tabs are:
+        // the selected one filled (reverse video while the panel has the
+        // focus), the others plain text on the line, one cell of line after
+        // each. A closable tab's `×` takes that cell on hover.
         let label = |text: String, active: bool, focused: bool| {
             let chars = text.chars().count();
             div()
@@ -2831,10 +3167,11 @@ impl Workspace {
                 .cursor_pointer()
                 .map(|d| {
                     if focused {
-                        d.bg(theme.list_bg_focused)
-                            .text_color(theme.list_text_focused)
+                        d.bg(theme.tab_bg_selected_focused)
+                            .text_color(theme.tab_text_selected)
                     } else if active {
-                        d.bg(theme.list_bg_selected).text_color(theme.text_primary)
+                        d.bg(theme.tab_bg_selected)
+                            .text_color(theme.tab_text_selected)
                     } else {
                         d.bg(theme.island_background)
                             .text_color(theme.text_secondary)
@@ -2848,17 +3185,25 @@ impl Workspace {
         let mut strip: Vec<gpui::AnyElement> = Vec::new();
         for (ix, tab) in panel.tools.iter().enumerate() {
             let active = ix == panel.active;
+            let focused = active && panel_focused;
             let closable = matches!(tab.tool, Tool::Terminal | Tool::Run);
-            let failed = tab.tool == Tool::Run
-                && self
-                    .run_view(tab.instance)
-                    .is_some_and(|v| v.read(cx).failed());
-            let mut text = format!(" {}", self.tool_tab_label(*tab, cx));
-            if failed {
-                text.push_str(" !");
-            }
-            text.push(' ');
-            let width = text.chars().count() + if closable { 2 } else { 0 };
+            // A run's tab: ` ▶ name ` while it runs, ` ■ name ` once done
+            // (in the danger colour when it failed).
+            let run = (tab.tool == Tool::Run)
+                .then(|| self.run_view(tab.instance))
+                .flatten()
+                .map(|v| {
+                    let v = v.read(cx);
+                    if v.running() {
+                        ("▶", theme.text_positive)
+                    } else if v.failed() {
+                        ("■", theme.text_dangerous)
+                    } else {
+                        ("■", theme.text_tertiary)
+                    }
+                });
+            let name = self.tool_tab_label(*tab, cx).to_string();
+            let width = 2 + name.chars().count() + if run.is_some() { 2 } else { 0 };
             if used + width + 1 > cols.saturating_sub(5) && ix > 0 {
                 break; // no room: the rest stay behind `+`, as Fleet clips them
             }
@@ -2866,12 +3211,14 @@ impl Workspace {
             let select = cx.entity();
             let menu = cx.entity();
             let close = cx.entity();
+            let group: SharedString = format!("tui-panel-tab-{}-{ix}", side.index()).into();
             strip.push(
                 div()
                     .id(ElementId::NamedInteger(
                         format!("tui-panel-tab-{}", side.index()).into(),
                         ix as u64,
                     ))
+                    .group(group.clone())
                     .flex()
                     .flex_shrink_0()
                     .on_click(move |_, window, cx| {
@@ -2885,30 +3232,43 @@ impl Workspace {
                         let position = event.position;
                         menu.update(cx, |this, cx| this.panel_tab_menu(side, ix, position, cx));
                     })
+                    .map(|d| match run {
+                        Some((glyph, color)) => d
+                            .child(label(" ".into(), active, focused))
+                            .child(
+                                label(glyph.into(), active, focused)
+                                    .when(!focused, |d| d.text_color(color)),
+                            )
+                            .child(label(format!(" {name} "), active, focused)),
+                        None => d.child(label(format!(" {name} "), active, focused)),
+                    })
                     .child(
-                        label(text, active, active && panel_focused)
-                            .when(failed, |d| d.text_color(theme.icon_red)),
-                    )
-                    .when(closable, |d| {
-                        d.child(
-                            div()
-                                .id("tui-panel-tab-close")
+                        div()
+                            .id("tui-panel-tab-close")
+                            .w(px(cell.w))
+                            .h(px(cell.h))
+                            .flex_shrink_0()
+                            .when(closable, |d| {
+                                d.child(
+                                    div()
+                                        .size_full()
+                                        .invisible()
+                                        .group_hover(group, |s| s.visible())
+                                        .bg(theme.island_background)
+                                        .text_color(theme.text_secondary)
+                                        .hover(|s| s.text_color(theme.tab_close_icon_hovered))
+                                        .child("×"),
+                                )
                                 .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
                                     close.update(cx, |this, cx| {
                                         this.close_tool_tab(side, ix, window, cx)
                                     });
                                 })
-                                .child(
-                                    label("× ".into(), active, active && panel_focused)
-                                        .hover(|s| s.text_color(theme.icon_red)),
-                                ),
-                        )
-                    })
+                            }),
+                    )
                     .into_any_element(),
             );
-            // A cell of the frame's line between labels.
-            strip.push(div().w(px(cell.w)).flex_shrink_0().into_any_element());
         }
         let anchor = panel.plus_anchor.clone();
         let anchor_read = panel.plus_anchor.clone();
@@ -2932,8 +3292,48 @@ impl Workspace {
                 .child(label(" + ".into(), false, false))
                 .into_any_element(),
         );
-        crate::skin::framed(cell, &panel.tui_grid, strip, body, theme, *m, panel_focused)
-            .into_any_element()
+        let mut edges = crate::skin::Edges::default();
+        if panel
+            .tools
+            .get(panel.active)
+            .is_some_and(|t| t.tool == Tool::Files)
+        {
+            // The tree's scroll bar is the frame's right edge.
+            let scroll = self.file_tree.read(cx).tui_scroll();
+            let thumb = theme.scrollbar_thumb;
+            let m = *m;
+            edges.right = Some(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| {
+                        let visible = f32::from(bounds.size.height);
+                        crate::skin::paint_scrollbar(
+                            window,
+                            bounds,
+                            cell,
+                            -f32::from(scroll.offset().y),
+                            visible,
+                            visible + f32::from(scroll.max_offset().y),
+                            None,
+                            thumb,
+                            &m,
+                        );
+                    },
+                )
+                .size_full()
+                .into_any_element(),
+            );
+        }
+        crate::skin::framed_edges(
+            cell,
+            &panel.tui_grid,
+            strip,
+            edges,
+            body,
+            theme,
+            *m,
+            panel_focused,
+        )
     }
 
     /// The 8 px gap beside a panel: the splitter (batch 2).
@@ -3080,11 +3480,515 @@ impl Workspace {
         ))
     }
 
+    // ---- the tui skin's window --------------------------------------------------
+
+    /// The content area in the tui skin: one grid of cells from its top-left
+    /// corner, the islands placed on it one empty cell apart (each filling
+    /// its whole cells), the gaps beside the panels as splitters, and the
+    /// status bar on the last row. The grid is read back while painting, so
+    /// a resize settles a frame later.
+    fn render_tui_area(
+        &mut self,
+        theme: &Theme,
+        m: &Metrics,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let cell = crate::skin::Cell::current(cx);
+        let g = self.tui_layout(cell, cx);
+        let measure = {
+            let area = self.tui_area.clone();
+            canvas(
+                move |bounds, window, _| {
+                    if area.get() != bounds {
+                        area.set(bounds);
+                        crate::skin::redraw(window);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
+        let place = |r: CellRect| {
+            div()
+                .absolute()
+                .left(cell.cols(r.x))
+                .top(cell.rows(r.y))
+                .w(cell.cols(r.w))
+                .h(cell.rows(r.h))
+        };
+        // An island fills its whole cells; its content gets half a cell of
+        // slack so `framed` still counts whole cells after pixel snapping.
+        let island = |r: CellRect, content: gpui::AnyElement| {
+            place(r).bg(theme.island_background).child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px((r.w as f32 + 0.5) * cell.w))
+                    .h(px((r.h as f32 + 0.5) * cell.h))
+                    .child(content),
+            )
+        };
+        let mut children: Vec<gpui::AnyElement> = vec![measure.into_any_element()];
+        for (side, rect) in [
+            (Side::Left, g.left),
+            (Side::Bottom, g.bottom),
+            (Side::Right, g.right),
+        ] {
+            if let Some(r) = rect {
+                let panel = self
+                    .render_panel(side, theme, m, window, cx)
+                    .into_any_element();
+                children.push(island(r, panel).into_any_element());
+            }
+        }
+        for (p, r) in g.panes.iter().copied().enumerate().take(self.panes.len()) {
+            let pane = self.render_pane(p, theme, m, window, cx).into_any_element();
+            let group: SharedString = format!("tui-pane-{p}").into();
+            let highlight = theme.drag_border_highlight;
+            let mm = *m;
+            let drop = cx.entity();
+            children.push(
+                island(r, pane)
+                    .id(ElementId::NamedInteger("tui-pane".into(), p as u64))
+                    .group(group.clone())
+                    // A tab dropped anywhere on a split joins its tabs.
+                    .on_drop(move |dragged: &DraggedTab, _, cx| {
+                        let (fp, fi) = (dragged.pane, dragged.index);
+                        drop.update(cx, |this, cx| {
+                            this.dragging_tab = None;
+                            this.move_tab((fp, fi), p, None, cx);
+                        });
+                    })
+                    // The drop target's frame turns `drag_border_highlight`.
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .invisible()
+                            .group_drag_over::<DraggedTab>(group, |s| s.visible())
+                            .child(
+                                canvas(
+                                    |_, _, _| (),
+                                    move |bounds, _, window, _| {
+                                        crate::skin::paint_frame(
+                                            window,
+                                            bounds.origin,
+                                            cell,
+                                            r.w,
+                                            r.h,
+                                            &[],
+                                            highlight,
+                                            &mm,
+                                        );
+                                    },
+                                )
+                                .size_full(),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        for (side, r) in g.splitters.iter().copied() {
+            children.push(self.render_tui_splitter(side, r, cell, theme, m));
+        }
+        if let Some(r) = g.status {
+            let bar = self.render_status_bar(theme, m, Some((cell, r.w)), cx);
+            children.push(place(r).child(bar).into_any_element());
+        }
+        div()
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .children(children)
+            .into_any_element()
+    }
+
+    /// The gap beside a panel in the tui skin, a column (a row under the
+    /// editor) one cell wide: hovered, a double stroke through its centre
+    /// in `border_focused`, from the islands' first row to their last.
+    fn render_tui_splitter(
+        &self,
+        side: Side,
+        r: CellRect,
+        cell: crate::skin::Cell,
+        theme: &Theme,
+        m: &Metrics,
+    ) -> gpui::AnyElement {
+        let group: SharedString = format!("tui-splitter-{}", side.index()).into();
+        let color = theme.border_focused;
+        let m = *m;
+        let vertical = side != Side::Bottom;
+        div()
+            .id(ElementId::NamedInteger(
+                "tui-splitter".into(),
+                side.index() as u64,
+            ))
+            .group(group.clone())
+            .absolute()
+            .left(cell.cols(r.x))
+            .top(cell.rows(r.y))
+            .w(cell.cols(r.w))
+            .h(cell.rows(r.h))
+            .map(|d| {
+                if vertical {
+                    d.cursor_col_resize()
+                } else {
+                    d.cursor_row_resize()
+                }
+            })
+            .on_drag(SplitterDrag { side }, |_, _, _, cx| cx.new(|_| EmptyView))
+            .child(
+                div()
+                    .size_full()
+                    .invisible()
+                    .group_hover(group, |s| s.visible())
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, _, window, _| {
+                                let t = 2. * crate::skin::stroke(window, &m);
+                                let o = bounds.origin;
+                                let (x, y, w, h) = if vertical {
+                                    let x = crate::skin::snap(window, f32::from(o.x) + cell.w / 2.);
+                                    let y = crate::skin::snap(window, f32::from(o.y) + cell.h / 2.);
+                                    let h = crate::skin::snap(
+                                        window,
+                                        (r.h.saturating_sub(1)) as f32 * cell.h,
+                                    );
+                                    (x - t / 2., y, t, h)
+                                } else {
+                                    let x = crate::skin::snap(window, f32::from(o.x) + cell.w / 2.);
+                                    let y = crate::skin::snap(window, f32::from(o.y) + cell.h / 2.);
+                                    let w = crate::skin::snap(
+                                        window,
+                                        (r.w.saturating_sub(1)) as f32 * cell.w,
+                                    );
+                                    (x, y - t / 2., w, t)
+                                };
+                                window.paint_quad(gpui::fill(
+                                    Bounds::new(point(px(x), px(y)), gpui::size(px(w), px(h))),
+                                    color,
+                                ));
+                            },
+                        )
+                        .size_full(),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The empty editor area in the tui skin: `WEEP` as a five-row banner of
+    /// block cells, and under it the chords to start from, one per row
+    /// (`⌘P  Go to file`), the block centred on whole cells.
+    fn render_tui_welcome(&self, p: usize, theme: &Theme, cx: &Context<Self>) -> Div {
+        // Each letter is 5 x 5 blocks; a block is two cells wide, so it is
+        // near square on the 1:2.5 cell.
+        const LETTERS: [[&str; 5]; 4] = [
+            ["#...#", "#...#", "#.#.#", "#.#.#", ".#.#."],
+            ["#####", "#....", "####.", "#....", "#####"],
+            ["#####", "#....", "####.", "#....", "#####"],
+            ["####.", "#...#", "####.", "#....", "#...."],
+        ];
+        const HINTS: [(&str, &str); 7] = [
+            ("goto/file", "Go to file"),
+            ("goto/everything", "Go to everything"),
+            ("goto/action", "Actions"),
+            ("new-file", "New file"),
+            ("find-in-path", "Find in files"),
+            ("show-recent-workspaces", "Recent workspaces"),
+            ("open-settings", "Settings"),
+        ];
+        let cell = crate::skin::Cell::current(cx);
+        let (cols, rows) = self.panes[p].tui_grid.get();
+        let (cols, rows) = (cols.saturating_sub(2), rows.saturating_sub(2));
+        let hints: Vec<(String, &str)> = HINTS
+            .iter()
+            .filter_map(|(id, label)| crate::keymap::hint_for(cx, id).map(|c| (c, *label)))
+            .collect();
+        let chord_w = hints
+            .iter()
+            .map(|(c, _)| crate::skin::Cell::text_cols(c))
+            .max()
+            .unwrap_or(0);
+        let label_w = hints
+            .iter()
+            .map(|(_, l)| crate::skin::Cell::text_cols(l))
+            .max()
+            .unwrap_or(0);
+        let hints_w = chord_w + 2 + label_w;
+        let banner_w = 4 * 10 + 3 * 2;
+        let banner = cols >= banner_w + 2 && rows >= 5 + 2 + hints.len();
+        let height = if banner { 7 } else { 0 } + hints.len();
+        let top = rows.saturating_sub(height) / 2;
+        let mut d = div().size_full().relative();
+        if banner {
+            let color = theme.text_tertiary;
+            let left = (cols - banner_w) / 2;
+            d = d.child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| {
+                        let o = bounds.origin;
+                        for (k, letter) in LETTERS.iter().enumerate() {
+                            for (row, line) in letter.iter().enumerate() {
+                                for (col, ch) in line.chars().enumerate() {
+                                    if ch != '#' {
+                                        continue;
+                                    }
+                                    let c = k * 12 + col * 2;
+                                    let x0 = crate::skin::snap(
+                                        window,
+                                        f32::from(o.x) + c as f32 * cell.w,
+                                    );
+                                    let x1 = crate::skin::snap(
+                                        window,
+                                        f32::from(o.x) + (c + 2) as f32 * cell.w,
+                                    );
+                                    let y0 = crate::skin::snap(
+                                        window,
+                                        f32::from(o.y) + row as f32 * cell.h,
+                                    );
+                                    let y1 = crate::skin::snap(
+                                        window,
+                                        f32::from(o.y) + (row + 1) as f32 * cell.h,
+                                    );
+                                    window.paint_quad(gpui::fill(
+                                        Bounds::new(
+                                            point(px(x0), px(y0)),
+                                            gpui::size(px(x1 - x0), px(y1 - y0)),
+                                        ),
+                                        color,
+                                    ));
+                                }
+                            }
+                        }
+                    },
+                )
+                .absolute()
+                .left(cell.cols(left))
+                .top(cell.rows(top))
+                .w(cell.cols(banner_w))
+                .h(cell.rows(5)),
+            );
+        }
+        let left = cols.saturating_sub(hints_w) / 2;
+        let first = top + if banner { 7 } else { 0 };
+        d.children(hints.into_iter().enumerate().map(|(i, (chord, label))| {
+            let pad = chord_w - crate::skin::Cell::text_cols(&chord);
+            div()
+                .absolute()
+                .left(cell.cols(left + pad))
+                .top(cell.rows(first + i))
+                .h(px(cell.h))
+                .flex()
+                .whitespace_nowrap()
+                .child(div().text_color(theme.text_tertiary).child(chord))
+                .child(div().w(cell.cols(2)).flex_shrink_0())
+                .child(div().text_color(theme.text_secondary).child(label))
+        }))
+    }
+
+    /// An empty panel in the tui skin: its frame with the panel's name set
+    /// in, the hint as rows and `[ Open Tool ▾ ]`, which opens the chooser.
+    fn render_tui_empty_panel(
+        &self,
+        side: Side,
+        theme: &Theme,
+        m: &Metrics,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let panel = self.panel(side);
+        let cell = crate::skin::Cell::current(cx);
+        let (cols, rows) = panel.tui_grid.get();
+        let inner = cols.saturating_sub(4);
+        let focused = panel.focus_handle.contains_focused(window, cx);
+        // The hint wrapped on words into the body's columns, a cell in.
+        let mut lines: Vec<String> = Vec::new();
+        for word in "Open new tool or drag-n-drop tool from other panels".split(' ') {
+            match lines.last_mut() {
+                Some(line) if line.chars().count() + 1 + word.chars().count() <= inner => {
+                    line.push(' ');
+                    line.push_str(word);
+                }
+                _ => lines.push(word.to_string()),
+            }
+        }
+        let height = lines.len() + 2;
+        let top = rows.saturating_sub(2).saturating_sub(height) / 2;
+        let entity = cx.entity();
+        let anchor = panel.button_anchor.clone();
+        let anchor_read = panel.button_anchor.clone();
+        let button = crate::skin::button(
+            ElementId::NamedInteger("open-tool".into(), side.index() as u64),
+            "Open Tool ▾",
+            false,
+            theme,
+            cell,
+        )
+        .track_focus(&panel.button_focus)
+        .relative()
+        .focus(|s| {
+            s.bg(theme.list_bg_focused)
+                .text_color(theme.list_text_focused)
+        })
+        .on_click(move |_, window, cx| {
+            let bounds = anchor_read.get();
+            entity.update(cx, |this, cx| this.open_chooser(side, bounds, window, cx));
+        })
+        .child(
+            canvas(move |bounds, _, _| anchor.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+        );
+        let body = div()
+            .size_full()
+            .pl(cell.cols(1))
+            .pt(cell.rows(top))
+            .flex()
+            .flex_col()
+            .children(lines.into_iter().map(|line| {
+                div()
+                    .h(px(cell.h))
+                    .whitespace_nowrap()
+                    .text_color(theme.text_secondary)
+                    .child(line)
+            }))
+            .child(div().h(px(cell.h)))
+            .child(div().flex().child(button));
+        crate::skin::framed(
+            cell,
+            &panel.tui_grid,
+            vec![crate::skin::title(side.title(), theme.text_secondary)],
+            body.into_any_element(),
+            theme,
+            *m,
+            focused,
+        )
+    }
+
+    /// The tool chooser in the tui skin: a box on the grid under the `+`
+    /// (or the empty panel's button), the query as an input row, a rule,
+    /// then the tools, the selected one filled.
+    fn render_tui_chooser(
+        &self,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let chooser = self.chooser.as_ref()?;
+        let cell = crate::skin::Cell::current(cx);
+        let side = chooser.side;
+        let matches = chooser.matches();
+        let entity = cx.entity();
+        let list_rows = matches.len().max(1);
+        let rows = list_rows + 4;
+        let row = |d: Div| d.h(px(cell.h)).flex().flex_shrink_0().whitespace_nowrap();
+        let mut body: Vec<gpui::AnyElement> = Vec::new();
+        let query: SharedString = chooser.query.clone().into();
+        body.push(
+            row(div())
+                .child(
+                    div()
+                        .w(cell.cols(2))
+                        .text_color(theme.input_focus_border)
+                        .child("›"),
+                )
+                .map(|d| {
+                    if query.is_empty() {
+                        d.child(div().text_color(theme.input_hint).child("Search"))
+                    } else {
+                        d.child(div().text_color(theme.popup_text).child(query.clone()))
+                    }
+                })
+                .into_any_element(),
+        );
+        body.push(div().h(px(cell.h)).into_any_element()); // the rule's row
+        if matches.is_empty() {
+            body.push(
+                row(div())
+                    .pl(cell.cols(1))
+                    .text_color(theme.text_tertiary)
+                    .child("Nothing found")
+                    .into_any_element(),
+            );
+        }
+        for (ix, tool) in matches.iter().copied().enumerate() {
+            let selected = ix == chooser.selected;
+            let entity = entity.clone();
+            body.push(
+                row(div())
+                    .id(ElementId::NamedInteger("chooser-row".into(), ix as u64))
+                    .w_full()
+                    .pl(cell.cols(1))
+                    .cursor_pointer()
+                    .text_color(theme.popup_text)
+                    .when(selected, |d| {
+                        d.bg(theme.list_bg_focused)
+                            .text_color(theme.list_text_focused)
+                    })
+                    .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                    .on_click(move |_, window, cx| {
+                        entity.update(cx, |this, cx| this.choose_tool(side, tool, window, cx));
+                    })
+                    .child(tool.label())
+                    .into_any_element(),
+            );
+        }
+        let close = entity.clone();
+        Some(
+            deferred(
+                div()
+                    .id("tool-chooser")
+                    .key_context("Popup")
+                    .track_focus(&chooser.focus_handle)
+                    .on_action(cx.listener(Self::popup_up))
+                    .on_action(cx.listener(Self::popup_down))
+                    .on_action(cx.listener(Self::popup_confirm))
+                    .on_action(cx.listener(Self::popup_cancel))
+                    .on_action(cx.listener(Self::popup_backspace))
+                    .on_key_down(cx.listener(Self::popup_key))
+                    .on_mouse_down_out(move |_, window, cx| {
+                        close.update(cx, |this, cx| this.close_chooser(window, cx));
+                    })
+                    .occlude()
+                    .absolute()
+                    .left(chooser.origin.x)
+                    .top(chooser.origin.y)
+                    .child(crate::skin::boxed(
+                        cell,
+                        TUI_CHOOSER_COLS,
+                        rows,
+                        Vec::new(),
+                        vec![2],
+                        div().flex().flex_col().children(body).into_any_element(),
+                        theme.popup_bg,
+                        theme.popup_border,
+                        theme,
+                        *m,
+                    )),
+            )
+            .into_any_element(),
+        )
+    }
+
     fn render_status_bar(
         &self,
         theme: &Theme,
         m: &Metrics,
-        tui: Option<crate::skin::Cell>,
+        tui: Option<(crate::skin::Cell, usize)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut crumbs: Vec<SharedString> = Vec::new();
@@ -3126,9 +4030,9 @@ impl Workspace {
             );
         }
         let entity = cx.entity();
-        if let Some(cell) = tui {
+        if let Some((cell, cols)) = tui {
             return self
-                .render_tui_status_bar(cell, crumbs, right, theme, m, cx)
+                .render_tui_status_bar(cell, cols, crumbs, right, theme, cx)
                 .into_any_element();
         }
         let sep = |theme: &Theme| {
@@ -3181,23 +4085,25 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// The status bar in the tui skin: one row of cells, as tmux draws it. The
-    /// workspace's name in reverse video, the breadcrumbs, and on the right
-    /// the line ending, caret, encoding and language between `│` rules. The
-    /// text starts in the panels' first column of content.
+    /// The status bar in the tui skin: one row of cells across the window
+    /// grid, as tmux draws it. The workspace's name in reverse video from the
+    /// islands' first column, the breadcrumbs, and on the right the line
+    /// ending, caret, encoding and language as ` text ` segments between
+    /// `│` rules; a segment that does something fills when hovered.
     fn render_tui_status_bar(
         &self,
         cell: crate::skin::Cell,
+        cols: usize,
         crumbs: Vec<SharedString>,
         right: Vec<SharedString>,
         theme: &Theme,
-        m: &Metrics,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let cells = |n: usize| px(n as f32 * cell.w);
         let seg = |text: String| {
             div()
                 .w(cells(text.chars().count()))
+                .h(px(cell.h))
                 .flex_shrink_0()
                 .whitespace_nowrap()
                 .child(text)
@@ -3206,15 +4112,13 @@ impl Workspace {
         let name = format!(" {} ", self.file_tree.read(cx).root_name());
         let entity = cx.entity();
         div()
+            .w(cells(cols))
             .h(px(cell.h))
-            .flex_shrink_0()
             .flex()
-            .items_center()
             .font_family(theme.mono_font.clone())
             .text_size(px(cell.font_size))
             .line_height(px(cell.h))
-            .pl(px(m.island_margin + cell.w))
-            .pr(px(m.island_margin + cell.w))
+            .px(cells(1))
             .text_color(theme.status_text)
             .child(
                 seg(name)
@@ -3233,29 +4137,91 @@ impl Workspace {
                     parts
                 }),
             ))
-            .child(div().flex_1())
+            .child(div().flex_1().min_w(cells(1)))
             .children(right.into_iter().enumerate().flat_map(|(i, t)| {
                 let entity = entity.clone();
                 let item = div()
                     .id(ElementId::NamedInteger("status".into(), i as u64))
                     .flex_shrink_0()
-                    .when(i == 0, |d| {
+                    .when(i < 2, |d| {
                         d.cursor_pointer()
-                            .hover(|s| s.text_color(theme.text_primary))
+                            .hover(|s| s.bg(theme.list_bg_hovered))
                             .on_click(move |_, window, cx| {
                                 entity.update(cx, |this, cx| {
-                                    this.change_line_endings(&ChangeLineEndings, window, cx)
+                                    if i == 0 {
+                                        this.change_line_endings(&ChangeLineEndings, window, cx)
+                                    } else {
+                                        this.goto_line(&GotoLine, window, cx)
+                                    }
                                 })
                             })
                     })
-                    .child(seg(t.to_string()));
+                    .child(seg(format!(" {t} ")));
                 let mut parts = Vec::new();
                 if i > 0 {
-                    parts.push(rule(" │ ").into_any_element());
+                    parts.push(rule("│").into_any_element());
                 }
                 parts.push(item.into_any_element());
                 parts
             }))
+    }
+    /// The content area in the Fleet skin: the left panel, the editor splits
+    /// with the bottom panel under them, the right panel (batch 2).
+    fn render_fleet_area(
+        &self,
+        theme: &Theme,
+        m: &Metrics,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let (theme, m) = (theme.clone(), *m);
+        let left = self.panels[0].open;
+        let bottom = self.panels[1].open;
+        let right = self.panels[2].open;
+        let panes: Vec<_> = (0..self.panes.len())
+            .map(|p| self.render_pane(p, &theme, &m, window, cx))
+            .collect();
+        // Fleet's columns: the left panel, then the editor splits with the bottom
+        // panel under them, then the right panel (batch 2).
+        let centre = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap(px(m.island_margin))
+                    .children(panes),
+            )
+            .when(bottom, |d| {
+                d.child(self.render_splitter(Side::Bottom, &m))
+                    .child(self.render_panel(Side::Bottom, &theme, &m, window, cx))
+            });
+        let middle = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .when(left, |d| {
+                d.child(self.render_panel(Side::Left, &theme, &m, window, cx))
+                    .child(self.render_splitter(Side::Left, &m))
+            })
+            .child(centre)
+            .when(right, |d| {
+                d.child(self.render_splitter(Side::Right, &m))
+                    .child(self.render_panel(Side::Right, &theme, &m, window, cx))
+            });
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .pl(px(m.island_margin))
+            .pr(px(m.island_margin_right))
+            .child(middle)
+            .into_any_element()
     }
 }
 
@@ -3321,45 +4287,18 @@ impl Render for Workspace {
             },
             move |_, _, cx| entity.update(cx, |this, cx| this.lightning_clicked(cx)),
         );
-        let left = self.panels[0].open;
-        let bottom = self.panels[1].open;
-        let right = self.panels[2].open;
-        let panes: Vec<_> = (0..self.panes.len())
-            .map(|p| self.render_pane(p, &theme, &m, window, cx))
-            .collect();
-        // Fleet's columns: the left panel, then the editor splits with the bottom
-        // panel under them, then the right panel (batch 2).
-        let centre = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .gap(px(m.island_margin))
-                    .children(panes),
-            )
-            .when(bottom, |d| {
-                d.child(self.render_splitter(Side::Bottom, &m))
-                    .child(self.render_panel(Side::Bottom, &theme, &m, window, cx))
-            });
-        let middle = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .when(left, |d| {
-                d.child(self.render_panel(Side::Left, &theme, &m, window, cx))
-                    .child(self.render_splitter(Side::Left, &m))
-            })
-            .child(centre)
-            .when(right, |d| {
-                d.child(self.render_splitter(Side::Right, &m))
-                    .child(self.render_panel(Side::Right, &theme, &m, window, cx))
-            });
-        let chooser = self.render_chooser(&theme, &m, cx);
+        let tui = crate::skin::Skin::current(cx) == crate::skin::Skin::Tui;
+        let content: gpui::AnyElement = if tui {
+            self.render_tui_area(&theme, &m, window, cx)
+        } else {
+            self.render_fleet_area(&theme, &m, window, cx)
+        };
+        let chooser: Option<gpui::AnyElement> = if tui {
+            self.render_tui_chooser(&theme, &m, cx)
+        } else {
+            self.render_chooser(&theme, &m, cx)
+                .map(|c| c.into_any_element())
+        };
         let prompt = self.prompt.clone();
         let drop_tab = cx.entity();
         div()
@@ -3499,22 +4438,10 @@ impl Render for Workspace {
             .text_size(px(m.ui_font_size))
             .text_color(theme.text_primary)
             .child(toolbar)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .pl(px(m.island_margin))
-                    .pr(px(m.island_margin_right))
-                    .child(middle),
-            )
-            .when(Self::settings(cx).editor_show_status_bar(), |d| {
-                d.child({
-                    let tui = (crate::skin::Skin::current(cx) == crate::skin::Skin::Tui)
-                        .then(|| crate::skin::Cell::current(cx));
-                    self.render_status_bar(&theme, &m, tui, cx)
-                })
+            .child(content)
+            // The tui skin's status bar is a row of its grid (`render_tui_area`).
+            .when(!tui && Self::settings(cx).editor_show_status_bar(), |d| {
+                d.child(self.render_status_bar(&theme, &m, None, cx))
             })
             .children(chooser)
             .children(prompt)
@@ -3547,4 +4474,34 @@ pub fn resolve_args(paths: &[PathBuf]) -> (PathBuf, Vec<PathBuf>) {
         }
     }
     (root.unwrap_or(cwd), files)
+}
+
+#[cfg(test)]
+mod tui_grid_tests {
+    use super::*;
+
+    #[test]
+    fn islands_sit_one_cell_apart() {
+        let g = tui_geometry(120, 40, [Some(30), Some(10), None], 2, true);
+        let left = g.left.unwrap();
+        assert_eq!((left.x, left.w, left.h), (1, 30, 39));
+        let bottom = g.bottom.unwrap();
+        // Two panes over the bottom panel, a gap row between.
+        assert_eq!(g.panes[0].x, 32);
+        assert_eq!(g.panes[0].h + 1, bottom.y);
+        assert_eq!(bottom.y + bottom.h, 39);
+        assert_eq!(g.panes[1].x, g.panes[0].x + g.panes[0].w + 1);
+        assert_eq!(g.panes[1].x + g.panes[1].w, 119);
+        assert_eq!(g.status.unwrap().y, 39);
+    }
+
+    #[test]
+    fn side_panels_shrink_for_the_editor() {
+        let g = tui_geometry(60, 20, [Some(40), None, Some(40)], 1, false);
+        let (l, r) = (g.left.unwrap(), g.right.unwrap());
+        assert!(g.panes[0].w >= TUI_MIN_CENTRE);
+        assert_eq!(r.x + r.w, 59);
+        assert_eq!(l.x + l.w + 1, g.panes[0].x);
+        assert_eq!(g.panes[0].x + g.panes[0].w + 1, r.x);
+    }
 }
