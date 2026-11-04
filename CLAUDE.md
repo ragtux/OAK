@@ -10,7 +10,11 @@ Native Rust/GPUI code editor in the shape of JetBrains Fleet.
   in `crates/weep/src/theme.rs` (`metrics`).
 - Fleet's file formats are WEEP's: themes (`weep-theme`) and keymaps (`weep-keymap`) use Fleet's
   keys and action ids verbatim, so Fleet files load unchanged. Add a key only with the string
-  Fleet uses.
+  Fleet uses. A setting Fleet has no key for (so far only `weep.skin`) is WEEP's own and lives
+  under `weep.`, which no Fleet key uses.
+- Skins: `fleet` (the default, measured against Fleet) and `tui` (`crates/weep/src/skin.rs`:
+  a terminal's look on a grid of character cells). Tui-only drawing goes behind
+  `Skin::current(cx) == Skin::Tui`, leaving the Fleet branch untouched.
 - Clean room on the binary: nothing from the Fleet distribution except what is openly
   licensed (the OFL fonts). Icons are JetBrains' Apache-licensed expui set or WEEP's own
   drawings (`crates/weep/assets/icons/*/LICENSE.txt`).

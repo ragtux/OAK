@@ -1281,17 +1281,17 @@ impl FileTree {
         let measure = {
             let entity = entity.clone();
             gpui::canvas(
-                move |bounds, _, cx| {
+                move |bounds, window, cx| {
                     let grid = (
                         Cell::fit(bounds.size.width, cell.w),
                         Cell::fit(bounds.size.height, cell.h),
                     );
-                    entity.update(cx, |this, cx| {
-                        if this.tui_grid != grid {
-                            this.tui_grid = grid;
-                            cx.notify();
-                        }
+                    let changed = entity.update(cx, |this, _| {
+                        std::mem::replace(&mut this.tui_grid, grid) != grid
                     });
+                    if changed {
+                        skin::redraw(window);
+                    }
                 },
                 |_, _, _, _| {},
             )

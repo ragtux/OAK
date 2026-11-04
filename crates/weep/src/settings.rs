@@ -1,8 +1,10 @@
 //! The settings in the app: the merged [`weep_settings::Settings`] as a global,
 //! the [`Metrics`] and [`Theme`] globals derived from it, a once-a-second
 //! poll of both files for live reload, and the `zoom-*` actions, which Fleet
-//! persists as `zoomLevel` in the settings file.
+//! persists as `zoomLevel` in the settings file. The [`Skin`] global follows
+//! `weep.skin`, WEEP's own key.
 
+use crate::skin::Skin;
 use crate::theme::{Metrics, Theme, ThemeSource};
 use gpui::{App, Global};
 use std::time::Duration;
@@ -13,6 +15,7 @@ use weep_settings::{Paths, Settings, Watcher, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP};
 pub struct Overrides {
     pub theme: Option<ThemeSource>,
     pub zoom: Option<f32>,
+    pub skin: Option<Skin>,
 }
 
 pub struct AppSettings {
@@ -30,6 +33,12 @@ impl AppSettings {
         self.overrides
             .zoom
             .unwrap_or_else(|| self.settings.zoom_level())
+    }
+
+    pub fn skin(&self) -> Skin {
+        self.overrides
+            .skin
+            .unwrap_or_else(|| Skin::parse(self.settings.weep_skin()).unwrap_or_default())
     }
 
     fn theme_source(&self) -> ThemeSource {
@@ -55,6 +64,7 @@ pub fn init(overrides: Overrides, cx: &mut App) {
     let theme = load_theme(&app.theme_source());
     let theme_name = app.theme_source_name();
     cx.set_global(Metrics::at(app.zoom()));
+    cx.set_global(app.skin());
     cx.set_global(theme);
     let mut app = app;
     app.theme_name = theme_name;
@@ -114,6 +124,10 @@ pub fn apply(cx: &mut App) {
     if *cx.global::<Metrics>() != metrics {
         cx.set_global(metrics);
     }
+    let skin = cx.global::<AppSettings>().skin();
+    if Skin::current(cx) != skin {
+        cx.set_global(skin);
+    }
     cx.refresh_windows();
 }
 
@@ -143,6 +157,9 @@ pub fn set_value(key: &str, value: serde_json::Value, cx: &mut App) {
         }
         if key == "theme" {
             app.overrides.theme = None;
+        }
+        if key == "weep.skin" {
+            app.overrides.skin = None;
         }
         app.settings.set(key, value);
         if let Some(paths) = &app.paths {

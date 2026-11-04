@@ -79,6 +79,7 @@ const fn link(label: &'static str, key: &'static str) -> Item {
     item(label, key, Kind::Link, "null")
 }
 
+const SKINS: &[(&str, &str)] = &[("\"fleet\"", "Fleet"), ("\"tui\"", "Terminal (TUI)")];
 const THEMES: &[(&str, &str)] = &[
     ("\"dark\"", "Fleet Dark"),
     ("\"light\"", "Fleet Light"),
@@ -148,6 +149,8 @@ pub const SECTIONS: &[Section] = &[
             title: None,
             items: &[
                 item("Theme", "theme", Kind::Dropdown(THEMES), "\"dark\""),
+                // WEEP's own row: Fleet has no skin (`weep.skin`).
+                item("Skin", "weep.skin", Kind::Dropdown(SKINS), "\"fleet\""),
                 item("Zoom", "zoomLevel", Kind::Dropdown(ZOOMS), "1.0"),
                 item("Keymap", "keymap", Kind::Dropdown(KEYMAPS), "\"fleet\""),
                 item("Auto save", "autoSave", Kind::Dropdown(AUTO_SAVE), "\"OnFocus\""),

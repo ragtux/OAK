@@ -228,6 +228,21 @@ impl Settings {
         std::fs::write(path, text + "\n").with_context(|| path.display().to_string())
     }
 
+    // ---- WEEP's own keys -------------------------------------------------------
+    //
+    // Fleet has no key for these, so they live under `weep.`, which no Fleet
+    // key uses; Fleet never reads WEEP's file, so they cannot reach it.
+
+    /// `weep.skin`: how WEEP draws itself, `fleet` (Fleet's look, the default)
+    /// or `tui` (a terminal's look on a grid of character cells). An unknown
+    /// value is `fleet`.
+    pub fn weep_skin(&self) -> &str {
+        match self.str("weep.skin") {
+            Some(s @ ("fleet" | "tui")) => s,
+            _ => "fleet",
+        }
+    }
+
     // ---- the keys M7 reads (Smart Mode) ----------------------------------------
 
     /// `completion.autoPopupDelay`: "the delay after which the completion
@@ -969,6 +984,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn weep_skin_defaults_to_fleet() {
+        assert_eq!(Settings::parse("{}").unwrap().weep_skin(), "fleet");
+        let s = Settings::parse(r#"{"weep.skin": "tui"}"#).unwrap();
+        assert_eq!(s.weep_skin(), "tui");
+        let s = Settings::parse(r#"{"weep.skin": "amber"}"#).unwrap();
+        assert_eq!(s.weep_skin(), "fleet");
+    }
 
     #[test]
     fn defaults_follow_fleet() {

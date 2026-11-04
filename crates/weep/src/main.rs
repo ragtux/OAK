@@ -4,7 +4,7 @@
 //! opens a folder (or a file's folder, with the file in a tab) in the
 //! Fleet-style shell: the toolbar, the tool panels, the editor splits with
 //! their tabs, the status bar. Settings come from `~/.config/weep/settings.json`
-//! over Fleet's own file; `--theme` and `--zoom` override them for the run.
+//! over Fleet's own file; `--theme`, `--zoom` and `--skin` override them for the run.
 
 // A release build on Windows is a GUI program, so launching it from Explorer opens
 // no console window; `attach_parent_console` keeps `--help` and the diagnostics on
@@ -192,26 +192,24 @@ fn main() {
             .or_else(|| std::env::var("WEEP_THEME").ok())
             .map(|spec| ThemeSource::parse(&spec)),
         zoom: args.zoom,
+        skin: args
+            .skin
+            .or_else(|| std::env::var("WEEP_SKIN").ok())
+            .map(|s| {
+                skin::Skin::parse(&s).unwrap_or_else(|| {
+                    eprintln!("weep: unknown skin {s:?}; using fleet");
+                    skin::Skin::Fleet
+                })
+            }),
     };
     let (root, open) = workspace::resolve_args(&args.paths);
     let scratch = args.scratch;
-    let skin = args
-        .skin
-        .or_else(|| std::env::var("WEEP_SKIN").ok())
-        .map(|s| {
-            skin::Skin::parse(&s).unwrap_or_else(|| {
-                eprintln!("weep: unknown skin {s:?}; using fleet");
-                skin::Skin::Fleet
-            })
-        })
-        .unwrap_or_default();
     let window_size = args.size.unwrap_or((1280., 800.));
 
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             settings::init(overrides, cx);
-            cx.set_global(skin);
             settings::watch(cx);
             if let Err(e) = cx.text_system().add_fonts(assets::fonts()) {
                 eprintln!("weep: could not register the bundled fonts: {e}");

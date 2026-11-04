@@ -4,8 +4,9 @@
 //! fixed line pitch). Box-drawing is painted as geometry on the cell centres,
 //! not set as glyphs, so lines join across rows at any line height.
 //!
-//! Fleet has no such setting, so the skin is not a settings key (the ground
-//! rules allow only Fleet's keys there); it comes from `--skin` or `WEEP_SKIN`.
+//! Fleet has no such setting, so it is WEEP's own key, `weep.skin` (live
+//! reloaded, and a row in Settings > General); `--skin` or `WEEP_SKIN`
+//! override it for one run.
 //! So far the panels and editor splits (frames with their tabs set in the
 //! top edge), the Files tool and the status bar follow it.
 
@@ -86,6 +87,13 @@ impl Cell {
     }
 }
 
+/// Asks for another frame once this one is drawn: the grid is read back
+/// while painting, and gpui ignores a `refresh` made during a draw (a skin
+/// switched by the settings file came up empty until something else redrew).
+pub fn redraw(window: &Window) {
+    window.on_next_frame(|window, _| window.refresh());
+}
+
 /// A stroke for the grid's lines: one device pixel per zoom step, at least one.
 pub fn stroke(window: &Window, m: &Metrics) -> f32 {
     let scale = window.scale_factor();
@@ -158,7 +166,7 @@ pub fn framed(
                 );
                 if grid.get() != fit {
                     grid.set(fit);
-                    window.refresh();
+                    redraw(window);
                 }
             },
             |_, _, _, _| {},
