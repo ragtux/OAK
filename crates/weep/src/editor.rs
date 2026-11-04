@@ -17,6 +17,7 @@ pub mod smart;
 use crate::actions::*;
 use crate::document::{Document, DocumentEvent, Problem, Severity};
 use crate::settings::AppSettings;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{
     metrics::{CARET_BLINK_MS, EDITOR_OVERSCROLL_LINES},
     Metrics, Theme,
@@ -127,6 +128,105 @@ pub struct TextMetrics {
     pub sticky_shadow: f32,
     pub wrap_indent: f32,
     pub centered_columns: f32,
+    /// The tui skin's cell while that skin is on: the editor then sits on
+    /// its grid (`on_grid`), and this is the frame's cached skin.
+    pub cell: Option<Cell>,
+}
+
+/// The tui gutter, in cells from the left: the run icon (1), the line
+/// numbers (`digits`), the line status (1), the fold mark (1) and a space.
+const TUI_GUTTER_EXTRA: usize = 4;
+/// The tui blame column, in cells: the label and a space after it.
+const TUI_BLAME_COLS: usize = 18;
+
+/// The tui gutter's digit columns: the last line number's digits, at least
+/// 3 (so a file growing past 99 lines keeps its gutter); none without
+/// line numbers.
+fn tui_digits(line_count: usize, numbers: bool) -> usize {
+    if !numbers {
+        return 0;
+    }
+    line_count.max(1).to_string().len().max(3)
+}
+
+/// `v` on a whole multiple of `pitch` (a row or a column).
+fn snap_to(v: f32, pitch: f32) -> f32 {
+    if pitch <= 0. {
+        return v;
+    }
+    (v / pitch).round() * pitch
+}
+
+/// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// A blame line's day (`2025-12-31` once `Repo::blame` swapped it in, or
+/// unix seconds) as days since the epoch.
+fn blame_days(date: &str) -> Option<i64> {
+    if let Ok(t) = date.parse::<i64>() {
+        return Some(t.div_euclid(86_400));
+    }
+    let mut parts = date.get(..10)?.split('-');
+    let y = parts.next()?.parse().ok()?;
+    let m = parts.next()?.parse().ok()?;
+    let d = parts.next()?.parse().ok()?;
+    Some(days_from_civil(y, m, d))
+}
+
+/// An age in days as the tui blame column prints it: `3d`, `5w`, `4mo`, `2y`.
+fn short_age(days: i64) -> String {
+    let days = days.max(0);
+    if days < 14 {
+        format!("{days}d")
+    } else if days < 60 {
+        format!("{}w", days / 7)
+    } else if days < 730 {
+        format!("{}mo", days / 30)
+    } else {
+        format!("{}y", days / 365)
+    }
+}
+
+/// The tui blame column's label, `author 2d` in exactly `cols` chars: the
+/// author truncated with `…` so the age always fits, padded on the right.
+fn blame_cell_label(author: &str, age: &str, cols: usize) -> String {
+    let age_cols = age.chars().count();
+    let room = cols.saturating_sub(age_cols + 1);
+    let mut name: String = author.chars().take(room).collect();
+    if author.chars().count() > room && room > 0 {
+        name = author.chars().take(room - 1).collect();
+        name.push('…');
+    }
+    let pad = cols.saturating_sub(name.chars().count() + age_cols);
+    format!("{name}{}{age}", " ".repeat(pad))
+}
+
+/// Today as days since the epoch (UTC; the blame ages are whole days).
+fn today_days() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_secs() / 86_400) as i64)
+        .unwrap_or(0)
+}
+
+/// What the tui frame's right edge paints for the view: the scroll bar in
+/// rows (offset, visible, total with the overscroll) and its marks as
+/// display rows over `rows` display rows, with their colours.
+#[derive(Clone, Debug, Default)]
+struct TuiBar {
+    offset: f32,
+    visible: f32,
+    total: f32,
+    rows: usize,
+    marks: Vec<(usize, Hsla)>,
 }
 
 /// What a find bar has found in this view's document, for painting: every
@@ -220,7 +320,7 @@ impl TextMetrics {
     pub fn current(cx: &App) -> TextMetrics {
         let m = cx.global::<Metrics>();
         let (font_size, line_height) = m.editor_text(&cx.global::<AppSettings>().settings);
-        TextMetrics {
+        let tm = TextMetrics {
             font_size,
             line_height,
             gutter_width: m.gutter_width,
@@ -259,7 +359,60 @@ impl TextMetrics {
             sticky_shadow: m.sticky_shadow,
             wrap_indent: m.wrap_indent,
             centered_columns: m.centered_columns,
+            cell: None,
+        };
+        if Skin::current(cx) == Skin::Tui {
+            tm.on_grid(Cell::current(cx), 3)
+        } else {
+            tm
         }
+    }
+
+    /// The tui gutter for `digits` line-number columns (from the line
+    /// count, `tui_digits`); the Fleet metrics are left as they are.
+    pub fn with_digits(self, digits: usize) -> TextMetrics {
+        match self.cell {
+            Some(cell) => self.on_grid(cell, digits),
+            None => self,
+        }
+    }
+
+    /// The editor on the tui skin's grid: the line height is a cell's,
+    /// the gutter's parts are whole cells (`TUI_GUTTER_EXTRA`), and boxes
+    /// have no radius or inset. Idempotent, so it may run twice a frame.
+    fn on_grid(mut self, cell: Cell, digits: usize) -> TextMetrics {
+        let w = cell.w;
+        let col = |n: usize| n as f32 * w;
+        self.font_size = cell.font_size;
+        self.line_height = cell.h;
+        self.run_icon_x = 0.;
+        self.breakpoint_hint_x = 0.;
+        self.breakpoint_hint_size = w;
+        self.gutter_number_right = col(1 + digits);
+        self.line_status_x = col(1 + digits);
+        self.line_status_width = w / 3.;
+        self.line_status_hover_width = w;
+        self.line_status_active_width = w;
+        self.line_status_hit = 0.;
+        self.fold_chevron_x = col(2 + digits);
+        self.gutter_width = col(digits + TUI_GUTTER_EXTRA);
+        self.icon_size = w;
+        self.scrollbar_thumb = 0.;
+        self.scrollbar_thumb_min = cell.h;
+        self.selection_radius = 0.;
+        self.selection_empty_line_width = w;
+        self.occurrence_inset = 0.;
+        self.occurrence_radius = 0.;
+        self.folded_mark_cells = 1.;
+        self.folded_mark_radius = 0.;
+        self.sticky_shadow = 0.;
+        self.wrap_indent = snap_to(self.wrap_indent, w);
+        self.blame_width = col(TUI_BLAME_COLS);
+        self.blame_text_x = 0.;
+        self.blame_bar_x = 0.;
+        self.blame_bar_width = 0.;
+        self.cell = Some(cell);
+        self
     }
 }
 
@@ -513,6 +666,15 @@ pub struct EditorView {
     /// M7: Smart Mode's popups (completion, parameter info, documentation)
     /// and what the workspace told the view about its server.
     smart: smart::SmartState,
+    /// The tui skin: the wheel's remainder short of a whole row or column,
+    /// the scroll bar and its marks for the frame's right edge, a drag on
+    /// it, the problem counts the frame's badge shows (errors, warnings,
+    /// all) and the pointer over the blame column.
+    scroll_rest: Point<Pixels>,
+    tui_bar: TuiBar,
+    tui_bar_drag: bool,
+    badge: (usize, usize, usize),
+    blame_hovered: bool,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -606,6 +768,11 @@ impl EditorView {
             hover_epoch: 0,
             hover_task: None,
             smart: smart::SmartState::default(),
+            scroll_rest: Point::default(),
+            tui_bar: TuiBar::default(),
+            tui_bar_drag: false,
+            badge: (0, 0, 0),
+            blame_hovered: false,
         }
     }
 
@@ -1460,7 +1627,31 @@ impl EditorView {
             return blame;
         }
         let area = px(self.tm.gutter_width) + self.space_width() * self.tm.centered_columns;
-        ((self.last_bounds.size.width - area) / 2.).max(px(0.)) + blame
+        let centered = ((self.last_bounds.size.width - area) / 2.).max(px(0.));
+        match self.tm.cell {
+            // On the tui grid the shift is whole columns.
+            Some(cell) => px((f32::from(centered) / cell.w).floor() * cell.w) + blame,
+            None => centered + blame,
+        }
+    }
+
+    /// The tui skin: the hunk a row's line-status cell shows. A deletion
+    /// (no rows, sitting before its row) is marked on the bottom edge of the
+    /// row above it, or on the first row's top when nothing is above.
+    fn tui_hunk_at(&self, row: usize, cx: &App) -> Option<usize> {
+        let hunks = &self.document.read(cx).hunks;
+        hunks
+            .iter()
+            .position(|h| h.rows > 0 && hunk_covers(h, row))
+            .or_else(|| hunks.iter().position(|h| tui_deletion_on(h, row)))
+    }
+
+    /// The tui skin: whether `x_in` (from the text offset) is in the
+    /// line-status cell.
+    fn in_status_cell(&self, x_in: Pixels) -> bool {
+        self.tm.cell.is_some_and(|cell| {
+            x_in >= px(self.tm.line_status_x) && x_in < px(self.tm.line_status_x + cell.w)
+        })
     }
 
     /// `git/toggle-blame`: shows or hides the blame column.
@@ -2301,7 +2492,13 @@ impl EditorView {
             }
         }
         let x_in = position.x - bounds.origin.x - self.text_offset();
-        let run_left = if self.options.run_after_numbers {
+        if self.in_status_cell(x_in) && seg == 0 {
+            if let Some(ix) = self.tui_hunk_at(row, cx) {
+                return Hit::LineStatus(ix);
+            }
+        }
+        // The tui gutter keeps the run icon in its own first cell.
+        let run_left = if self.options.run_after_numbers && self.tm.cell.is_none() {
             px(self.tm.gutter_number_right + 4.)
         } else {
             px(self.tm.run_icon_x)
@@ -2488,18 +2685,26 @@ impl EditorView {
             None
         };
         let status = match row {
+            Some(r) if self.in_status_cell(x_in) => self.tui_hunk_at(r, cx),
             Some(r) if position.x - bounds.origin.x < px(self.tm.line_status_hit) => {
                 self.hunk_at(r, cx)
             }
             _ => None,
         };
+        let blame_hovered = self.tm.cell.is_some()
+            && self.blame.is_some()
+            && bounds.contains(&position)
+            && x_in < px(0.)
+            && x_in >= -px(self.tm.blame_width);
         if in_gutter != self.gutter_hovered
             || row != self.hovered_row
             || status != self.status_hovered
+            || blame_hovered != self.blame_hovered
         {
             self.gutter_hovered = in_gutter;
             self.hovered_row = row;
             self.status_hovered = status;
+            self.blame_hovered = blame_hovered;
             cx.notify();
         }
         self.hover_problem(position, cx);
@@ -2643,6 +2848,28 @@ impl EditorView {
 
     fn scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let delta = event.delta.pixel_delta(self.line_height());
+        if let Some(cell) = self.tm.cell {
+            // The tui grid: a trackpad's deltas gather until they make a
+            // whole row (or column), and the view moves by those.
+            let (rows, rest_y) = whole_steps(self.scroll_rest.y, delta.y, cell.h);
+            let (cols, rest_x) = whole_steps(self.scroll_rest.x, delta.x, cell.w);
+            self.scroll_rest = Point {
+                x: rest_x,
+                y: rest_y,
+            };
+            let max = self.max_scroll_y(cx);
+            let max_rows = (max / px(cell.h)).ceil();
+            let row = (self.scroll_y / px(cell.h)).round();
+            self.scroll_y = px(cell.h) * (row - rows).clamp(0., max_rows.max(0.));
+            if self.options.soft_wrap {
+                self.scroll_x = px(0.);
+            } else {
+                let col = (self.scroll_x / px(cell.w)).round();
+                self.scroll_x = px(cell.w) * (col - cols).max(0.);
+            }
+            cx.notify();
+            return;
+        }
         let max = self.max_scroll_y(cx);
         self.scroll_y = (self.scroll_y - delta.y).clamp(px(0.), max);
         if self.options.soft_wrap {
@@ -2670,6 +2897,543 @@ impl EditorView {
     }
 }
 
+// ---- the tui skin: the frame's edges and the editor's boxes -------------------
+
+/// A problem's mark in the tui skin's rows: a glyph and its colour.
+fn severity_glyph(severity: Severity, theme: &Theme) -> (&'static str, Hsla) {
+    match severity {
+        Severity::Error => ("✗", theme.problem_error_underline),
+        Severity::Warning => ("▲", theme.problem_warning_underline),
+        Severity::Weak => ("△", theme.problem_weak_underline),
+        Severity::Info => ("●", theme.problem_info_underline),
+    }
+}
+
+impl EditorView {
+    /// What the tui skin sets into the editor island's frame: the problems
+    /// badge at the top edge's right end (` ✓ `, or ` ✗ 3  ▲ 1 `; a click
+    /// toggles the problems widget, as Fleet's badge does) and the scroll
+    /// bar on the right edge (the frame line is its rail; the marks are
+    /// ticks on it; a click or a drag scrolls).
+    pub fn tui_edges(editor: &Entity<EditorView>, cell: Cell, cx: &App) -> skin::Edges {
+        let this = editor.read(cx);
+        let theme = cx.global::<Theme>();
+        let mut edges = skin::Edges::default();
+        if this.options.file_status {
+            let (errors, warnings, count) = this.badge;
+            let mut parts: Vec<(String, Hsla)> = Vec::new();
+            if count == 0 {
+                parts.push(("✓".into(), theme.text_positive));
+            } else {
+                if errors > 0 {
+                    parts.push((format!("✗ {errors}"), theme.problem_error_underline));
+                }
+                if warnings > 0 {
+                    parts.push((format!("▲ {warnings}"), theme.problem_warning_underline));
+                }
+                if errors + warnings == 0 {
+                    parts.push((format!("△ {count}"), theme.problem_weak_underline));
+                }
+            }
+            let mut children: Vec<gpui::AnyElement> = Vec::new();
+            for (i, (text, color)) in parts.into_iter().enumerate() {
+                let gap = if i == 0 { " " } else { "  " };
+                children.push(div().child(gap).into_any_element());
+                children.push(
+                    div()
+                        .text_color(color)
+                        .child(SharedString::from(text))
+                        .into_any_element(),
+                );
+            }
+            children.push(div().child(" ").into_any_element());
+            let open = this.problems_open;
+            let e = editor.clone();
+            edges.top_end.push(
+                div()
+                    .id("tui-problems-badge")
+                    .flex()
+                    .flex_shrink_0()
+                    .h(px(cell.h))
+                    .whitespace_nowrap()
+                    .cursor_pointer()
+                    .when(open, |d| d.bg(theme.list_bg_selected))
+                    .hover(|s| s.bg(theme.list_bg_hovered))
+                    .on_click(move |_, _, cx| e.update(cx, |e, cx| e.toggle_problems(cx)))
+                    .children(children)
+                    .into_any_element(),
+            );
+        }
+        let e = editor.clone();
+        let bar = gpui::canvas(
+            |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            move |bounds, hitbox, window, cx| {
+                let m = *cx.global::<Metrics>();
+                let theme = cx.global::<Theme>().clone();
+                let (bar, dragging) = {
+                    let ed = e.read(cx);
+                    (ed.tui_bar.clone(), ed.tui_bar_drag)
+                };
+                let thumb = if dragging {
+                    theme.scrollbar_thumb_pressed
+                } else if hitbox.is_hovered(window) {
+                    theme.scrollbar_thumb_hovered
+                } else {
+                    theme.scrollbar_thumb
+                };
+                skin::paint_scrollbar(
+                    window,
+                    bounds,
+                    cell,
+                    bar.offset,
+                    bar.visible,
+                    bar.total,
+                    None,
+                    thumb,
+                    &m,
+                );
+                // The marks: a tick across the centre of the cell their row
+                // scales to.
+                let rows = Cell::fit(bounds.size.height, cell.h);
+                if rows > 0 && bar.total > 0. {
+                    let t = px(skin::stroke(window, &m));
+                    for (row, color) in &bar.marks {
+                        let r = ((*row as f32 / bar.total) * rows as f32)
+                            .floor()
+                            .min((rows - 1) as f32);
+                        let y = px(skin::snap(
+                            window,
+                            f32::from(bounds.origin.y) + (r + 0.5) * cell.h,
+                        )) - t;
+                        fill_cells(
+                            window,
+                            bounds.origin.x + px(cell.w * 0.2),
+                            bounds.origin.x + px(cell.w * 0.8),
+                            y,
+                            t * 2.,
+                            *color,
+                        );
+                    }
+                }
+                let _ = bar.rows;
+                if bar.total <= bar.visible {
+                    return;
+                }
+                let (down, moved, up) = (e.clone(), e.clone(), e.clone());
+                let hb = hitbox.clone();
+                window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && ev.button == MouseButton::Left
+                        && hb.is_hovered(window)
+                    {
+                        down.update(cx, |ed, cx| {
+                            ed.tui_bar_drag = true;
+                            ed.scroll_bar_to(ev.position.y, bounds, cx);
+                        });
+                    }
+                });
+                window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && ev.pressed_button == Some(MouseButton::Left)
+                        && moved.read(cx).tui_bar_drag
+                    {
+                        moved.update(cx, |ed, cx| ed.scroll_bar_to(ev.position.y, bounds, cx));
+                    }
+                });
+                window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && ev.button == MouseButton::Left
+                        && up.read(cx).tui_bar_drag
+                    {
+                        up.update(cx, |ed, cx| {
+                            ed.tui_bar_drag = false;
+                            cx.notify();
+                        });
+                    }
+                });
+            },
+        )
+        .size_full();
+        edges.right = Some(bar.into_any_element());
+        edges
+    }
+
+    /// A click or drag at window `y` on the tui scroll bar (`bounds`): the
+    /// thumb centres there, on a whole row.
+    fn scroll_bar_to(&mut self, y: Pixels, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
+        let bar = self.tui_bar.clone();
+        if bounds.size.height <= px(0.) {
+            return;
+        }
+        let frac = ((y - bounds.origin.y) / bounds.size.height).clamp(0., 1.);
+        let top = frac * bar.total - bar.visible / 2.;
+        let lh = self.line_height();
+        let max_rows = (self.max_scroll_y(cx) / lh).ceil().max(0.);
+        self.scroll_y = lh * top.round().clamp(0., max_rows);
+        cx.notify();
+    }
+
+    /// The tui skin's problems: the counts for the frame's badge, the
+    /// widget as a box under it (one row per problem, `✗ 12:5  message`, the
+    /// one at the caret filled with its fixes under it) and the hovered
+    /// problem's tooltip as a row of cells (a box when it has several lines).
+    fn render_problems_tui(
+        &mut self,
+        cell: Cell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let mut out = Vec::new();
+        let problems = self.problems(cx);
+        let count = problems.len();
+        let errors = problems
+            .iter()
+            .filter(|p| p.severity == Severity::Error)
+            .count();
+        let warnings = problems
+            .iter()
+            .filter(|p| p.severity == Severity::Warning)
+            .count();
+        if self.badge != (errors, warnings, count) {
+            // The frame drew the old counts this frame.
+            self.badge = (errors, warnings, count);
+            skin::redraw(window);
+        }
+        if !self.options.file_status {
+            return out;
+        }
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let w = px(cell.w);
+        let body_cols = Cell::fit(self.last_bounds.size.width, cell.w);
+        let body_rows = Cell::fit(self.last_bounds.size.height, cell.h);
+        if self.problems_open && count > 0 && body_cols >= 16 && body_rows >= 4 {
+            let head = self.with_buffer(cx, |c, _| c.selection.head);
+            let at_caret = problems
+                .iter()
+                .position(|p| p.range.start <= head && head <= p.range.end.max(p.range.start + 1));
+            let expanded = at_caret.or(self.problem_expanded.filter(|ix| *ix < count));
+            let fixes: Vec<String> = match (&self.smart.fixes, expanded) {
+                (Some((for_ix, titles)), Some(ix)) if *for_ix == ix => titles.clone(),
+                _ => Vec::new(),
+            };
+            let doc = self.document.read(cx);
+            let mut widest = 0;
+            let mut lines: Vec<gpui::AnyElement> = Vec::new();
+            for (ix, p) in problems.iter().enumerate() {
+                let at = doc.buffer.offset_to_point(p.range.start);
+                let loc = format!("{}:{}", at.row + 1, at.column + 1);
+                let message = p.message.lines().next().unwrap_or("").to_string();
+                let (glyph, color) = severity_glyph(p.severity, &theme);
+                widest = widest.max(2 + loc.chars().count() + 2 + message.chars().count());
+                let selected = expanded == Some(ix);
+                lines.push(
+                    div()
+                        .id(ElementId::NamedInteger("problem-row".into(), ix as u64))
+                        .flex()
+                        .flex_shrink_0()
+                        .h(px(cell.h))
+                        .px(w)
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .cursor_pointer()
+                        .when(selected, |d| d.bg(theme.list_bg_selected))
+                        .hover(|s| s.bg(theme.list_bg_hovered))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let problems = this.problems(cx);
+                            this.show_problem(ix, &problems, cx);
+                        }))
+                        .child(div().w(w).flex_shrink_0().text_color(color).child(glyph))
+                        .child(div().w(w).flex_shrink_0())
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(theme.text_secondary)
+                                .child(SharedString::from(loc)),
+                        )
+                        .child(div().w(w * 2.).flex_shrink_0())
+                        .child(
+                            div()
+                                .text_color(theme.popup_text)
+                                .child(SharedString::from(message)),
+                        )
+                        .into_any_element(),
+                );
+                if selected {
+                    // The server's quick fixes, one row each under it.
+                    let row = |text: String, color: Hsla| {
+                        div()
+                            .flex_shrink_0()
+                            .h(px(cell.h))
+                            .pl(w * 3.)
+                            .pr(w)
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .text_color(color)
+                            .child(SharedString::from(text))
+                    };
+                    if fixes.is_empty() {
+                        lines.push(
+                            row("No fixes available".into(), theme.text_tertiary)
+                                .into_any_element(),
+                        );
+                        widest = widest.max(2 + 18);
+                    }
+                    for (fix, title) in fixes.iter().enumerate() {
+                        widest = widest.max(4 + title.chars().count());
+                        lines.push(
+                            row(format!("↳ {title}"), theme.link)
+                                .id(ElementId::NamedInteger(
+                                    "problem-fix".into(),
+                                    (ix * 1000 + fix) as u64,
+                                ))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme.list_bg_hovered))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(EditorEvent::ApplyProblemFix { problem: ix, fix });
+                                }))
+                                .into_any_element(),
+                        );
+                    }
+                }
+            }
+            let rows = (lines.len() + 2).min(body_rows);
+            let cols = (widest + 4).clamp(24, body_cols);
+            let plural = |n: usize, word: &str| {
+                if n == 1 {
+                    format!("1 {word}")
+                } else {
+                    format!("{n} {word}s")
+                }
+            };
+            let mut parts = Vec::new();
+            if errors > 0 {
+                parts.push(plural(errors, "error"));
+            }
+            if warnings > 0 {
+                parts.push(plural(warnings, "warning"));
+            }
+            if parts.is_empty() {
+                parts.push(plural(count, "problem"));
+            }
+            let hints: Vec<String> = [
+                ("editor/go-to-next-problem", "next"),
+                ("editor/go-to-previous-problem", "prev"),
+            ]
+            .iter()
+            .filter_map(|(action, word)| {
+                crate::keymap::hint_for(cx, action).map(|c| format!("{c} {word}"))
+            })
+            .collect();
+            let body = div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .children(lines)
+                .into_any_element();
+            let mut b = skin::boxed(
+                cell,
+                cols,
+                rows,
+                vec![skin::title(parts.join(", "), theme.popup_text)],
+                Vec::new(),
+                body,
+                theme.popup_bg,
+                theme.border,
+                &theme,
+                m,
+            );
+            if !hints.is_empty() && rows > 2 && cols > 6 {
+                b = b.child(
+                    div()
+                        .absolute()
+                        .top(cell.rows(rows - 1))
+                        .left(cell.cols(2))
+                        .max_w(cell.cols(cols - 4))
+                        .h(px(cell.h))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .bg(theme.popup_bg)
+                        .text_color(theme.text_tertiary)
+                        .child(SharedString::from(format!(" {} ", hints.join("  ")))),
+                );
+            }
+            out.push(
+                b.id("problems-card")
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .into_any_element(),
+            );
+        }
+        if self.problem_tooltip_shown {
+            if let Some(p) = self.problem_hovered.and_then(|ix| problems.get(ix)) {
+                let at = self.hover_position - self.last_bounds.origin;
+                let col = (at.x / w).floor().max(0.) as usize;
+                let row = (at.y / px(cell.h)).floor().max(0.) as usize + 1;
+                let lines: Vec<&str> = p.message.lines().take(12).collect();
+                let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+                let tip = if lines.len() <= 1 {
+                    // One line: a row of cells, a cell of margin each side.
+                    let cols = longest + 2;
+                    div()
+                        .h(px(cell.h))
+                        .w(cell.cols(cols))
+                        .bg(theme.tooltip_bg)
+                        .text_color(theme.tooltip_text)
+                        .font_family(theme.mono_font.clone())
+                        .text_size(px(cell.font_size))
+                        .line_height(px(cell.h))
+                        .whitespace_nowrap()
+                        .child(SharedString::from(format!(" {} ", p.message.trim())))
+                        .into_any_element()
+                } else {
+                    let cols = (longest + 4).min(body_cols.max(8));
+                    let body = div()
+                        .flex()
+                        .flex_col()
+                        .px(w)
+                        .text_color(theme.tooltip_text)
+                        .children(lines.iter().map(|l| {
+                            div()
+                                .h(px(cell.h))
+                                .whitespace_nowrap()
+                                .child(SharedString::from(l.to_string()))
+                        }))
+                        .into_any_element();
+                    skin::boxed(
+                        cell,
+                        cols,
+                        lines.len() + 2,
+                        Vec::new(),
+                        Vec::new(),
+                        body,
+                        theme.tooltip_bg,
+                        theme.border,
+                        &theme,
+                        m,
+                    )
+                    .into_any_element()
+                };
+                let cols = if lines.len() <= 1 {
+                    longest + 2
+                } else {
+                    longest + 4
+                };
+                let col = col.min(body_cols.saturating_sub(cols));
+                out.push(
+                    div()
+                        .absolute()
+                        .left(cell.cols(col))
+                        .top(cell.rows(row))
+                        .child(tip)
+                        .into_any_element(),
+                );
+            }
+        }
+        out
+    }
+
+    /// The tui skin's line-status popup: a one-row box above the hunk (under
+    /// it at the top), ` ↓  ↑   Revert  Diff   × `, its buttons filling on
+    /// hover.
+    fn render_status_popup_tui(
+        &mut self,
+        cell: Cell,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let ix = self.status_popup?;
+        let (row, count) = {
+            let doc = self.document.read(cx);
+            (doc.hunks.get(ix)?.row, doc.hunks.len())
+        };
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let d = self.map.display_row(row, 0) as isize;
+        let first = (self.scroll_y / px(cell.h)).round() as isize;
+        let rel = d - first;
+        let top = if rel >= 3 { rel - 3 } else { rel + 1 }.max(0) as usize;
+        let button = |id: &'static str, label: &'static str, enabled: bool| {
+            div()
+                .id(id)
+                .flex_shrink_0()
+                .h(px(cell.h))
+                .w(cell.cols(Cell::text_cols(label)))
+                .whitespace_nowrap()
+                .text_color(if enabled {
+                    theme.popup_text
+                } else {
+                    theme.text_secondary
+                })
+                .when(enabled, |d| {
+                    d.cursor_pointer().hover(|s| s.bg(theme.list_bg_hovered))
+                })
+                .child(label)
+        };
+        let gap = |n: usize| div().flex_shrink_0().w(cell.cols(n));
+        let row_el = div()
+            .flex()
+            .child(
+                button("status-next", " ↓ ", ix + 1 < count)
+                    .on_click(cx.listener(move |this, _, _, cx| this.step_status_popup(1, cx))),
+            )
+            .child(
+                button("status-prev", " ↑ ", ix > 0)
+                    .on_click(cx.listener(move |this, _, _, cx| this.step_status_popup(-1, cx))),
+            )
+            .child(gap(1))
+            .child(
+                button("status-revert", " Revert ", true).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.document.update(cx, |d, cx| d.revert_hunk(ix, cx));
+                        this.status_popup = None;
+                        cx.notify();
+                    },
+                )),
+            )
+            .child(
+                button("status-diff", " Diff ", true).on_click(cx.listener(|this, _, _, cx| {
+                    this.status_popup = None;
+                    cx.emit(EditorEvent::ShowDiff);
+                    cx.notify();
+                })),
+            )
+            .child(gap(1))
+            .child(
+                button("status-close", " × ", true).on_click(cx.listener(|this, _, _, cx| {
+                    this.status_popup = None;
+                    cx.notify();
+                })),
+            )
+            .into_any_element();
+        // ↓ ↑, a gap, Revert Diff, a gap, ×: 3 + 3 + 1 + 8 + 6 + 1 + 3.
+        let inner = 25;
+        Some(
+            deferred(
+                skin::boxed(
+                    cell,
+                    inner + 2,
+                    3,
+                    Vec::new(),
+                    Vec::new(),
+                    row_el,
+                    theme.popup_bg,
+                    theme.border,
+                    &theme,
+                    m,
+                )
+                .id("line-status-popup")
+                .occlude()
+                .absolute()
+                .top(cell.rows(top))
+                .left(self.text_offset()),
+            )
+            .into_any_element(),
+        )
+    }
+}
+
 /// What a point in the view lands on.
 enum Hit {
     Text(usize),
@@ -2689,6 +3453,26 @@ fn hunk_covers(hunk: &weep_git::Hunk, row: usize) -> bool {
     } else {
         row >= hunk.row && row < hunk.row + hunk.rows
     }
+}
+
+/// A wheel delta gathered onto `rest`, in whole steps of `pitch`: the steps
+/// it makes (signed, as the delta: positive scrolls back) and what is left.
+/// A turn the other way drops what was gathered.
+fn whole_steps(rest: Pixels, delta: Pixels, pitch: f32) -> (f32, Pixels) {
+    let rest = if f32::from(rest) * f32::from(delta) < 0. {
+        px(0.)
+    } else {
+        rest
+    };
+    let total = f32::from(rest + delta);
+    let steps = (total / pitch.max(1.)).trunc();
+    (steps, px(total - steps * pitch.max(1.)))
+}
+
+/// The tui skin: whether a deletion's mark sits on `row` (on its bottom
+/// edge; on row 0's top for a deletion before the first row).
+fn tui_deletion_on(hunk: &weep_git::Hunk, row: usize) -> bool {
+    hunk.rows == 0 && (hunk.row == row + 1 || (hunk.row == 0 && row == 0))
 }
 
 /// Whether `row` heads a foldable block, asked of the document.
@@ -2869,8 +3653,14 @@ impl EntityInputHandler for EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let status_popup = self.render_status_popup(cx);
-        let problems = self.render_problems(cx);
+        let tui = (Skin::current(cx) == Skin::Tui).then(|| Cell::current(cx));
+        let (status_popup, problems) = match tui {
+            Some(cell) => (
+                self.render_status_popup_tui(cell, cx),
+                self.render_problems_tui(cell, window, cx),
+            ),
+            None => (self.render_status_popup(cx), self.render_problems(cx)),
+        };
         let smart = self.render_smart(window, cx);
         // The badge, the widget and the hover tooltip come after the
         // element, so they paint over its washes.
@@ -3313,20 +4103,31 @@ impl Element for EditorElement {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let theme = cx.global::<Theme>().clone();
-        let tm = TextMetrics::current(cx);
         let options = ViewOptions::from(&cx.global::<AppSettings>().settings);
+        let mut tm = TextMetrics::current(cx);
+        if tm.cell.is_some() {
+            // The tui gutter is sized by the line count's digits.
+            let lines = self.editor.read(cx).document.read(cx).buffer.line_count();
+            tm = tm.with_digits(tui_digits(lines, options.line_numbers != LineNumbers::Off));
+        }
         let settings = cx.global::<AppSettings>().settings.clone();
         let lh = px(tm.line_height);
         let focused = self.editor.read(cx).focus_handle.is_focused(window);
-        let space_width = shape_display_line(
-            &DisplayLine::new(" "),
-            &[],
-            &theme,
-            tm.font_size,
-            &options,
-            window,
-        )
-        .width;
+        let space_width = match tm.cell {
+            // A column of the tui grid is the cell, exactly.
+            Some(cell) => px(cell.w),
+            None => {
+                shape_display_line(
+                    &DisplayLine::new(" "),
+                    &[],
+                    &theme,
+                    tm.font_size,
+                    &options,
+                    window,
+                )
+                .width
+            }
+        };
         let (
             document,
             selections,
@@ -3367,6 +4168,14 @@ impl Element for EditorElement {
             if options.soft_wrap {
                 editor.scroll_x = px(0.);
             }
+            if let Some(cell) = tm.cell {
+                // The tui grid scrolls by whole rows and columns, whatever
+                // moved it (the caret, a jump, a page).
+                let max_rows = (max / px(cell.h)).ceil();
+                let row = (editor.scroll_y / px(cell.h)).round().min(max_rows);
+                editor.scroll_y = px(cell.h) * row.max(0.);
+                editor.scroll_x = px(snap_to(f32::from(editor.scroll_x), cell.w));
+            }
             let (cursor, selections) = editor.with_buffer(cx, |c, b| {
                 (
                     c.cursor_point(b),
@@ -3401,6 +4210,7 @@ impl Element for EditorElement {
         let total_rows = map.total;
         // The blame column (ninth pass): 13 px UI text in the secondary colour.
         let blame_lines = self.editor.read(cx).blame.clone();
+        let today = today_days();
         let ui_font_size = cx.global::<Metrics>().ui_font_size;
         let ui_font = Font {
             family: theme.ui_font.clone(),
@@ -3590,7 +4400,7 @@ impl Element for EditorElement {
                     shape_display_line(&line, &seg_spans, &theme, tm.font_size, &options, window);
                 let folded_layout = folded.map(|f| {
                     let mark = shape_glyph(
-                        "…",
+                        if tm.cell.is_some() { "⋯" } else { "…" },
                         theme.folded_mark_text,
                         &theme,
                         tm.font_size,
@@ -3621,7 +4431,7 @@ impl Element for EditorElement {
                 };
                 let show_number = seg == 0
                     && options.line_numbers != LineNumbers::Off
-                    && (run_index.is_none() || options.run_after_numbers);
+                    && (run_index.is_none() || options.run_after_numbers || tm.cell.is_some());
                 let number = show_number.then(|| {
                     let color = if row == cursor.row {
                         theme.line_number_current
@@ -3651,10 +4461,18 @@ impl Element for EditorElement {
                                 prev.short_id != line.short_id
                                     || prev.uncommitted != line.uncommitted
                             }));
-                    let label = if head {
-                        line.label().map(|text| shape_blame(text, window))
-                    } else {
-                        None
+                    let label = match tm.cell {
+                        // The tui column: `author 2d` in its cells, mono.
+                        Some(_) if head && !line.uncommitted => {
+                            let age = blame_days(&line.date)
+                                .map(|d| short_age(today - d))
+                                .unwrap_or_default();
+                            let text = blame_cell_label(&line.author, &age, TUI_BLAME_COLS - 1);
+                            Some(shape_number(text, theme.text_secondary, window))
+                        }
+                        Some(_) => None,
+                        None if head => line.label().map(|text| shape_blame(text, window)),
+                        None => None,
                     };
                     Some(BlameLayout { label, color })
                 });
@@ -3776,6 +4594,35 @@ impl Element for EditorElement {
             .collect();
         self.editor.update(cx, |editor, _| {
             editor.sticky_rows = sticky.iter().map(|s| s.row).collect();
+            if tm.cell.is_some() {
+                // What the tui frame's right edge paints: the bar in rows and
+                // the marks Fleet's scrollbar carries.
+                let mut marks = Vec::new();
+                if options.scrollbar_marks {
+                    marks.extend(mark_rows.iter().map(|r| (*r, theme.search_result_mark)));
+                    marks.extend(
+                        caret_mark_rows
+                            .iter()
+                            .map(|r| (*r, theme.current_line_mark)),
+                    );
+                    marks.extend(problem_mark_rows.iter().map(|(r, severity)| {
+                        let color = match severity {
+                            Severity::Error => theme.problem_error_mark,
+                            Severity::Warning => theme.problem_warning_mark,
+                            Severity::Weak => theme.problem_weak_mark,
+                            Severity::Info => theme.problem_info_underline,
+                        };
+                        (*r, color)
+                    }));
+                }
+                editor.tui_bar = TuiBar {
+                    offset: scroll_y / lh,
+                    visible: bounds.size.height / lh,
+                    total: total_rows as f32 + EDITOR_OVERSCROLL_LINES,
+                    rows: total_rows,
+                    marks,
+                };
+            }
         });
         Prepaint {
             hitbox,
@@ -3843,6 +4690,18 @@ impl Element for EditorElement {
         let device_px = px(1. / window.scale_factor());
         let sticky_count = prepaint.sticky.len();
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if let Some(cell) = tm.cell {
+                paint_tui(
+                    &self.editor,
+                    cell,
+                    bounds,
+                    prepaint,
+                    &buffer_rows,
+                    window,
+                    cx,
+                );
+                return;
+            }
             // `editor.guides`: the rulers, behind everything.
             if options.show_guides {
                 for col in &options.guides {
@@ -4356,6 +5215,448 @@ impl Element for EditorElement {
     }
 }
 
+/// Fills whole cells from `x0` to `x1`, `h` high from `y`, with both edges
+/// on device pixels so neighbouring rows meet without a seam.
+fn fill_cells(window: &mut Window, x0: Pixels, x1: Pixels, y: Pixels, h: Pixels, color: Hsla) {
+    let sn = |window: &Window, v: Pixels| px(skin::snap(window, f32::from(v)));
+    let (a, b) = (sn(window, x0), sn(window, x1));
+    let (top, bottom) = (sn(window, y), sn(window, y + h));
+    if b > a && bottom > top {
+        window.paint_quad(fill(
+            Bounds::from_corners(point(a, top), point(b, bottom)),
+            color,
+        ));
+    }
+}
+
+/// A problem's underline in the tui skin: a stroke along the bottom of its
+/// cells, straight for errors, dashed for warnings (a cell on, half off)
+/// and dotted for weak warnings and infos.
+#[allow(clippy::too_many_arguments)]
+fn paint_underline(
+    window: &mut Window,
+    x0: Pixels,
+    x1: Pixels,
+    y: Pixels,
+    cell: Cell,
+    t: Pixels,
+    severity: Severity,
+    color: Hsla,
+) {
+    let (on, period) = match severity {
+        Severity::Error => (x1 - x0, x1 - x0),
+        Severity::Warning => (px(cell.w), px(cell.w * 1.5)),
+        Severity::Weak | Severity::Info => (t * 2., t * 4.),
+    };
+    if period <= px(0.) {
+        return;
+    }
+    let mut x = x0;
+    while x < x1 {
+        fill_cells(window, x, (x + on).min(x1), y, t, color);
+        x += period;
+    }
+}
+
+/// The tui skin's paint: the Fleet branch's layers on the cell grid. The
+/// gutter is whole cells (`▶`/`○`, the numbers, the line-status cell, `▾ ▸`
+/// or `↪`), every wash and box fills whole cells without radius or inset,
+/// the guides run through cell centres, the carets are drawn on cells, and
+/// the sticky lines end in a rule instead of a shadow. The scroll bar and
+/// its marks are the frame's right edge (`EditorView::tui_edges`).
+fn paint_tui(
+    editor: &Entity<EditorView>,
+    cell: Cell,
+    bounds: Bounds<Pixels>,
+    prepaint: &Prepaint,
+    buffer_rows: &[(usize, usize)],
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let theme = cx.global::<Theme>().clone();
+    let m = *cx.global::<Metrics>();
+    let tm = prepaint.tm;
+    let options = &prepaint.options;
+    let lh = px(cell.h);
+    let w = px(cell.w);
+    let t = px(skin::stroke(window, &m));
+    let sn = |window: &Window, v: Pixels| px(skin::snap(window, f32::from(v)));
+    let origin_x = bounds.origin.x + prepaint.text_offset;
+    let text_left = origin_x + px(tm.gutter_width);
+    let text_x = text_left - prepaint.scroll_x;
+    let right = bounds.origin.x + bounds.size.width;
+    let number_right = origin_x + px(tm.gutter_number_right);
+    let status_x = origin_x + px(tm.line_status_x);
+    let fold_x = origin_x + px(tm.fold_chevron_x);
+    // Text scrolled sideways never runs under the gutter.
+    let text_mask = ContentMask {
+        bounds: Bounds::from_corners(point(text_left, bounds.origin.y), bounds.bottom_right()),
+    };
+    let glyph = |text: &str, color: Hsla, window: &mut Window| {
+        shape_glyph(text, color, &theme, cell.font_size, options, window)
+    };
+    let run_glyph = glyph("▶", theme.icon_green, window);
+    let hint_glyph = glyph("○", theme.breakpoint_hint, window);
+    let open_glyph = glyph("▾", theme.fold_icon, window);
+    let folded_glyph = glyph("▸", theme.fold_icon, window);
+    let wrap_glyph = glyph("↪", theme.text_tertiary, window);
+    let in_cell = |g: &ShapedLine, x: Pixels| x + ((w - g.width) / 2.).max(px(0.));
+    let (hunks, status_popup, status_hovered, commit_rows) = {
+        let e = editor.read(cx);
+        let hovered = e
+            .blame
+            .as_ref()
+            .filter(|_| e.blame_hovered)
+            .and_then(|lines| lines.get(e.hovered_row?))
+            .filter(|l| !l.uncommitted)
+            .map(|l| l.short_id.clone());
+        let commit_rows: Vec<bool> = prepaint
+            .rows
+            .iter()
+            .map(|r| {
+                hovered.as_ref().is_some_and(|id| {
+                    e.blame
+                        .as_ref()
+                        .and_then(|lines| lines.get(r.row))
+                        .is_some_and(|l| l.short_id == *id)
+                })
+            })
+            .collect();
+        (
+            e.document.read(cx).hunks.clone(),
+            e.status_popup,
+            e.status_hovered,
+            commit_rows,
+        )
+    };
+    let caret_rows: Vec<usize> = prepaint.selections.iter().map(|(_, p)| p.row).collect();
+    let caret_on = |laid: &LaidOutRow, column: usize, row: usize| {
+        row == laid.row
+            && (laid.cols.contains(&column)
+                || (column == laid.cols.end && !next_segment_owns(prepaint, laid, column)))
+    };
+    let show_caret = prepaint.focused && prepaint.caret_visible;
+    // `editor.guides`: the rulers on their columns' left edges.
+    if options.show_guides {
+        window.with_content_mask(Some(text_mask), |window| {
+            for col in &options.guides {
+                let x = sn(window, text_x + w * *col as f32);
+                fill_cells(
+                    window,
+                    x,
+                    x + t,
+                    bounds.origin.y,
+                    bounds.size.height,
+                    theme.indent_guide,
+                );
+            }
+        });
+    }
+    let first_display = (prepaint.scroll_y / lh).floor().max(0.) as usize;
+    for (i, (laid, (line_start, line_end))) in prepaint
+        .rows
+        .iter()
+        .zip(buffer_rows.iter().copied())
+        .enumerate()
+    {
+        let y = bounds.origin.y + lh * (first_display + i) as f32 - prepaint.scroll_y;
+        let row_text_x = if laid.continuation {
+            text_x + px(tm.wrap_indent)
+        } else {
+            text_x
+        };
+        // The current line: the row's whole cells, gutter included.
+        if options.active_line && caret_rows.contains(&laid.row) {
+            let color = if prepaint.focused {
+                theme.current_line_focused
+            } else {
+                theme.current_line
+            };
+            fill_cells(window, bounds.origin.x, right, y, lh, color);
+        }
+        // The open hunk's rows wash across the text.
+        if let Some(hunk) = status_popup.and_then(|ix| hunks.get(ix)) {
+            if hunk.rows > 0 && hunk_covers(hunk, laid.row) {
+                fill_cells(window, text_left, right, y, lh, theme.git_hunk_wash);
+            }
+        }
+        window.with_content_mask(Some(text_mask), |window| {
+            // Occurrences, the bracket pair and the find matches.
+            for (range, kind) in &laid.boxes {
+                let color = match kind {
+                    BoxKind::Occurrence => theme.occurrence_bg,
+                    BoxKind::Bracket => theme.brace_match_bg,
+                    BoxKind::SearchMatch => theme.search_result_bg,
+                    BoxKind::Problem(_) => continue,
+                };
+                let x0 = laid.shaped.x_for_index(range.start);
+                let x1 = laid.shaped.x_for_index(range.end);
+                fill_cells(window, row_text_x + x0, row_text_x + x1, y, lh, color);
+            }
+            // The selections: whole cells to the last char, one cell more
+            // when the line break is selected (the only cell of an empty row).
+            for (sel, _) in &prepaint.selections {
+                let sel = sel.range();
+                if sel.is_empty() || sel.start > line_end || sel.end < line_start {
+                    continue;
+                }
+                let a = sel.start.max(line_start) - line_start;
+                let b = sel.end.min(line_end) - line_start;
+                let x0 = laid.shaped.x_for_index(laid.line.display_byte_for_char(a));
+                let mut x1 = laid.shaped.x_for_index(laid.line.display_byte_for_char(b));
+                if sel.end > line_end && laid.folded.is_none() {
+                    x1 += w;
+                }
+                let color = if prepaint.focused {
+                    theme.selection_focused
+                } else {
+                    theme.selection
+                };
+                fill_cells(window, row_text_x + x0, row_text_x + x1, y, lh, color);
+            }
+            // Indent guides through the centre of each level's first cell.
+            for (col, current) in &laid.guides {
+                let x = sn(window, text_x + w * *col as f32 + w / 2.) - t / 2.;
+                let color = if *current {
+                    theme.indent_guide_current
+                } else {
+                    theme.indent_guide
+                };
+                fill_cells(window, x, x + t, y, lh, color);
+            }
+        });
+        // The blame column: the hovered commit's rows filled, the label on
+        // each chunk's first row.
+        if let Some(blame) = &laid.blame {
+            let column_x = origin_x - px(tm.blame_width);
+            if commit_rows.get(i).copied().unwrap_or(false) {
+                fill_cells(window, column_x, origin_x - w, y, lh, theme.git_blame_bg);
+            }
+            if let Some(label) = &blame.label {
+                let _ = label.paint(point(column_x, y), lh, TextAlign::Left, None, window, cx);
+            }
+        }
+        if let Some(number) = &laid.number {
+            let _ = number.paint(
+                point(number_right - number.width, y),
+                lh,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        }
+        // The first cell: the run icon, else the breakpoint hint on hover.
+        if laid.run_icon {
+            let _ = run_glyph.paint(
+                point(in_cell(&run_glyph, origin_x), y),
+                lh,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        } else if !laid.continuation
+            && prepaint.gutter_hovered
+            && prepaint.hovered_row == Some(laid.row)
+        {
+            let _ = hint_glyph.paint(
+                point(in_cell(&hint_glyph, origin_x), y),
+                lh,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        }
+        // The line-status cell: a third of it for added and modified rows
+        // (all of it under the pointer or with its popup open), a wedge on
+        // the bottom edge where lines were deleted.
+        for (ix, hunk) in hunks.iter().enumerate() {
+            let color = match hunk.kind {
+                weep_git::HunkKind::Added => theme.git_added_bg,
+                weep_git::HunkKind::Modified => theme.git_modified_bg,
+                weep_git::HunkKind::Deleted => theme.git_deleted_bg,
+            };
+            let wide = status_popup == Some(ix) || status_hovered == Some(ix);
+            if hunk.rows > 0 && hunk_covers(hunk, laid.row) {
+                let width = if wide { w } else { w / 3. };
+                fill_cells(window, status_x, status_x + width, y, lh, color);
+            } else if tui_deletion_on(hunk, laid.row) && !laid.continuation {
+                let h = sn(window, if wide { lh / 4. } else { lh / 8. }).max(t * 2.);
+                let top = if hunk.row == 0 { y } else { y + lh - h };
+                fill_cells(window, status_x, status_x + w, top, h, color);
+            }
+        }
+        // The fold cell: `▾` open (on hover), `▸` folded; `↪` on a wrapped
+        // line's continuation rows.
+        let fold_mark = match laid.chevron {
+            Some(true) => Some(&folded_glyph),
+            Some(false) => Some(&open_glyph),
+            None if laid.continuation => Some(&wrap_glyph),
+            None => None,
+        };
+        if let Some(g) = fold_mark {
+            let _ = g.paint(
+                point(in_cell(g, fold_x), y),
+                lh,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        }
+        window.with_content_mask(Some(text_mask), |window| {
+            if let Some(dot) = &prepaint.space_glyph {
+                for b in &laid.spaces {
+                    let x = laid.shaped.x_for_index(*b);
+                    let _ = dot.paint(
+                        point(row_text_x + x, y),
+                        lh,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    );
+                }
+            }
+            if let Some(arrow) = &prepaint.tab_glyph {
+                for tab in &laid.line.tabs {
+                    let x = laid.shaped.x_for_index(tab.start);
+                    let _ = arrow.paint(
+                        point(row_text_x + x, y),
+                        lh,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    );
+                }
+            }
+            let _ = laid
+                .shaped
+                .paint(point(row_text_x, y), lh, TextAlign::Left, None, window, cx);
+            // The folded block: `⋯` in one filled cell, then the block's tail.
+            if let Some(folded) = &laid.folded {
+                let x = row_text_x + laid.shaped.x_for_index(folded.at);
+                fill_cells(window, x, x + w, y, lh, theme.folded_mark_bg);
+                let _ = folded.mark.paint(
+                    point(in_cell(&folded.mark, x), y),
+                    lh,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
+                let _ = folded
+                    .tail
+                    .paint(point(x + w, y), lh, TextAlign::Left, None, window, cx);
+            }
+            // Problems: a stroke along the bottom of their cells.
+            for (range, kind) in &laid.boxes {
+                let BoxKind::Problem(severity) = kind else {
+                    continue;
+                };
+                let x0 = laid.shaped.x_for_index(range.start);
+                let x1 = laid.shaped.x_for_index(range.end);
+                let x1 = if x1 <= x0 { x0 + w } else { x1 };
+                let color = match severity {
+                    Severity::Error => theme.problem_error_underline,
+                    Severity::Warning => theme.problem_warning_underline,
+                    Severity::Weak => theme.problem_weak_underline,
+                    Severity::Info => theme.problem_info_underline,
+                };
+                let line_y = sn(window, y + lh) - t;
+                paint_underline(
+                    window,
+                    row_text_x + x0,
+                    row_text_x + x1,
+                    line_y,
+                    cell,
+                    t,
+                    *severity,
+                    color,
+                );
+            }
+            // The carets, on cells: a bar of two strokes at the cell's left
+            // edge, the cell filled with its char redrawn in the background
+            // colour, or the cell's bottom fifth.
+            if !show_caret {
+                return;
+            }
+            for (_, p) in &prepaint.selections {
+                if !caret_on(laid, p.column, p.row) {
+                    continue;
+                }
+                let byte = laid.line.display_byte_for_char(p.column - laid.cols.start);
+                let x = row_text_x + laid.shaped.x_for_index(byte);
+                match options.caret_shape {
+                    CaretShape::Line => {
+                        let x = sn(window, x);
+                        fill_cells(window, x, x + t * 2., y, lh, theme.editor_caret);
+                    }
+                    CaretShape::Underline => {
+                        let h = sn(window, lh / 5.).max(t);
+                        fill_cells(window, x, x + w, y + lh - h, h, theme.editor_caret);
+                    }
+                    CaretShape::Block => {
+                        fill_cells(window, x, x + w, y, lh, theme.editor_caret);
+                        let ch = laid.line.text[byte.min(laid.line.text.len())..]
+                            .chars()
+                            .next()
+                            .filter(|c| !c.is_whitespace() && laid.folded.is_none());
+                        if let Some(ch) = ch {
+                            let g = shape_glyph(
+                                &ch.to_string(),
+                                theme.island_background,
+                                &theme,
+                                cell.font_size,
+                                options,
+                                window,
+                            );
+                            let _ = g.paint(point(x, y), lh, TextAlign::Left, None, window, cx);
+                        }
+                    }
+                }
+            }
+        });
+    }
+    // Sticky lines: the top rows on the editor's background, a rule along
+    // the last one's bottom edge, no shadow.
+    let sticky = prepaint.sticky.len();
+    if sticky > 0 {
+        let height = lh * sticky as f32;
+        fill_cells(
+            window,
+            bounds.origin.x,
+            right,
+            bounds.origin.y,
+            height,
+            theme.island_background,
+        );
+        for (i, s) in prepaint.sticky.iter().enumerate() {
+            let y = bounds.origin.y + lh * i as f32;
+            if let Some(number) = &s.number {
+                let _ = number.paint(
+                    point(number_right - number.width, y),
+                    lh,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            window.with_content_mask(Some(text_mask), |window| {
+                let _ = s
+                    .shaped
+                    .paint(point(text_x, y), lh, TextAlign::Left, None, window, cx);
+            });
+        }
+        let line_y = sn(window, bounds.origin.y + height) - t;
+        fill_cells(window, bounds.origin.x, right, line_y, t, theme.border);
+    }
+}
+
 /// A caret at the boundary between two wrapped segments belongs to the
 /// later one (the start of the next display row), as Fleet shows it.
 fn next_segment_owns(prepaint: &Prepaint, laid: &LaidOutRow, column: usize) -> bool {
@@ -4363,4 +5664,87 @@ fn next_segment_owns(prepaint: &Prepaint, laid: &LaidOutRow, column: usize) -> b
         .rows
         .iter()
         .any(|r| r.row == laid.row && r.continuation && r.cols.start == column)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tui_gutter_digits() {
+        assert_eq!(tui_digits(0, true), 3);
+        assert_eq!(tui_digits(99, true), 3);
+        assert_eq!(tui_digits(999, true), 3);
+        assert_eq!(tui_digits(1000, true), 4);
+        assert_eq!(tui_digits(123_456, true), 6);
+        assert_eq!(tui_digits(5000, false), 0);
+    }
+
+    #[test]
+    fn snapping_lands_on_whole_steps() {
+        assert_eq!(snap_to(0., 20.), 0.);
+        assert_eq!(snap_to(29., 20.), 20.);
+        assert_eq!(snap_to(31., 20.), 40.);
+        assert_eq!(snap_to(7., 0.), 7.);
+    }
+
+    #[test]
+    fn wheel_deltas_gather_into_rows() {
+        // A trackpad's small deltas make a row once they add up to one.
+        let (steps, rest) = whole_steps(px(0.), px(8.), 20.);
+        assert_eq!((steps, rest), (0., px(8.)));
+        let (steps, rest) = whole_steps(rest, px(15.), 20.);
+        assert_eq!((steps, rest), (1., px(3.)));
+        // Backwards drops what was gathered the other way.
+        let (steps, rest) = whole_steps(px(15.), px(-45.), 20.);
+        assert_eq!((steps, rest), (-2., px(-5.)));
+        // A mouse wheel's lines are whole rows already.
+        assert_eq!(whole_steps(px(0.), px(-60.), 20.), (-3., px(0.)));
+    }
+
+    #[test]
+    fn blame_labels_fit_their_cells() {
+        assert_eq!(blame_cell_label("ragtux", "2d", 12), "ragtux    2d");
+        assert_eq!(
+            blame_cell_label("Somebody Longname", "3mo", 12),
+            "Somebod… 3mo"
+        );
+        assert_eq!(blame_cell_label("", "1y", 4), "  1y");
+        for label in [
+            blame_cell_label("a", "5w", 17),
+            blame_cell_label("A Very Long Author Name Indeed", "10y", 17),
+        ] {
+            assert_eq!(label.chars().count(), 17);
+        }
+    }
+
+    #[test]
+    fn blame_ages() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+        assert_eq!(
+            blame_days("2025-12-31"),
+            Some(days_from_civil(2025, 12, 31))
+        );
+        assert_eq!(blame_days("86400"), Some(1));
+        assert_eq!(blame_days("soon"), None);
+        assert_eq!(short_age(0), "0d");
+        assert_eq!(short_age(13), "13d");
+        assert_eq!(short_age(21), "3w");
+        assert_eq!(short_age(90), "3mo");
+        assert_eq!(short_age(800), "2y");
+    }
+
+    #[test]
+    fn deletions_mark_the_row_above() {
+        let deletion = |row| weep_git::Hunk {
+            row,
+            rows: 0,
+            kind: weep_git::HunkKind::Deleted,
+            old: vec!["gone".into()],
+        };
+        assert!(tui_deletion_on(&deletion(5), 4));
+        assert!(!tui_deletion_on(&deletion(5), 5));
+        assert!(tui_deletion_on(&deletion(0), 0));
+    }
 }
