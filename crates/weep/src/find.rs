@@ -61,6 +61,9 @@ pub struct FindBar {
     pub find: Entity<TextInput>,
     pub replace: Entity<TextInput>,
     pub open: bool,
+    /// A query was typed since the bar opened: Fleet then pushes the text
+    /// down under the find row (a bar opened on a query does not).
+    pub pushed: bool,
     pub replace_shown: bool,
     case_sensitive: bool,
     whole_word: bool,
@@ -111,6 +114,7 @@ impl FindBar {
             find,
             replace,
             open: false,
+            pushed: false,
             replace_shown: false,
             case_sensitive: false,
             whole_word: false,
@@ -135,7 +139,10 @@ impl FindBar {
             return;
         }
         if let Some(old) = &self.editor {
-            old.update(cx, |e, cx| e.set_search(None, cx));
+            old.update(cx, |e, cx| {
+                e.set_search(None, cx);
+                e.set_status_top(px(0.), cx);
+            });
         }
         self.editor_subscription = editor.as_ref().map(|e| {
             cx.subscribe(e, |this, _, event: &EditorEvent, cx| {
@@ -147,6 +154,7 @@ impl FindBar {
             })
         });
         self.editor = editor;
+        self.sync_status_top(cx);
         self.in_selection = None;
         if self.open {
             self.search(true, cx);
@@ -202,7 +210,36 @@ impl FindBar {
         let handle = field.read(cx).focus_handle(cx);
         handle.focus(window, cx);
         self.search(true, cx);
+        self.sync_status_top(cx);
         cx.notify();
+    }
+
+    /// Whether the text is pushed down under the find row: a query typed
+    /// since the bar opened (a bar opened on one lies over the text).
+    pub fn pushes(&self, cx: &App) -> bool {
+        self.open && self.pushed && !self.find.read(cx).is_empty()
+    }
+
+    /// Puts the editor's status badge under the bar, as Fleet does: below
+    /// the find row's band (`FIND_BAR_PUSH`) and the replace row, less the
+    /// part the text is already pushed down by.
+    fn sync_status_top(&self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        let m = *cx.global::<Metrics>();
+        let top = if !self.open {
+            0.
+        } else {
+            let replace = if self.replace_shown {
+                m.find_bar_row_gap + m.find_bar_height
+            } else {
+                0.
+            };
+            let pushed = if self.pushes(cx) { m.find_bar_push } else { 0. };
+            m.find_bar_push + replace - pushed
+        };
+        editor.update(cx, |e, cx| e.set_status_top(px(top), cx));
     }
 
     pub fn close(&mut self, cx: &mut Context<Self>) {
@@ -210,6 +247,8 @@ impl FindBar {
             return;
         }
         self.open = false;
+        self.pushed = false;
+        self.sync_status_top(cx);
         cx.emit(FindBarEvent::Changed);
         self.in_selection = None;
         if let Some(editor) = &self.editor {
@@ -401,13 +440,16 @@ impl FindBar {
             let handle = self.find.read(cx).focus_handle(cx);
             handle.focus(window, cx);
         }
+        self.sync_status_top(cx);
         cx.notify();
     }
 
     fn on_find_input(&mut self, _: Entity<TextInput>, event: &InputEvent, cx: &mut Context<Self>) {
         match event {
             InputEvent::Changed => {
+                self.pushed = true;
                 self.search(true, cx);
+                self.sync_status_top(cx);
                 cx.emit(FindBarEvent::Changed);
             }
             InputEvent::Submit { shift } => self.step(!shift, cx),
@@ -884,8 +926,13 @@ impl Render for FindBar {
         div()
             .id("find-bar")
             .absolute()
-            .top(px(m.find_bar_top))
+            .top(px(m.find_bar_top - m.find_bar_cover_top))
             .right(px(m.find_bar_right))
+            // The text under the bar is hidden, not shown through the fields.
+            .pt(px(m.find_bar_cover_top))
+            .pl(px(m.find_bar_cover_left))
+            .pb(px(m.find_bar_cover_bottom))
+            .bg(theme.island_background)
             .flex()
             .flex_col()
             .items_end()

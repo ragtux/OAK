@@ -2616,7 +2616,7 @@ impl Workspace {
                             let cell = crate::skin::Cell::current(cx);
                             (false, cell.rows(find.tui_rows()))
                         } else {
-                            (find.open && !find.query(cx).is_empty(), px(0.))
+                            (find.pushes(cx), px(0.))
                         };
                     let conflict = editor.read(cx).document.read(cx).conflict;
                     div()

@@ -957,7 +957,9 @@ and Space on a focused button; one shot after each key.
 | Escape on the focused chevron | closes the bar | the same |
 | Ctrl+F after the bar closed with the replace row | the bar opens without the replace row | the row stayed → shown only by Ctrl+H, or while the bar is open (Ctrl+F on an open bar with the row is unprobed) |
 | the current match on reopening | stays on the selected match, also after Escape in the editor put the caret after it: 1/8 in every shot | one further on each reopen (2/8, 3/8, 4/8, the 2/8 against 3/8 of the sixteenth pass) → the first match ending at or after the caret, from the selection's start: 1/8 in every shot |
-| the replace row over the text | the text pushed down under both rows | pushed for the find row only, the replace row drawn over the text with a transparent field (open) |
+| when the text is pushed down | only after a query is typed into the bar (`find-typed`, `f0`: line 1 at 134); a bar opened on a query (from the selection, or Ctrl+H on the last one) lies over the text (line 1 at 82), the replace row never pushes, and typing in the replace field does not either | pushed whenever the bar held a query, the replace row drawn over the text through a transparent field → pushed only once the query is typed (`FindBar::pushes`); line 1 within 1 of Fleet's in all twelve shots |
+| the text under the bar | hidden under the island's background from 3 above the field and 8 left of the chevron's box (line 1 cut after "high" in `reopen`) | shown through the fields → the bar painted on `island.background` with that margin (`FIND_BAR_COVER_*`; below the last row an estimate) |
+| the status badge | below the bar: its check at y 140-148.5 with the find row, pushed or not, 174-182.5 with the replace row (+34: the row and its gap), 88-96.5 without the bar | at the editor's top, so under the bar when the text was not pushed → set by the bar (`EditorView::set_status_top`): 140, 174 and 88, the check 1 to the left of Fleet's as before |
 | Ctrl+F on a word | the query is the word at the caret ("record") | not compared |
 
 Code vision: the "0 implementations" WEEP showed 6 s after launch in the

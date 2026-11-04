@@ -117,8 +117,9 @@ and fifth passes). What batch 5 did not measure is marked "estimate" in
 `wrap` ran on both editors on the Mac (`docs/fleet-probe.md`, fifteenth to
 seventeenth passes) and corrected the find bar, the replace row, the fold mark's
 click, rendered spaces, the wrap rule, the find bar's Tab order and focus
-ring and its current match on reopening. Still open from them: the text
-pushed down under the replace row, the toggles' and the query's fonts, one
+ring, its current match on reopening, when it pushes the text down, the text
+it hides and the status badge under it. Still open from them: the toggles' and
+the query's fonts, one
 wrap column more than Fleet, the Outline and VerticalThin carets, and the
 sticky lines (the fixture has no Rust file longer than the window). Left for later: the smooth caret (`editor.caretSmoothAnimation`
 is read, not animated), an "in selection" button on the find bar (the mode

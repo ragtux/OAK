@@ -520,7 +520,16 @@ pub mod metrics {
     pub const FIND_BAR_SEPARATOR_HEIGHT: f32 = 16.;
     /// With a query typed, Fleet's find bar pushes the text down by its own
     /// band: 12 above, 28, 12 below (the `find` scene: line 1 from 87 to 139).
+    /// A bar opened on a query (from the selection, or Ctrl+H) does not push,
+    /// and neither does the replace row (seventeenth pass).
     pub const FIND_BAR_PUSH: f32 = 52.;
+    /// Where the bar lies over the text it hides it under `island.background`:
+    /// line 1 cut 3 above the field and 8 left of the chevron's box (the
+    /// `find-tab` scene's `reopen`, ±1). Below the last row: an estimate
+    /// (no text there in the shots).
+    pub const FIND_BAR_COVER_TOP: f32 = 3.;
+    pub const FIND_BAR_COVER_LEFT: f32 = 8.;
+    pub const FIND_BAR_COVER_BOTTOM: f32 = 3.;
     /// "File has been changed on disk" (the `dialogs` scene): a popup-coloured
     /// pill centred over the editor, 34.67 tall, its top 4.67 under the tab
     /// strip; the text 12 in, 12 to the 24 px primary buttons (Overwrite,
@@ -1083,6 +1092,9 @@ scaled_metrics!(
     find_bar_chevron_gap = FIND_BAR_CHEVRON_GAP,
     find_bar_replace_button_pad_x = FIND_BAR_REPLACE_BUTTON_PAD_X,
     find_bar_focus_ring = FIND_BAR_FOCUS_RING,
+    find_bar_cover_top = FIND_BAR_COVER_TOP,
+    find_bar_cover_left = FIND_BAR_COVER_LEFT,
+    find_bar_cover_bottom = FIND_BAR_COVER_BOTTOM,
     input_radius = INPUT_RADIUS,
     input_focus_border = INPUT_FOCUS_BORDER,
     find_bar_separator_height = FIND_BAR_SEPARATOR_HEIGHT,

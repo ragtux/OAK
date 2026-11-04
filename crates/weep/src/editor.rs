@@ -854,6 +854,9 @@ pub struct EditorView {
     tui_bar_drag: bool,
     badge: (usize, usize, usize),
     blame_hovered: bool,
+    /// How far below the editor's top the status badge sits: the part of
+    /// the find bar's band the text is not pushed under (`FindBar`).
+    status_top: Pixels,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -957,6 +960,7 @@ impl EditorView {
             tui_bar: TuiBar::default(),
             tui_bar_drag: false,
             badge: (0, 0, 0),
+            status_top: px(0.),
             blame_hovered: false,
         }
     }
@@ -1171,9 +1175,10 @@ impl EditorView {
         };
         // The badge or the widget's header sits on an island-coloured margin
         // that cuts the current line's wash around it (batch 11).
+        let status_top = self.status_top;
         let cutout = |d: gpui::Div| {
             d.absolute()
-                .top(px(0.))
+                .top(status_top)
                 .right(px(m.file_status_right - m.file_status_margin))
                 .pt(px(m.file_status_top))
                 .px(px(m.file_status_margin))
@@ -2631,6 +2636,14 @@ impl EditorView {
     }
 
     // ---- what the find bar and the workspace drive ------------------------------
+
+    /// Fleet keeps the status badge under the find bar (seventeenth pass).
+    pub fn set_status_top(&mut self, top: Pixels, cx: &mut Context<Self>) {
+        if self.status_top != top {
+            self.status_top = top;
+            cx.notify();
+        }
+    }
 
     pub fn set_search(&mut self, search: Option<Search>, cx: &mut Context<Self>) {
         if self.search != search {
