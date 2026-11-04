@@ -11,8 +11,8 @@
 
 use crate::assets::{file_icon, icon};
 use crate::editor::{styled_line, TextMetrics};
-use crate::git_tool::{checkbox, status_text_color, CheckState};
-use crate::skin::{self, Cell, Skin};
+use crate::git_tool::{checkbox, status_text_color, tui_list, tui_list_bar, CheckState};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{metrics::DIFF_CONTEXT_LINES, Metrics, Theme};
 use gpui::{
     canvas, div, point, prelude::*, px, App, Context, ElementId, EventEmitter, FocusHandle,
@@ -140,6 +140,10 @@ pub struct DiffView {
     scroll: ScrollHandle,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The tui skin's first visible row of the boxes (rule 6: whole rows).
+    tui_scroll: RowScroll,
+    /// The box `expand` opened, for the tui skin to scroll to its top.
+    tui_reveal: Option<String>,
 }
 
 impl EventEmitter<DiffViewEvent> for DiffView {}
@@ -168,6 +172,8 @@ impl DiffView {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_scroll: RowScroll::default(),
+            tui_reveal: None,
         };
         view.refresh(cx);
         view
@@ -190,6 +196,8 @@ impl DiffView {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_scroll: RowScroll::default(),
+            tui_reveal: None,
         };
         view.rebuild(cx);
         view
@@ -275,6 +283,7 @@ impl DiffView {
             .take()
             .and_then(|path| self.key_of(&path))
         {
+            self.tui_reveal = Some(key.clone());
             self.expanded = vec![key];
         }
         if self.expanded.is_empty()
@@ -342,6 +351,7 @@ impl DiffView {
     pub fn expand(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         match self.key_of(&path) {
             Some(key) => {
+                self.tui_reveal = Some(key.clone());
                 self.expanded = vec![key];
                 self.load_expanded(cx);
             }
@@ -1139,15 +1149,50 @@ impl DiffView {
                     .text_color(theme.text_secondary)
                     .child(count),
             );
-        let mut boxes: Vec<gpui::AnyElement> = Vec::new();
+        // Each box under a blank row, in whole rows: where each starts.
+        let visible = self.tui_grid.get().1.saturating_sub(1);
+        let mut starts: Vec<usize> = Vec::new();
+        let mut total = 0;
         if cols >= 12 {
-            for (ix, source) in self.sources.iter().enumerate() {
-                let open = self.expanded.contains(&source.key);
-                let rows = self.rows.get(&source.key);
-                boxes.push(div().h(px(cell.h)).flex_shrink_0().into_any_element());
-                boxes.push(self.tui_box(ix, source, open, rows, cols, cell, &theme, &m, cx));
+            for source in &self.sources {
+                starts.push(total + 1);
+                total += 1 + tui_box_rows(
+                    self.expanded.contains(&source.key),
+                    self.rows.get(&source.key),
+                );
             }
         }
+        if let Some(ix) = self
+            .tui_reveal
+            .as_ref()
+            .and_then(|key| self.sources.iter().position(|s| &s.key == key))
+        {
+            self.tui_reveal = None;
+            if let Some(start) = starts.get(ix) {
+                self.tui_scroll.top = *start;
+            }
+        }
+        self.tui_scroll.top = self.tui_scroll.top.min(total.saturating_sub(visible));
+        let top = self.tui_scroll.top;
+        let box_cols = cols.saturating_sub(usize::from(tui_list_bar(total, visible)));
+        // Only the boxes in view, the first one shifted up by its rows above.
+        let mut boxes: Vec<gpui::AnyElement> = Vec::new();
+        let mut first: Option<usize> = None;
+        for (ix, source) in self.sources.iter().enumerate() {
+            let Some(&start) = starts.get(ix) else {
+                break;
+            };
+            let open = self.expanded.contains(&source.key);
+            let rows = self.rows.get(&source.key);
+            let end = start + tui_box_rows(open, rows);
+            if end <= top || start > top + visible {
+                continue;
+            }
+            first.get_or_insert(start - 1);
+            boxes.push(div().h(px(cell.h)).flex_shrink_0().into_any_element());
+            boxes.push(self.tui_box(ix, source, open, rows, box_cols, cell, &theme, &m, cx));
+        }
+        let shift = top - first.unwrap_or(top).min(top);
         div()
             .key_context("DiffView")
             .track_focus(&self.focus_handle)
@@ -1160,17 +1205,31 @@ impl DiffView {
             .line_height(px(cell.h))
             .child(skin::measure(cell, &self.tui_grid))
             .child(header)
-            .child(
+            .child(tui_list(
+                "diff-cards",
+                &entity,
+                |this: &mut DiffView| &mut this.tui_scroll,
+                top,
+                total,
+                cols,
+                visible,
                 div()
-                    .id("diff-cards")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .flex()
-                    .flex_col()
-                    .children(boxes),
-            )
+                    .relative()
+                    .size_full()
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(-cell.rows(shift))
+                            .flex()
+                            .flex_col()
+                            .children(boxes),
+                    )
+                    .into_any_element(),
+                cell,
+                &theme,
+                m,
+            ))
             .into_any_element()
     }
 
@@ -1355,7 +1414,8 @@ impl DiffView {
                 true,
             ),
         };
-        let box_rows = body_rows + 2;
+        let box_rows = tui_box_rows(open, rows);
+        debug_assert_eq!(box_rows, body_rows + 2);
         let color = theme.border;
         let m = *m;
         skin::boxed(
@@ -1505,5 +1565,15 @@ impl DiffView {
                     .into_any_element()
             }
         }
+    }
+}
+
+/// A file's box in the tui skin, in rows with its frame: two when closed,
+/// one row inside while its diff loads, else one per diff row.
+fn tui_box_rows(open: bool, rows: Option<&Vec<DiffRow>>) -> usize {
+    2 + match (open, rows) {
+        (false, _) => 0,
+        (true, None) => 1,
+        (true, Some(rows)) => rows.len().max(1),
     }
 }

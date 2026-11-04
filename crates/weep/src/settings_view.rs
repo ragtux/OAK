@@ -18,8 +18,10 @@ use crate::settings_schema::{option_label, values_equal, Item, Kind, SECTIONS};
 use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
-    deferred, div, point, prelude::*, px, App, BoxShadow, Context, ElementId, Entity, FocusHandle,
-    Focusable, FontWeight, HighlightStyle, ScrollHandle, SharedString, StyledText, Window,
+    deferred, div, point, prelude::*, px, App, Bounds, BoxShadow, Context, DispatchPhase,
+    ElementId, Entity, FocusHandle, Focusable, FontWeight, HighlightStyle, Hitbox, HitboxBehavior,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle,
+    ScrollWheelEvent, SharedString, StyledText, Window,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -46,6 +48,22 @@ pub struct SettingsView {
     focus_handle: FocusHandle,
     /// The tui skin's grid as last laid out, columns by rows of cells.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The tui skin's page and page list, scrolled by whole rows (rule 6).
+    tui_scroll: skin::RowScroll,
+    tui_tree_scroll: skin::RowScroll,
+    /// Rows of the page and of the list, and the rows each shows, as last
+    /// laid out (indexed by `TuiBar`).
+    tui_extent: [(usize, usize); 2],
+    /// The scroll bar being dragged.
+    tui_drag: Option<TuiBar>,
+}
+
+/// The tui skin's two scroll bars: the page's, on the frame's right edge,
+/// and the page list's, on the rule beside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TuiBar {
+    Page = 0,
+    List = 1,
 }
 
 impl Focusable for SettingsView {
@@ -92,6 +110,10 @@ impl SettingsView {
             tree_scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             tui_grid: Rc::new(std::cell::Cell::new((0, 0))),
+            tui_scroll: skin::RowScroll::default(),
+            tui_tree_scroll: skin::RowScroll::default(),
+            tui_extent: [(0, 0); 2],
+            tui_drag: None,
         }
     }
 
@@ -188,11 +210,13 @@ impl SettingsView {
     fn select(&mut self, row: TreeRow, cx: &mut Context<Self>) {
         self.selected = row;
         let m = *cx.global::<Metrics>();
-        let y = if Skin::current(cx) == Skin::Tui {
+        if Skin::current(cx) == Skin::Tui {
+            // The page's top row becomes the section's title or the group's
+            // heading (`render_tui_content` keeps it inside the page).
             let cell = Cell::current(cx);
             let width = self.tui_content_cols(cell);
             let lines = self.tui_lines(width);
-            let at = lines
+            self.tui_scroll.top = lines
                 .iter()
                 .position(|l| match (l, row) {
                     (TuiLine::Section(a), TreeRow::Section(b)) => *a == b,
@@ -200,10 +224,10 @@ impl SettingsView {
                     _ => false,
                 })
                 .unwrap_or(0);
-            at as f32 * cell.h
-        } else {
-            self.offset_of(row, &m)
-        };
+            cx.notify();
+            return;
+        }
+        let y = self.offset_of(row, &m);
         self.content_scroll.set_offset(point(px(0.), px(-y)));
         cx.notify();
     }
@@ -721,6 +745,20 @@ impl SettingsView {
     }
 
     fn page(&mut self, dir: f32, cx: &mut Context<Self>) {
+        if Skin::current(cx) == Skin::Tui {
+            // Whole rows: a page less one row.
+            let (total, visible) = self.tui_extent[TuiBar::Page as usize];
+            let step = visible.saturating_sub(1).max(1);
+            let top = self.tui_scroll.top;
+            let top = if dir > 0. {
+                top + step
+            } else {
+                top.saturating_sub(step)
+            };
+            self.tui_scroll.top = top.min(total.saturating_sub(visible));
+            cx.notify();
+            return;
+        }
         let step = (self.content_scroll.bounds().size.height - px(40.)).max(px(40.));
         let max = self.content_scroll.max_offset().y;
         let y = (self.content_scroll.offset().y - step * dir).clamp(-max, px(0.));
@@ -821,7 +859,9 @@ impl Render for SettingsView {
         let focused = self.search.read(cx).is_focused(window);
         let count = (!self.query.is_empty()).then(|| self.total_count());
         if Skin::current(cx) == Skin::Tui {
-            return self.render_tui(count, &theme, &m, cx).into_any_element();
+            return self
+                .render_tui(count, &theme, &m, window, cx)
+                .into_any_element();
         }
         div()
             .key_context("SettingsTool")
@@ -976,11 +1016,17 @@ impl SettingsView {
         TUI_TREE_COLS.min(cols / 3)
     }
 
-    /// The page's columns: right of the list and its rule, less the scroll
-    /// bar's column.
+    /// The page's columns: right of the list, its rule and a blank column,
+    /// and one cell in from the frame.
     fn tui_content_cols(&self, _cell: Cell) -> usize {
         let cols = self.tui_grid.get().0;
         cols.saturating_sub(Self::tui_tree_cols(cols) + 3)
+    }
+
+    /// The rows the page and the list show: under the search row and its
+    /// rule.
+    fn tui_visible(&self) -> usize {
+        self.tui_grid.get().1.saturating_sub(2)
     }
 
     /// The page as rows: each section's title, its groups' headings, the
@@ -1017,41 +1063,60 @@ impl SettingsView {
         lines
     }
 
+    /// The scroll of the page (`TuiBar::Page`) or of the list.
+    fn tui_rows_mut(&mut self, bar: TuiBar) -> &mut skin::RowScroll {
+        match bar {
+            TuiBar::Page => &mut self.tui_scroll,
+            TuiBar::List => &mut self.tui_tree_scroll,
+        }
+    }
+
+    /// A click or a drag at window `y` on a scroll bar (`bounds`): the
+    /// thumb centres there, on a whole row.
+    fn tui_bar_to(
+        &mut self,
+        bar: TuiBar,
+        y: Pixels,
+        bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if bounds.size.height <= px(0.) {
+            return;
+        }
+        let (total, visible) = self.tui_extent[bar as usize];
+        let frac = ((y - bounds.origin.y) / bounds.size.height).clamp(0., 1.);
+        let top = (frac * total as f32 - visible as f32 / 2.).round().max(0.) as usize;
+        self.tui_rows_mut(bar).top = top.min(total.saturating_sub(visible));
+        cx.notify();
+    }
+
     fn render_tui(
         &mut self,
         count: Option<usize>,
         theme: &Theme,
         m: &Metrics,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let cell = Cell::current(cx);
         let (cols, rows) = self.tui_grid.get();
+        let visible = self.tui_visible();
         let tree_cols = Self::tui_tree_cols(cols);
         let width = self.tui_content_cols(cell);
-        let measure = {
-            let grid = self.tui_grid.clone();
-            gpui::canvas(
-                move |bounds, window, _| {
-                    let fit = (
-                        Cell::fit(bounds.size.width, cell.w),
-                        Cell::fit(bounds.size.height, cell.h),
-                    );
-                    if grid.get() != fit {
-                        grid.set(fit);
-                        skin::redraw(window);
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
+        let measure = skin::measure(cell, &self.tui_grid);
+        // The island's frame is `border_focused` while the focus is in here:
+        // the rules joining it take its colour.
+        let line = if self.focus_handle.contains_focused(window, cx) {
+            theme.border_focused
+        } else {
+            theme.border
         };
-        // The rule under the search row and the one between the regions,
-        // joined (`┬`), through the cells' centres.
+        let tree = self.render_tui_tree(tree_cols, visible, cell, theme, cx);
+        let content = self.render_tui_content(width, visible, cell, theme, m, cx);
+        // Row 1 is a rule joining the frame (`├──┤`); column `tree_cols` a
+        // rule from it down to the frame's bottom edge (`┬ │ ┴`), the list's
+        // scroll bar on it. Through the cells' centres.
         let rules = {
-            let color = theme.border;
             let m = *m;
             gpui::canvas(
                 |_, _, _| (),
@@ -1062,8 +1127,8 @@ impl SettingsView {
                     let x0 = skin::snap(window, f32::from(o.x));
                     let x1 = skin::snap(window, f32::from(o.x) + cols as f32 * cell.w);
                     window.paint_quad(gpui::fill(
-                        gpui::Bounds::new(point(px(x0), px(y)), gpui::size(px(x1 - x0), px(t))),
-                        color,
+                        Bounds::new(point(px(x0), px(y)), gpui::size(px(x1 - x0), px(t))),
+                        line,
                     ));
                     let x = skin::snap(
                         window,
@@ -1071,8 +1136,8 @@ impl SettingsView {
                     ) - t / 2.;
                     let y1 = skin::snap(window, f32::from(o.y) + rows as f32 * cell.h);
                     window.paint_quad(gpui::fill(
-                        gpui::Bounds::new(point(px(x), px(y)), gpui::size(px(t), px(y1 - y))),
-                        color,
+                        Bounds::new(point(px(x), px(y)), gpui::size(px(t), px(y1 - y))),
+                        line,
                     ));
                 },
             )
@@ -1081,76 +1146,113 @@ impl SettingsView {
             .left_0()
             .size_full()
         };
-        let row = || {
-            div()
-                .h(px(cell.h))
-                .flex()
-                .flex_shrink_0()
-                .whitespace_nowrap()
+        // The half cells from the body's edges to the frame's lines lie
+        // outside the body, which clips: drawn deferred, as the popups are.
+        let joins = {
+            let m = *m;
+            gpui::canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    if cols < 2 || rows < 2 {
+                        return;
+                    }
+                    let t = skin::stroke(window, &m);
+                    let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                    let y = skin::snap(window, oy + 1.5 * cell.h) - t / 2.;
+                    let left = skin::snap(window, ox - cell.w / 2.) - t / 2.;
+                    let right = skin::snap(window, ox + cols as f32 * cell.w);
+                    let end = skin::snap(window, ox + (cols as f32 + 0.5) * cell.w) + t / 2.;
+                    let x0 = skin::snap(window, ox) + t;
+                    for (a, b) in [(left, x0), (right - t, end)] {
+                        window.paint_quad(gpui::fill(
+                            Bounds::new(point(px(a), px(y)), gpui::size(px(b - a), px(t))),
+                            line,
+                        ));
+                    }
+                    let x =
+                        skin::snap(window, ox + tree_cols as f32 * cell.w + cell.w / 2.) - t / 2.;
+                    let y0 = skin::snap(window, oy + rows as f32 * cell.h) - t;
+                    let y1 = skin::snap(window, oy + (rows as f32 + 0.5) * cell.h) + t / 2.;
+                    window.paint_quad(gpui::fill(
+                        Bounds::new(point(px(x), px(y0)), gpui::size(px(t), px(y1 - y0))),
+                        line,
+                    ));
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
         };
-        // Row 0: the search field, then the scope: `Global` filled, the
-        // workspace, Plugins.
-        let search = row()
+        // Row 0: one cell in, the search field (its first cell the mark:
+        // `⌕`, or the input's `›` while focused), then the scope: `Global`
+        // filled, the workspace, Plugins, ending one cell in.
+        let global = match count {
+            Some(n) => format!(" Global {n} "),
+            None => " Global ".to_string(),
+        };
+        let root = format!(" {} ", fit(&self.root_name, 20));
+        let plugins = " Plugins";
+        let scope_cols =
+            Cell::text_cols(&global) + Cell::text_cols(&root) + Cell::text_cols(plugins);
+        let field_cols = cols.saturating_sub(scope_cols + 3);
+        let searching = self.search.read(cx).is_focused(window);
+        let search = div()
+            .h(px(cell.h))
             .w(cell.cols(cols))
+            .flex()
+            .whitespace_nowrap()
+            .child(div().w(cell.cols(1)).flex_shrink_0())
             .child(
                 div()
-                    .w(cell.cols(2))
+                    .relative()
+                    .w(cell.cols(field_cols))
+                    .h(px(cell.h))
                     .flex_shrink_0()
-                    .text_color(theme.text_tertiary)
-                    .child("⌕"),
+                    .child(self.search.clone())
+                    .when(!searching, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w(cell.cols(1))
+                                .text_color(theme.text_tertiary)
+                                .child("⌕"),
+                        )
+                    }),
             )
-            .child(div().flex_1().min_w_0().h_full().child(self.search.clone()))
-            .child(div().w(cell.cols(2)).flex_shrink_0())
+            .child(div().w(cell.cols(1)).flex_shrink_0())
             .child(
                 div()
                     .flex_shrink_0()
                     .bg(theme.tab_bg_selected_focused)
                     .text_color(theme.tab_text_selected)
                     .font_weight(FontWeight::BOLD)
-                    .child(SharedString::from(match count {
-                        Some(n) => format!(" Global {n} "),
-                        None => " Global ".to_string(),
-                    })),
+                    .child(SharedString::from(global)),
             )
             .child(
                 div()
                     .flex_shrink_0()
                     .text_color(theme.text_secondary)
-                    .child(SharedString::from(format!(" {}  ", self.root_name))),
+                    .child(SharedString::from(root)),
             )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_color(theme.link)
-                    .child("Plugins"),
-            );
-        let tree = self.render_tui_tree(tree_cols, cell, theme, cx);
-        let content = self.render_tui_content(width, cell, theme, m, cx);
-        let scroll = self.content_scroll.clone();
-        let thumb = theme.scrollbar_thumb;
-        let mm = *m;
-        let scrollbar = gpui::canvas(
-            |_, _, _| (),
-            move |bounds, _, window, _| {
-                let visible = f32::from(bounds.size.height);
-                skin::paint_scrollbar(
-                    window,
-                    bounds,
-                    cell,
-                    -f32::from(scroll.offset().y),
-                    visible,
-                    visible + f32::from(scroll.max_offset().y),
-                    None,
-                    thumb,
-                    &mm,
-                );
-            },
-        )
-        .absolute()
-        .left(cell.cols(cols.saturating_sub(1)))
-        .top(cell.rows(2))
-        .w(cell.cols(1))
-        .h(cell.rows(rows.saturating_sub(2)));
+            .child(div().flex_shrink_0().text_color(theme.link).child(plugins));
+        let page_bar = deferred(
+            self.tui_bar(TuiBar::Page, cell, cx)
+                .absolute()
+                .left(cell.cols(cols))
+                .top(cell.rows(2))
+                .w(cell.cols(1))
+                .h(cell.rows(visible)),
+        );
+        let list_bar = self
+            .tui_bar(TuiBar::List, cell, cx)
+            .absolute()
+            .left(cell.cols(tree_cols))
+            .top(cell.rows(2))
+            .w(cell.cols(1))
+            .h(cell.rows(visible));
         div()
             .key_context("SettingsTool")
             .track_focus(&self.focus_handle)
@@ -1164,33 +1266,130 @@ impl SettingsView {
             .text_color(theme.text_primary)
             .child(measure)
             .child(div().absolute().top_0().left_0().child(search))
+            .child(rules)
+            .child(deferred(joins))
             .child(
                 div()
+                    .id("settings-tree-tui")
                     .absolute()
                     .left_0()
                     .top(cell.rows(2))
                     .w(cell.cols(tree_cols))
-                    .h(cell.rows(rows.saturating_sub(2)))
+                    .h(cell.rows(visible))
+                    .on_scroll_wheel(cx.listener(move |this, ev: &ScrollWheelEvent, _, cx| {
+                        let (total, visible) = this.tui_extent[TuiBar::List as usize];
+                        if this.tui_tree_scroll.wheel(ev, cell, total, visible) {
+                            cx.notify();
+                        }
+                    }))
                     .child(tree),
             )
+            .child(list_bar)
             .child(
                 div()
+                    .id("settings-page-tui")
                     .absolute()
                     .left(cell.cols(tree_cols + 2))
                     .top(cell.rows(2))
                     .w(cell.cols(width))
-                    .h(cell.rows(rows.saturating_sub(2)))
+                    .h(cell.rows(visible))
+                    .on_scroll_wheel(cx.listener(move |this, ev: &ScrollWheelEvent, _, cx| {
+                        let (total, visible) = this.tui_extent[TuiBar::Page as usize];
+                        if this.tui_scroll.wheel(ev, cell, total, visible) {
+                            cx.notify();
+                        }
+                    }))
                     .child(content),
             )
-            .child(scrollbar)
-            .child(rules)
+            .child(page_bar)
+    }
+
+    /// A scroll bar in a one-cell column: the thumb in whole rows on the
+    /// line the column carries (the frame's right edge for the page, the
+    /// list's rule for the list); a click or a drag scrolls.
+    fn tui_bar(&self, bar: TuiBar, cell: Cell, cx: &Context<Self>) -> gpui::Canvas<Hitbox> {
+        let entity = cx.entity();
+        gpui::canvas(
+            |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            move |bounds, hitbox, window, cx| {
+                let m = *cx.global::<Metrics>();
+                let theme = cx.global::<Theme>().clone();
+                let (top, (total, visible), dragging) = {
+                    let this = entity.read(cx);
+                    let top = match bar {
+                        TuiBar::Page => this.tui_scroll.top,
+                        TuiBar::List => this.tui_tree_scroll.top,
+                    };
+                    (
+                        top,
+                        this.tui_extent[bar as usize],
+                        this.tui_drag == Some(bar),
+                    )
+                };
+                if total <= visible {
+                    return;
+                }
+                let thumb = if dragging {
+                    theme.scrollbar_thumb_pressed
+                } else if hitbox.is_hovered(window) {
+                    theme.scrollbar_thumb_hovered
+                } else {
+                    theme.scrollbar_thumb
+                };
+                skin::paint_scrollbar(
+                    window,
+                    bounds,
+                    cell,
+                    top as f32,
+                    visible as f32,
+                    total as f32,
+                    None,
+                    thumb,
+                    &m,
+                );
+                let (down, moved, up) = (entity.clone(), entity.clone(), entity.clone());
+                window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && ev.button == MouseButton::Left
+                        && hitbox.is_hovered(window)
+                    {
+                        down.update(cx, |this, cx| {
+                            this.tui_drag = Some(bar);
+                            this.tui_bar_to(bar, ev.position.y, bounds, cx);
+                        });
+                    }
+                });
+                window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && ev.pressed_button == Some(MouseButton::Left)
+                        && moved.read(cx).tui_drag == Some(bar)
+                    {
+                        moved.update(cx, |this, cx| {
+                            this.tui_bar_to(bar, ev.position.y, bounds, cx)
+                        });
+                    }
+                });
+                window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && ev.button == MouseButton::Left
+                        && up.read(cx).tui_drag == Some(bar)
+                    {
+                        up.update(cx, |this, cx| {
+                            this.tui_drag = None;
+                            cx.notify();
+                        });
+                    }
+                });
+            },
+        )
     }
 
     /// The page list: a row per section and titled group, the selected one
-    /// filled.
+    /// filled; `visible` rows from the list's scroll.
     fn render_tui_tree(
-        &self,
+        &mut self,
         cols: usize,
+        visible: usize,
         cell: Cell,
         theme: &Theme,
         cx: &Context<Self>,
@@ -1257,26 +1456,35 @@ impl SettingsView {
                 }
             }
         }
+        let total = rows.len();
+        self.tui_extent[TuiBar::List as usize] = (total, visible);
+        let scroll = &mut self.tui_tree_scroll;
+        scroll.top = scroll.top.min(total.saturating_sub(visible));
+        let top = scroll.top;
         div()
-            .id("settings-tree")
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.tree_scroll)
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .children(rows)
+            .children(rows.into_iter().skip(top).take(visible))
     }
 
-    /// The page: the rows of `tui_lines`, `width` cells wide.
+    /// The page: the rows of `tui_lines`, `width` cells wide, `visible` of
+    /// them from the page's scroll.
     fn render_tui_content(
         &mut self,
         width: usize,
+        visible: usize,
         cell: Cell,
         theme: &Theme,
         m: &Metrics,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let lines = self.tui_lines(width);
+        let total = lines.len();
+        self.tui_extent[TuiBar::Page as usize] = (total, visible);
+        self.tui_scroll.top = self.tui_scroll.top.min(total.saturating_sub(visible));
+        let top = self.tui_scroll.top;
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         let row = || {
             div()
@@ -1286,7 +1494,7 @@ impl SettingsView {
                 .flex_shrink_0()
                 .whitespace_nowrap()
         };
-        for line in lines {
+        for (i, line) in lines.into_iter().enumerate().skip(top).take(visible) {
             rows.push(match line {
                 TuiLine::Blank => row().into_any_element(),
                 TuiLine::Section(s) => row()
@@ -1294,26 +1502,31 @@ impl SettingsView {
                     .text_color(theme.text_primary)
                     .child(SECTIONS[s].title)
                     .into_any_element(),
-                TuiLine::Group(_, _, title) => row()
-                    .relative()
-                    .child(skin::rule(cell, width, theme.border, *m))
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left(cell.cols(2))
-                            .bg(theme.island_background)
-                            .text_color(theme.text_primary)
-                            .font_weight(FontWeight::BOLD)
-                            .child(SharedString::from(format!(" {title} "))),
-                    )
-                    .into_any_element(),
+                TuiLine::Group(_, _, title) => skin::section(
+                    cell,
+                    width,
+                    vec![div()
+                        .flex_shrink_0()
+                        .text_color(theme.text_primary)
+                        .font_weight(FontWeight::BOLD)
+                        .child(SharedString::from(format!(" {title} ")))
+                        .into_any_element()],
+                    theme.border,
+                    theme.island_background,
+                    *m,
+                )
+                .into_any_element(),
                 TuiLine::Description(text, indent) => row()
                     .pl(cell.cols(2 + if indent { 2 } else { 0 }))
                     .text_color(theme.text_secondary)
                     .child(text)
                     .into_any_element(),
-                TuiLine::Item(item) => self.render_tui_item(item, width, cell, theme, m, cx),
+                TuiLine::Item(item) => {
+                    // The rows a dropdown's box has under and over its row.
+                    let at = i - top;
+                    let room = (visible.saturating_sub(at + 1), at + 2);
+                    self.render_tui_item(item, width, room, cell, theme, m, cx)
+                }
             });
         }
         if rows.is_empty() {
@@ -1325,10 +1538,8 @@ impl SettingsView {
             );
         }
         div()
-            .id("settings-content")
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.content_scroll)
+            .overflow_hidden()
             .flex()
             .flex_col()
             .children(rows)
@@ -1336,11 +1547,14 @@ impl SettingsView {
 
     /// A setting as a row: `● Label ........ value`, the mark when the key is
     /// set in WEEP's file, the leader dots in `text_tertiary`, the value
-    /// right-aligned (`[x]`, `[ dark      ▾ ]`, a field).
+    /// right-aligned (`[x]`, `[ dark      ▾ ]`, a field). `room` is the rows
+    /// under and over the row, for a dropdown's box.
+    #[allow(clippy::too_many_arguments)]
     fn render_tui_item(
         &mut self,
         item: &'static Item,
         width: usize,
+        room: (usize, usize),
         cell: Cell,
         theme: &Theme,
         m: &Metrics,
@@ -1378,7 +1592,7 @@ impl SettingsView {
                 let pad = cols - 6 - text.chars().count();
                 let open = entity.clone();
                 let list = (self.dropdown == Some(key)).then(|| {
-                    self.render_tui_options(item, options, &value, cols, cell, theme, m, cx)
+                    self.render_tui_options(item, options, &value, cols, room, cell, theme, m, cx)
                 });
                 (
                     div()
@@ -1410,7 +1624,8 @@ impl SettingsView {
             }
             Kind::Text | Kind::Number => {
                 let input = self.field(item, cx);
-                // `[ value       ]`: the field between brackets, on `input_bg`.
+                // `[›value       ]`: the field between brackets, on
+                // `input_bg`; its first cell is the input's `›` mark.
                 (
                     div()
                         .w(cell.cols(value_cols))
@@ -1418,16 +1633,15 @@ impl SettingsView {
                         .flex()
                         .flex_shrink_0()
                         .text_color(theme.text_secondary)
-                        .child(div().w(cell.cols(2)).flex_shrink_0().child("["))
+                        .child(div().w(cell.cols(1)).flex_shrink_0().child("["))
                         .child(
                             div()
-                                .w(cell.cols(value_cols - 4))
+                                .w(cell.cols(value_cols - 2))
                                 .h(px(cell.h))
                                 .flex_shrink_0()
-                                .bg(theme.input_bg)
                                 .child(input),
                         )
-                        .child(div().w(cell.cols(2)).flex_shrink_0().child(" ]"))
+                        .child(div().w(cell.cols(1)).flex_shrink_0().child("]"))
                         .into_any_element(),
                     value_cols,
                 )
@@ -1510,8 +1724,9 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// The open dropdown's options as a box under its control, the chosen
-    /// one filled.
+    /// The open dropdown's options as a box under its control (over it
+    /// when the page has no room below and more above), the chosen one
+    /// filled.
     #[allow(clippy::too_many_arguments)]
     fn render_tui_options(
         &self,
@@ -1519,6 +1734,7 @@ impl SettingsView {
         options: &'static [(&'static str, &'static str)],
         value: &Value,
         cols: usize,
+        room: (usize, usize),
         cell: Cell,
         theme: &Theme,
         m: &Metrics,
@@ -1559,12 +1775,19 @@ impl SettingsView {
                 .child(SharedString::from(fit(label, cols.saturating_sub(4))))
         });
         let body = div().flex().flex_col().children(rows).into_any_element();
+        let height = options.len() + 2;
+        let (below, above) = room;
+        let top = if height > below && above > below {
+            -cell.rows(height)
+        } else {
+            px(cell.h)
+        };
         deferred(
             div()
                 .id("settings-dropdown")
                 .occlude()
                 .absolute()
-                .top(px(cell.h))
+                .top(top)
                 .left_0()
                 .on_mouse_down_out(move |_, _, cx| {
                     close.update(cx, |this, cx| {
@@ -1575,7 +1798,7 @@ impl SettingsView {
                 .child(skin::boxed(
                     cell,
                     cols,
-                    options.len() + 2,
+                    height,
                     Vec::new(),
                     Vec::new(),
                     body,

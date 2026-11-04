@@ -13,7 +13,7 @@ use crate::actions::{PopupDown, PopupUp};
 use crate::assets::{file_icon, icon};
 use crate::input::{InputEvent, TextInput};
 use crate::settings::AppSettings;
-use crate::skin::{self, Cell, Skin};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
@@ -90,6 +90,14 @@ pub struct SearchTool {
     scroll: ScrollHandle,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The tui skin's first shown result: the results scroll by whole rows (rule 6).
+    tui_scroll: RowScroll,
+    /// A result row the tui skin brings into view when it next lays out.
+    tui_reveal: Option<usize>,
+    /// Where the tui skin's results sit and what they show (the rows above
+    /// them in the body, the first shown, how many fit, how many in all),
+    /// read by the panel's frame when it paints the scroll bar.
+    tui_bar: Rc<std::cell::Cell<(usize, usize, usize, usize)>>,
 }
 
 impl EventEmitter<SearchToolEvent> for SearchTool {}
@@ -137,7 +145,17 @@ impl SearchTool {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_scroll: RowScroll::default(),
+            tui_reveal: None,
+            tui_bar: Rc::default(),
         }
+    }
+
+    /// Where the tui skin's results sit and what they show (the rows above
+    /// them, the first shown, how many fit, how many in all), which the
+    /// panel paints on its frame as the scroll bar.
+    pub fn tui_bar(&self) -> Rc<std::cell::Cell<(usize, usize, usize, usize)>> {
+        self.tui_bar.clone()
     }
 
     /// `find-in-path` / `replace-in-path`: seeds the query with `seed` (the
@@ -232,6 +250,7 @@ impl SearchTool {
                 this.searching = false;
                 this.selected = this.rows().first().copied();
                 this.scroll.scroll_to_item(0);
+                this.tui_scroll.reset();
                 cx.notify();
             });
         })
@@ -378,6 +397,7 @@ impl SearchTool {
         let next = (pos + delta).clamp(0, rows.len() as isize - 1) as usize;
         self.selected = Some(rows[next]);
         self.scroll.scroll_to_item(next);
+        self.tui_reveal = Some(next);
         cx.notify();
     }
 
@@ -958,12 +978,30 @@ impl SearchTool {
             .to_string()
             .len()
             .max(2);
-        let rows: Vec<gpui::AnyElement> = self
-            .rows()
+        // The fields and the rule above the results, one row each; the
+        // results show the rows that fit below them from `tui_scroll.top`,
+        // moved by whole rows (rule 6).
+        let above = 3 + self.replace_mode as usize;
+        let all_rows = self.rows();
+        let total = all_rows.len();
+        let fit = self.tui_grid.get().1;
+        let visible = if fit == 0 {
+            total
+        } else {
+            fit.saturating_sub(above).max(1)
+        };
+        let reveal = self.tui_reveal.take();
+        crate::file_tree::reveal_rows(&mut self.tui_scroll, reveal, total, visible);
+        let top = self.tui_scroll.top;
+        self.tui_bar.set((above, top, visible, total));
+        let rows: Vec<gpui::AnyElement> = all_rows
             .into_iter()
-            .map(|row| match row {
-                Row::File(f) => self.tui_file_row(f, cell, &theme, cx),
-                Row::Line(f, l) => self.tui_line_row(f, l, digits, cell, &theme, &m, cx),
+            .skip(top)
+            .take(visible)
+            .enumerate()
+            .map(|(slot, row)| match row {
+                Row::File(f) => self.tui_file_row(f, slot, cell, &theme, cx),
+                Row::Line(f, l) => self.tui_line_row(f, l, slot, digits, cell, &theme, &m, cx),
             })
             .collect();
         div()
@@ -988,10 +1026,15 @@ impl SearchTool {
                     .id("search-results")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
+                    .on_scroll_wheel(cx.listener(move |this, e, _, cx| {
+                        if this.tui_scroll.wheel(e, cell, total, visible) {
+                            cx.notify();
+                        }
+                    }))
+                    // The scroll bar is the panel frame's right edge (workspace).
                     .children(rows),
             )
             .into_any_element()
@@ -1001,6 +1044,7 @@ impl SearchTool {
     fn tui_file_row(
         &self,
         f: usize,
+        slot: usize,
         cell: Cell,
         theme: &Theme,
         cx: &Context<Self>,
@@ -1020,7 +1064,7 @@ impl SearchTool {
                 .child(text)
         };
         div()
-            .id(ElementId::NamedInteger("search-file".into(), f as u64))
+            .id(tui_row_id(slot))
             .h(px(cell.h))
             .flex_shrink_0()
             .flex()
@@ -1075,6 +1119,7 @@ impl SearchTool {
         &self,
         f: usize,
         l: usize,
+        slot: usize,
         digits: usize,
         cell: Cell,
         theme: &Theme,
@@ -1110,10 +1155,7 @@ impl SearchTool {
                 .collect();
         let number = format!("{:>digits$}", line.row + 1);
         div()
-            .id(ElementId::NamedInteger(
-                format!("search-line-{f}").into(),
-                l as u64,
-            ))
+            .id(tui_row_id(slot))
             .h(px(cell.h))
             .flex_shrink_0()
             .flex()
@@ -1152,4 +1194,11 @@ impl SearchTool {
             )
             .into_any_element()
     }
+}
+
+/// A result row's id in the tui skin: its place on screen, whether it shows
+/// a file or a line, so the hover gpui keeps per element stays with the
+/// pointer when the rows scroll or fold under it.
+fn tui_row_id(slot: usize) -> ElementId {
+    ElementId::NamedInteger("search-row".into(), slot as u64)
 }

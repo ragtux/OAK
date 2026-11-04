@@ -9,7 +9,7 @@
 
 use crate::assets::{file_icon, icon};
 use crate::input::{InputEvent, TextInput};
-use crate::skin::{self, Cell, Skin};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     div, prelude::*, px, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
@@ -87,6 +87,10 @@ pub struct GitTool {
     scroll: ScrollHandle,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The tui skin's first visible row of the changed files and of the
+    /// unsynced commits (rule 6: whole rows).
+    tui_files: RowScroll,
+    tui_commits: RowScroll,
 }
 
 impl EventEmitter<GitToolEvent> for GitTool {}
@@ -167,6 +171,8 @@ impl GitTool {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_files: RowScroll::default(),
+            tui_commits: RowScroll::default(),
         };
         tool.refresh(cx);
         tool
@@ -809,6 +815,8 @@ pub struct HistoryTool {
     scroll: ScrollHandle,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
+    /// The tui skin's first visible commit (rule 6: whole rows).
+    tui_scroll: RowScroll,
 }
 
 impl EventEmitter<HistoryToolEvent> for HistoryTool {}
@@ -842,6 +850,7 @@ impl HistoryTool {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             tui_grid: Rc::default(),
+            tui_scroll: RowScroll::default(),
         };
         tool.refresh(cx);
         tool
@@ -1470,12 +1479,46 @@ impl GitTool {
                 .child(SharedString::from(e))
         });
 
-        // The two sections and their rows, in one scrolled list.
-        let mut list: Vec<gpui::AnyElement> = Vec::new();
+        // The rows below the buttons, in whole cells: the files list takes
+        // the upper half, the unsynced commits the lower, under their rule.
+        let below = self
+            .tui_grid
+            .get()
+            .1
+            .saturating_sub(3 + usize::from(error.is_some()));
+        let files_rows = below.div_ceil(2);
+        let commit_rows = below - files_rows;
+
+        // The two sections and their rows, in one list scrolled by rows.
         let sections = [
             ("Changes", false, "git-check-changes"),
             ("Unversioned", true, "git-check-unversioned"),
         ];
+        let files_total = sections
+            .iter()
+            .map(|(_, untracked, _)| {
+                let mut n = self
+                    .entries
+                    .iter()
+                    .filter(|e| (e.status == Status::Untracked) == *untracked);
+                match n.next() {
+                    None => 0,
+                    Some(first) => {
+                        1 + usize::from(filter.admits(first))
+                            + n.filter(|e| filter.admits(e)).count()
+                    }
+                }
+            })
+            .sum::<usize>()
+            .max(1);
+        self.tui_files.top = self
+            .tui_files
+            .top
+            .min(files_total.saturating_sub(files_rows));
+        let files_top = self.tui_files.top;
+        let files_cols = cols.saturating_sub(usize::from(tui_list_bar(files_total, files_rows)));
+        let mut list: Vec<gpui::AnyElement> = Vec::new();
+
         let mut ix = 0;
         for (title, untracked, check_id) in sections {
             let entries: Vec<&StatusEntry> = self
@@ -1516,7 +1559,7 @@ impl GitTool {
                     .child(div().w(px(cell.w)).flex_shrink_0())
                     .child(skin::section(
                         cell,
-                        cols.saturating_sub(4),
+                        files_cols.saturating_sub(4),
                         vec![skin::title(
                             format!("{title} {}", entries.len()),
                             theme.text_primary,
@@ -1581,12 +1624,52 @@ impl GitTool {
         );
         let listed: Vec<&Commit> = self.commits.iter().collect();
         let (graph, lanes) = graph_rows(&listed, &self.parents);
+        let commits_total = listed.len();
+        self.tui_commits.top = self
+            .tui_commits
+            .top
+            .min(commits_total.saturating_sub(commit_rows));
+        let commits_top = self.tui_commits.top;
+        let commit_cols =
+            cols.saturating_sub(usize::from(tui_list_bar(commits_total, commit_rows)));
         let commits: Vec<gpui::AnyElement> = listed
             .into_iter()
             .zip(graph)
             .enumerate()
-            .map(|(ix, (c, row))| tui_commit_row(ix, c, row, lanes, cols, cell, &theme, m))
+            .skip(commits_top)
+            .take(commit_rows)
+            .map(|(ix, (c, row))| tui_commit_row(ix, c, row, lanes, commit_cols, cell, &theme, m))
             .collect();
+        let files = tui_list(
+            "git-rows",
+            &entity,
+            |this: &mut GitTool| &mut this.tui_files,
+            files_top,
+            files_total,
+            cols,
+            files_rows,
+            div()
+                .flex()
+                .flex_col()
+                .children(list.into_iter().skip(files_top).take(files_rows))
+                .into_any_element(),
+            cell,
+            &theme,
+            m,
+        );
+        let commits = tui_list(
+            "git-commits",
+            &entity,
+            |this: &mut GitTool| &mut this.tui_commits,
+            commits_top,
+            commits_total,
+            cols,
+            commit_rows,
+            div().flex().flex_col().children(commits).into_any_element(),
+            cell,
+            &theme,
+            m,
+        );
         div()
             .key_context("GitTool")
             .track_focus(&self.focus_handle)
@@ -1601,30 +1684,9 @@ impl GitTool {
             .child(message)
             .child(div().h(px(cell.h)).flex_shrink_0().child(buttons))
             .children(error)
-            .child(
-                div()
-                    .id("git-rows")
-                    .flex_1()
-                    .flex_basis(px(0.))
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .flex()
-                    .flex_col()
-                    .children(list),
-            )
+            .child(files)
             .child(unsynced)
-            .child(
-                div()
-                    .id("git-commits")
-                    .flex_1()
-                    .flex_basis(px(0.))
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .children(commits),
-            )
+            .child(commits)
             .into_any_element()
     }
 
@@ -1758,11 +1820,18 @@ impl HistoryTool {
         let filtered = !query.is_empty() || author.is_some();
         let none = Parents::new();
         let (graph, lanes) = graph_rows(&shown, if filtered { &none } else { &self.parents });
+        // The field, the chips and the rule above the commits.
+        let visible = self.tui_grid.get().1.saturating_sub(3);
+        let top = self.tui_scroll.top.min(n.saturating_sub(visible));
+        self.tui_scroll.top = top;
+        let commit_cols = cols.saturating_sub(usize::from(tui_list_bar(n, visible)));
         let commits: Vec<gpui::AnyElement> = shown
             .into_iter()
             .zip(graph)
             .enumerate()
-            .map(|(ix, (c, row))| tui_commit_row(ix, c, row, lanes, cols, cell, &theme, m))
+            .skip(top)
+            .take(visible)
+            .map(|(ix, (c, row))| tui_commit_row(ix, c, row, lanes, commit_cols, cell, &theme, m))
             .collect();
         let scope = match &self.file {
             Some(f) => f
@@ -1835,17 +1904,177 @@ impl HistoryTool {
                 theme.island_background,
                 m,
             ))
-            .child(
-                div()
-                    .id("history-commits")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .flex()
-                    .flex_col()
-                    .children(commits),
-            )
+            .child(tui_list(
+                "history-commits",
+                &entity,
+                |this: &mut HistoryTool| &mut this.tui_scroll,
+                top,
+                n,
+                cols,
+                visible,
+                div().flex().flex_col().children(commits).into_any_element(),
+                cell,
+                &theme,
+                m,
+            ))
             .into_any_element()
     }
+}
+
+// ---- lists in whole rows (the tui skin, rule 6) ------------------------------
+
+/// The value a tui list's scroll thumb carries while dragged: which list,
+/// and where in the thumb the pointer grabbed it.
+struct RowThumbDrag {
+    id: ElementId,
+    grab: std::cell::Cell<gpui::Pixels>,
+}
+
+/// Whether a tui list of `total` rows shown in `rows` takes a scroll bar
+/// (its last column): the rows are then laid one column narrower.
+pub(crate) fn tui_list_bar(total: usize, rows: usize) -> bool {
+    rows > 0 && total > rows
+}
+
+/// A list region in the tui skin, `cols` x `rows` cells, scrolled by whole
+/// rows (rule 6): `body` is the rows from `top` on, laid out by the caller
+/// in `cols` cells, one fewer when `tui_list_bar`. The wheel moves the
+/// first row through `scroll_of` in whole rows; the bar in the last column
+/// (`skin::paint_scrollbar`: a thumb half a cell wide in whole rows) drags
+/// by rows too, and a click on its rail pages.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn tui_list<V: 'static>(
+    id: &'static str,
+    entity: &Entity<V>,
+    scroll_of: fn(&mut V) -> &mut RowScroll,
+    top: usize,
+    total: usize,
+    cols: usize,
+    rows: usize,
+    body: gpui::AnyElement,
+    cell: Cell,
+    theme: &Theme,
+    m: Metrics,
+) -> gpui::Stateful<gpui::Div> {
+    let bar = tui_list_bar(total, rows);
+    let wheel = entity.clone();
+    let list = div()
+        .id(id)
+        .relative()
+        .flex_shrink_0()
+        .w(cell.cols(cols))
+        .h(cell.rows(rows))
+        .overflow_hidden()
+        .on_scroll_wheel(move |e, _, cx| {
+            wheel.update(cx, |v, cx| {
+                if scroll_of(v).wheel(e, cell, total, rows) {
+                    cx.notify();
+                }
+            });
+        })
+        .child(
+            div()
+                .w(cell.cols(cols.saturating_sub(usize::from(bar))))
+                .h(cell.rows(rows))
+                .overflow_hidden()
+                .flex()
+                .flex_col()
+                .child(body),
+        );
+    if !bar {
+        return list;
+    }
+    // As `paint_scrollbar` places the thumb.
+    let len = ((rows as f32 * rows as f32 / total as f32).round() as usize).clamp(1, rows);
+    let room = rows - len;
+    let max = total - rows;
+    let start = ((top as f32 / max as f32).clamp(0., 1.) * room as f32).round() as usize;
+    let thumb = theme.scrollbar_thumb;
+    let bar_id = ElementId::Name(format!("{id}-bar").into());
+    let drag_id = bar_id.clone();
+    let this_id = bar_id.clone();
+    let drag = entity.clone();
+    let page = entity.clone();
+    let origin: Rc<std::cell::Cell<f32>> = Rc::default();
+    let painted = origin.clone();
+    list.child(
+        div()
+            .id(bar_id)
+            .absolute()
+            .top_0()
+            .right_0()
+            .w(px(cell.w))
+            .h(cell.rows(rows))
+            .on_drag_move(move |e: &gpui::DragMoveEvent<RowThumbDrag>, _, cx| {
+                let d = e.drag(cx);
+                if d.id != this_id || room == 0 {
+                    return;
+                }
+                let y = f32::from(e.event.position.y - e.bounds.origin.y - d.grab.get());
+                let to = ((y / (room as f32 * cell.h)).clamp(0., 1.) * max as f32).round() as usize;
+                drag.update(cx, |v, cx| {
+                    let s = scroll_of(v);
+                    if s.top != to {
+                        s.top = to;
+                        cx.notify();
+                    }
+                });
+            })
+            .on_mouse_down(gpui::MouseButton::Left, move |e, _, cx| {
+                let row = ((f32::from(e.position.y) - origin.get()) / cell.h).floor();
+                let to = if row < start as f32 {
+                    top.saturating_sub(rows)
+                } else if row >= (start + len) as f32 {
+                    (top + rows).min(max)
+                } else {
+                    return;
+                };
+                page.update(cx, |v, cx| {
+                    scroll_of(v).top = to;
+                    cx.notify();
+                });
+            })
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    move |b, _, window, _| {
+                        painted.set(f32::from(b.origin.y));
+                        skin::paint_scrollbar(
+                            window,
+                            b,
+                            cell,
+                            top as f32,
+                            rows as f32,
+                            total as f32,
+                            None,
+                            thumb,
+                            &m,
+                        );
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .id("thumb")
+                    .absolute()
+                    .top(cell.rows(start))
+                    .left_0()
+                    .w(px(cell.w))
+                    .h(cell.rows(len))
+                    .on_drag(
+                        RowThumbDrag {
+                            id: drag_id,
+                            grab: std::cell::Cell::new(px(0.)),
+                        },
+                        |d: &RowThumbDrag, grab: gpui::Point<gpui::Pixels>, _, cx| {
+                            d.grab.set(grab.y);
+                            cx.new(|_| crate::scrollbar::EmptyView)
+                        },
+                    ),
+            ),
+    )
 }

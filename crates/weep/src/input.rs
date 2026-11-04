@@ -815,10 +815,28 @@ impl Element for InputElement {
                     .text_system()
                     .shape_line(text.into(), px(cell.font_size), &[run], None)
             };
-            let under_caret = (focused && shape == CaretShape::Block && !placeholder)
-                .then(|| input.content[input.cursor_offset()..].chars().next())
+            // A block caret keeps its char readable, the hint's first one
+            // included (reverse video, as a terminal draws it).
+            let under_caret = (focused && shape == CaretShape::Block)
+                .then(|| {
+                    if placeholder {
+                        input.placeholder.chars().next()
+                    } else {
+                        input.content[input.cursor_offset()..].chars().next()
+                    }
+                })
                 .flatten()
-                .map(|c| shape_one(c.to_string(), theme.input_bg, window));
+                .map(|c| {
+                    // The field's own fill, unless the theme leaves it
+                    // clear (Fleet's is transparent): then the island's,
+                    // as the editor's block caret draws its char.
+                    let ink = if theme.input_bg.a > 0.5 {
+                        theme.input_bg
+                    } else {
+                        theme.island_background
+                    };
+                    shape_one(c.to_string(), ink, window)
+                });
             let prompt = input.tui_prompt;
             let mark = (focused && prompt)
                 .then(|| shape_one("›".to_string(), theme.input_focus_border, window));
@@ -958,6 +976,13 @@ impl InputElement {
             match tui.shape {
                 CaretShape::Line => {
                     let w = 2. * crate::skin::stroke(window, &m);
+                    // Before the hint, the bar ends on the text's first cell
+                    // edge (in the prompt's cell), so the hint stays whole.
+                    let at = if prepaint.placeholder {
+                        point(at.x - px(w), at.y)
+                    } else {
+                        at
+                    };
                     window.paint_quad(fill(Bounds::new(at, size(px(w), h)), theme.input_caret));
                 }
                 CaretShape::Block => {

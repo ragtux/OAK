@@ -2284,17 +2284,18 @@ impl Workspace {
             })
             .on_drag(
                 DraggedTab { pane: p, index: ix },
-                move |dragged, _, _, cx| {
+                move |dragged, at, _, cx| {
                     let (dp, di) = (dragged.pane, dragged.index);
                     entity.update(cx, |this, cx| {
                         this.dragging_tab = Some((dp, di));
                         cx.notify();
                     });
-                    cx.new(|_| TabGhost {
+                    let ghost = cx.new(|_| TabGhost {
                         title: ghost_title.clone(),
                         icon: icon_path,
                         dirty,
-                    })
+                    });
+                    crate::drag_ghost::snapped(at, ghost, cx)
                 },
             )
             .on_click(move |event, window, cx| {
@@ -3293,27 +3294,33 @@ impl Workspace {
                 .into_any_element(),
         );
         let mut edges = crate::skin::Edges::default();
-        if panel
-            .tools
-            .get(panel.active)
-            .is_some_and(|t| t.tool == Tool::Files)
-        {
-            // The tree's scroll bar is the frame's right edge.
-            let scroll = self.file_tree.read(cx).tui_scroll();
+        // The Files tree's and the Search results' scroll bar is the frame's
+        // right edge, beside their rows, the thumb in whole rows. The rows
+        // are read while painting, after the tool has laid them out.
+        let bar = match panel.tools.get(panel.active).map(|t| t.tool) {
+            Some(Tool::Files) => Some(self.file_tree.read(cx).tui_bar()),
+            Some(Tool::Search) => Some(self.search_tool.read(cx).tui_bar()),
+            _ => None,
+        };
+        if let Some(bar) = bar {
             let thumb = theme.scrollbar_thumb;
             let m = *m;
             edges.right = Some(
                 canvas(
                     |_, _, _| (),
                     move |bounds, _, window, _| {
-                        let visible = f32::from(bounds.size.height);
+                        let (above, top, visible, total) = bar.get();
+                        let bounds = gpui::Bounds::new(
+                            gpui::point(bounds.origin.x, bounds.origin.y + cell.rows(above)),
+                            gpui::size(bounds.size.width, cell.rows(visible)),
+                        );
                         crate::skin::paint_scrollbar(
                             window,
                             bounds,
                             cell,
-                            -f32::from(scroll.offset().y),
-                            visible,
-                            visible + f32::from(scroll.max_offset().y),
+                            top as f32,
+                            visible as f32,
+                            total as f32,
                             None,
                             thumb,
                             &m,

@@ -16,6 +16,7 @@ mod assets;
 mod dialog;
 mod diff_view;
 mod document;
+mod drag_ghost;
 mod editor;
 mod file_tree;
 mod find;
@@ -136,10 +137,88 @@ pub fn open_workspace_window(
     }
 }
 
+/// A mouse step of `WEEP_KEYS` as the events a real pointer would send.
+fn probe_mouse(step: &str) -> Option<Vec<gpui::PlatformInput>> {
+    use gpui::{
+        point, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput,
+        ScrollDelta, ScrollWheelEvent,
+    };
+    let (kind, args) = step.split_once(':')?;
+    let n: Vec<f32> = args
+        .split(';')
+        .filter_map(|v| v.trim().parse().ok())
+        .collect();
+    let at = |i: usize| point(px(n[i]), px(n[i + 1]));
+    let hover = |p, pressed_button| {
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: p,
+            pressed_button,
+            modifiers: Modifiers::default(),
+        })
+    };
+    let press = |p, button| {
+        PlatformInput::MouseDown(MouseDownEvent {
+            button,
+            position: p,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        })
+    };
+    let release = |p, button| {
+        PlatformInput::MouseUp(MouseUpEvent {
+            button,
+            position: p,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        })
+    };
+    Some(match (kind, n.len()) {
+        ("move", 2) => vec![hover(at(0), None)],
+        ("click", 2) => vec![
+            hover(at(0), None),
+            press(at(0), MouseButton::Left),
+            release(at(0), MouseButton::Left),
+        ],
+        ("rclick", 2) => vec![
+            hover(at(0), None),
+            press(at(0), MouseButton::Right),
+            release(at(0), MouseButton::Right),
+        ],
+        ("scroll", 3) => vec![
+            hover(at(0), None),
+            PlatformInput::ScrollWheel(ScrollWheelEvent {
+                position: at(0),
+                delta: ScrollDelta::Pixels(point(px(0.), px(n[2]))),
+                modifiers: Modifiers::default(),
+                touch_phase: Default::default(),
+            }),
+        ],
+        ("drag", 4) | ("hold", 4) => {
+            let mut events = vec![hover(at(0), None), press(at(0), MouseButton::Left)];
+            for i in 1..=8 {
+                let t = i as f32 / 8.;
+                let p = point(px(n[0] + (n[2] - n[0]) * t), px(n[1] + (n[3] - n[1]) * t));
+                events.push(hover(p, Some(MouseButton::Left)));
+            }
+            if kind == "drag" {
+                events.push(release(at(2), MouseButton::Left));
+            }
+            events
+        }
+        _ => return None,
+    })
+}
+
 /// `WEEP_KEYS`: keystrokes sent to a new window once it is up, for the
 /// screenshot probes on a machine where no input can be scripted. Comma
-/// separated, in gpui's spelling (`cmd-shift-p`, `down`, `escape`);
-/// `type:text` types text, `wait:ms` pauses (each step waits 300 ms).
+/// separated, in gpui's spelling (`cmd-shift-p`, `down`, `escape`; `comma`
+/// stands for `,` as in `cmd-comma`); `type:text` types text, `wait:ms`
+/// pauses (each step waits 300 ms). Mouse steps take window coordinates in
+/// logical pixels, split by `;`: `move:x;y` hovers, `click:x;y`,
+/// `rclick:x;y`, `scroll:x;y;dy` turns the wheel by `dy` pixels (negative
+/// scrolls down) and `drag:x1;y1;x2;y2` presses, moves in steps and releases
+/// (`hold:` the same without the release, to see what is dragged).
 fn probe_keys(window: &mut gpui::Window, cx: &mut App) {
     let Ok(keys) = std::env::var("WEEP_KEYS") else {
         return;
@@ -154,6 +233,16 @@ fn probe_keys(window: &mut gpui::Window, cx: &mut App) {
                     pause(ms.parse().unwrap_or(500)).await;
                     continue;
                 }
+                if let Some(events) = probe_mouse(step) {
+                    for event in events {
+                        let _ = cx.update(|window, cx| window.dispatch_event(event, cx));
+                        pause(30).await;
+                    }
+                    pause(300).await;
+                    continue;
+                }
+                let step = step.replace("-comma", "-,");
+                let step = if step == "comma" { "," } else { step.as_str() };
                 let strokes: Vec<String> = match step.strip_prefix("type:") {
                     Some(text) => text
                         .chars()

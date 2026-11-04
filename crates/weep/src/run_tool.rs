@@ -6,8 +6,9 @@
 //! channel that wakes this view.
 
 use crate::assets::icon;
+use crate::git_tool::tui_list;
 use crate::settings::AppSettings;
-use crate::skin::{self, Cell, Skin};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
@@ -39,6 +40,8 @@ pub struct RunView {
     _pump: Option<Task<()>>,
     /// The tui skin's body in whole cells, as last laid out.
     tui_grid: std::rc::Rc<std::cell::Cell<(usize, usize)>>,
+    /// The tui skin's first visible output row (rule 6: whole rows).
+    tui_scroll: RowScroll,
 }
 
 impl EventEmitter<RunViewEvent> for RunView {}
@@ -63,6 +66,7 @@ impl RunView {
             scroll: ScrollHandle::new(),
             _pump: None,
             tui_grid: Default::default(),
+            tui_scroll: RowScroll::default(),
         };
         view.start(cx);
         view
@@ -293,7 +297,47 @@ impl RunView {
             .child(rerun)
             .child(gap())
             .child(stop);
-        let lines = self.lines.clone();
+        // The output in whole rows under the command line and the rule.
+        let visible = self.tui_grid.get().1.saturating_sub(2);
+        let error = self.error.clone().map(|e| {
+            div()
+                .h(px(cell.h))
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .text_color(theme.text_dangerous)
+                .child(format!("Could not start: {e}"))
+                .into_any_element()
+        });
+        let total = self.lines.len() + usize::from(error.is_some());
+        self.tui_scroll.top = self.tui_scroll.top.min(total.saturating_sub(visible));
+        let top = self.tui_scroll.top;
+        let rows: Vec<gpui::AnyElement> = error
+            .into_iter()
+            .chain(self.lines.iter().map(|line| {
+                div()
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .text_color(theme.text_primary)
+                    .whitespace_nowrap()
+                    .child(line.clone())
+                    .into_any_element()
+            }))
+            .skip(top)
+            .take(visible)
+            .collect();
+        let output = tui_list(
+            "run-output",
+            &cx.entity(),
+            |this: &mut RunView| &mut this.tui_scroll,
+            top,
+            total,
+            cols,
+            visible,
+            div().flex().flex_col().children(rows).into_any_element(),
+            cell,
+            &theme,
+            m,
+        );
         div()
             .id("run-tool")
             .key_context("RunTool")
@@ -320,30 +364,7 @@ impl RunView {
                 theme.island_background,
                 m,
             ))
-            .child(
-                div()
-                    .id("run-output")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .flex()
-                    .flex_col()
-                    .children(self.error.clone().map(|e| {
-                        div()
-                            .flex_shrink_0()
-                            .text_color(theme.text_dangerous)
-                            .child(format!("Could not start: {e}"))
-                    }))
-                    .children(lines.into_iter().map(|line| {
-                        div()
-                            .h(px(cell.h))
-                            .flex_shrink_0()
-                            .text_color(theme.text_primary)
-                            .whitespace_nowrap()
-                            .child(line)
-                    })),
-            )
+            .child(output)
             .into_any_element()
     }
 }

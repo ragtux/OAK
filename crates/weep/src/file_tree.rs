@@ -20,7 +20,7 @@ use crate::assets::{file_icon, icon};
 use crate::input::{InputEvent, TextInput};
 use crate::scrollbar::scrollbar;
 use crate::settings::AppSettings;
-use crate::skin::{self, Cell, Skin};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::Entity;
 use gpui::{
@@ -30,6 +30,7 @@ use gpui::{
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use weep_git::Status;
 use weep_settings::{ClickMode, KeyboardNavigation};
 
@@ -245,6 +246,15 @@ pub struct FileTree {
     scroll: UniformListScrollHandle,
     /// The tui skin's grid as last laid out, columns by rows of cells.
     tui_grid: (usize, usize),
+    /// The tui skin's first shown row: the tree scrolls by whole rows (rule 6).
+    tui_scroll: RowScroll,
+    /// A row the tui skin brings into view when it next lays out (the
+    /// keyboard's row, a revealed file).
+    tui_reveal: Option<usize>,
+    /// The rows the tui skin last showed (the rows above them in the body,
+    /// none; the first shown; how many fit; how many in all), read by the
+    /// panel's frame when it paints the scroll bar.
+    tui_bar: Rc<std::cell::Cell<(usize, usize, usize, usize)>>,
 }
 
 impl EventEmitter<FileTreeEvent> for FileTree {}
@@ -297,14 +307,26 @@ impl FileTree {
             focus_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             tui_grid: (0, 0),
+            tui_scroll: RowScroll::default(),
+            tui_reveal: None,
+            tui_bar: Rc::default(),
         };
         tree.rebuild_rows();
         tree
     }
 
-    /// The tree's scroll, which the tui skin's panel paints on its frame.
-    pub fn tui_scroll(&self) -> gpui::ScrollHandle {
-        self.scroll.0.borrow().base_handle.clone()
+    /// The rows the tui skin shows (as `SearchTool::tui_bar`), which the
+    /// panel paints on its frame as the scroll bar.
+    pub fn tui_bar(&self) -> Rc<std::cell::Cell<(usize, usize, usize, usize)>> {
+        self.tui_bar.clone()
+    }
+
+    /// Scrolls the Fleet skin's list to `ix` and has the tui skin's rows
+    /// bring it into view.
+    fn scroll_to(&mut self, ix: usize) {
+        self.scroll
+            .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
+        self.tui_reveal = Some(ix);
     }
 
     pub fn root_name(&self) -> String {
@@ -687,8 +709,7 @@ impl FileTree {
             KeyboardNavigation::Select => self.set_single(ix),
             KeyboardNavigation::Highlight => self.highlight = Some(ix),
         }
-        self.scroll
-            .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
+        self.scroll_to(ix);
         cx.notify();
     }
 
@@ -747,8 +768,7 @@ impl FileTree {
         self.rebuild_rows();
         if let Some(ix) = self.rows.iter().position(|r| r.path == path) {
             self.set_single(ix);
-            self.scroll
-                .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
+            self.scroll_to(ix);
             true
         } else {
             false
@@ -768,8 +788,7 @@ impl FileTree {
     fn extend_up(&mut self, _: &TreeExtendUp, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.cursor_row().saturating_sub(1);
         self.select_range_to(ix);
-        self.scroll
-            .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
+        self.scroll_to(ix);
         cx.notify();
     }
 
@@ -779,8 +798,7 @@ impl FileTree {
         }
         let ix = (self.cursor_row() + 1).min(self.rows.len() - 1);
         self.select_range_to(ix);
-        self.scroll
-            .scroll_to_item(ix, gpui::ScrollStrategy::Nearest);
+        self.scroll_to(ix);
         cx.notify();
     }
 
@@ -964,7 +982,7 @@ impl FileTree {
         theme: &Theme,
         m: &Metrics,
         entity: &gpui::Entity<FileTree>,
-        tui: Option<(Cell, usize)>,
+        tui: Option<(Cell, usize, usize)>,
     ) -> gpui::Stateful<gpui::Div> {
         let row = &self.rows[ix];
         let selected = self.is_selected(ix);
@@ -1017,7 +1035,13 @@ impl FileTree {
                 Status::Ignored => return None,
             })
         });
-        let id: ElementId = ElementId::NamedInteger("tree-row".into(), ix as u64);
+        // The tui skin names a row by its place on screen (`slot`), so the
+        // hover gpui keeps per element stays with the pointer when the rows
+        // scroll under it.
+        let id: ElementId = ElementId::NamedInteger(
+            "tree-row".into(),
+            tui.map_or(ix, |(_, _, slot)| slot) as u64,
+        );
         let drag_paths = if selected {
             self.selected_paths()
         } else {
@@ -1042,8 +1066,9 @@ impl FileTree {
             .map(|r| r.input.clone());
         let not_renaming = renaming.is_none();
         let body: gpui::AnyElement = match tui {
-            Some((cell, cols)) => self.tui_row_body(
+            Some((cell, cols, slot)) => self.tui_row_body(
                 ix,
+                slot,
                 cell,
                 cols,
                 selected,
@@ -1055,7 +1080,10 @@ impl FileTree {
                 theme,
                 m,
             ),
+            // The id lets gpui keep the hover with the pointer: without one
+            // the fill stays where the wheel left it until another redraw.
             None => div()
+                .id(ElementId::NamedInteger("tree-row-body".into(), ix as u64))
                 .h_full()
                 .w_full()
                 .flex()
@@ -1147,7 +1175,7 @@ impl FileTree {
         // (Windows probe), so the hover and selection washes sit 1 px in.
         div()
             .id(id)
-            .h(px(tui.map_or(m.tree_row_height, |(cell, _)| cell.h)))
+            .h(px(tui.map_or(m.tree_row_height, |(cell, _, _)| cell.h)))
             .when(tui.is_none(), |d| d.py(px(m.tree_row_inset)))
             .w_full()
             .cursor_pointer()
@@ -1177,11 +1205,12 @@ impl FileTree {
                 }
             })
             .when(!is_root, |d| {
-                d.on_drag(DraggedPaths { paths: drag_paths }, move |_, _, _, cx| {
-                    cx.new(|_| DragGhost {
+                d.on_drag(DraggedPaths { paths: drag_paths }, move |_, at, _, cx| {
+                    let ghost = cx.new(|_| DragGhost {
                         title: ghost_title.clone(),
                         icon: ghost_icon,
-                    })
+                    });
+                    crate::drag_ghost::snapped(at, ghost, cx)
                 })
             })
             .drag_over::<DraggedPaths>(move |style, _, _, _| {
@@ -1210,6 +1239,7 @@ impl FileTree {
     fn tui_row_body(
         &self,
         ix: usize,
+        slot: usize,
         cell: Cell,
         cols: usize,
         selected: bool,
@@ -1248,6 +1278,10 @@ impl FileTree {
         });
         let name: SharedString = row.names.join(" / ").into();
         div()
+            // An id, so gpui tracks the hover below and redraws when the
+            // pointer moves onto or off the row (without one the fill only
+            // followed the pointer on some other redraw, e.g. a wheel turn).
+            .id(ElementId::NamedInteger("tree-row-body".into(), slot as u64))
             .h(px(cell.h))
             .w(px(cols as f32 * cell.w))
             .flex()
@@ -1286,15 +1320,22 @@ impl FileTree {
     }
 
     /// The tree in the tui skin: rows of whole cells filling the tool's
-    /// area, which the panel sizes in whole cells inside its frame.
+    /// area, which the panel sizes in whole cells inside its frame. Only the
+    /// rows that fit are laid out, from `tui_scroll.top`: the wheel moves it
+    /// by whole rows and the keyboard's row is brought into view (rule 6).
     fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
         let focused = self.focus_handle.is_focused(window);
-        let count = self.rows.len();
+        let total = self.rows.len();
         let entity = cx.entity();
-        let inner_cols = self.tui_grid.0;
+        let (inner_cols, fit) = self.tui_grid;
+        // Before the first measure every row is laid out, clipped by the frame.
+        let visible = if fit == 0 { total } else { fit };
+        reveal_rows(&mut self.tui_scroll, self.tui_reveal.take(), total, visible);
+        let top = self.tui_scroll.top;
+        self.tui_bar.set((0, top, visible, total));
         let measure = {
             let entity = entity.clone();
             gpui::canvas(
@@ -1317,7 +1358,13 @@ impl FileTree {
             .left_0()
             .size_full()
         };
-        let theme_for_rows = theme.clone();
+        let rows: Vec<gpui::AnyElement> = (top..total.min(top + visible))
+            .map(|ix| {
+                let tui = Some((cell, inner_cols, ix - top));
+                self.render_row(ix, focused, &theme, &m, &entity, tui)
+                    .into_any_element()
+            })
+            .collect();
         div()
             .size_full()
             .relative()
@@ -1326,28 +1373,36 @@ impl FileTree {
             .line_height(px(cell.h))
             .child(measure)
             .child(
-                div().size_full().child(
-                    uniform_list("file-tree", count, move |range, _window, cx| {
-                        let this = entity.read(cx);
-                        range
-                            .map(|ix| {
-                                this.render_row(
-                                    ix,
-                                    focused,
-                                    &theme_for_rows,
-                                    &m,
-                                    &entity,
-                                    Some((cell, inner_cols)),
-                                )
-                            })
-                            .collect()
-                    })
-                    .track_scroll(&self.scroll)
-                    .size_full(),
-                ),
-                // The scroll bar is the panel frame's right edge (workspace).
+                div()
+                    .id("file-tree-rows")
+                    .size_full()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .on_scroll_wheel(cx.listener(move |this, e, _, cx| {
+                        if this.tui_scroll.wheel(e, cell, total, visible) {
+                            cx.notify();
+                        }
+                    }))
+                    // The scroll bar is the panel frame's right edge (workspace).
+                    .children(rows),
             )
     }
+}
+
+/// Brings `row` (when there is one) into the `visible` rows from
+/// `scroll.top`, and keeps `top` inside `total`: a list in the tui skin that
+/// scrolls by whole rows and reveals its keyboard row only when that row
+/// moved, so the wheel can take it out of view afterwards.
+pub fn reveal_rows(scroll: &mut RowScroll, row: Option<usize>, total: usize, visible: usize) {
+    if let Some(row) = row {
+        if row < scroll.top {
+            scroll.top = row;
+        } else if visible > 0 && row >= scroll.top + visible {
+            scroll.top = row + 1 - visible;
+        }
+    }
+    scroll.top = scroll.top.min(total.saturating_sub(visible));
 }
 
 impl Render for FileTree {

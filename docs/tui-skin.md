@@ -55,6 +55,7 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 | `checkbox`, `radio` | `[x]` `[ ]`, `(•)` `( )` |
 | `file_glyph` | a file's glyph and colour by extension |
 | `redraw` | another frame, for grids read back while painting |
+| `RowScroll` | a list's first row in whole rows: wheel, reveal, reset (rule 6) |
 
 ## Elements
 
@@ -241,3 +242,22 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 ### Drag and drop
 - The dragged tab or file is a one-row box following the pointer, snapped to cells; the drop
   target's frame turns `drag_border_highlight`; a split target fills its half in `drag_bg`.
+
+## Checking it
+
+Screenshots of the real window are the test. Where no input can be scripted (macOS without
+accessibility permission), `WEEP_KEYS` drives a new window from inside: comma-separated steps of
+gpui keystrokes (`cmd-p`, `comma` for `,`), `type:text`, `wait:ms`, and mouse steps in logical
+window pixels split by `;`: `move:x;y`, `click:x;y`, `rclick:x;y`, `scroll:x;y;dy` (negative
+scrolls down), `drag:x1;y1;x2;y2` and `hold:x1;y1;x2;y2` (a drag left pressed, for the ghost).
+Run with `--skin tui` and a scratch `WEEP_CONFIG_DIR`, and capture only WEEP's window. Synthetic
+input lands only while the window is active, so run one probe at a time.
+
+Open points:
+- The Settings tab and the Git, History, Changed Files and Run views draw their scroll bars in
+  their own last column, or deferred onto the frame (Settings): `workspace.rs` gives a tab
+  other than the editor no `Edges`, and a tool other than Files and Search no `Edges.right`.
+- The documentation box beside the completion box draws its own line next to the completion
+  box's frame instead of sharing one column.
+- A live window resize is clamped in code (whole rows kept) but not yet seen on screen.
+

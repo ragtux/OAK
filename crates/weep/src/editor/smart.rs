@@ -46,6 +46,8 @@ pub struct CompletionPopup {
     filtered: Vec<Filtered>,
     selected: usize,
     scroll_top: usize,
+    /// The tui skin's list scroll: whole rows, the wheel included (rule 6).
+    tui_scroll: crate::skin::RowScroll,
     /// The resolved documentation of the selected item, and for which.
     docs: Option<Vec<Line>>,
     docs_for: Option<usize>,
@@ -173,6 +175,7 @@ impl EditorView {
             filtered: Vec::new(),
             selected: 0,
             scroll_top: 0,
+            tui_scroll: crate::skin::RowScroll::default(),
             docs: None,
             docs_for: None,
             docs_shown: self.smart.docs_wanted,
@@ -588,6 +591,7 @@ impl EditorView {
         popup.filtered = filtered;
         popup.selected = 0;
         popup.scroll_top = 0;
+        popup.tui_scroll.reset();
         popup.docs = None;
         popup.docs_for = None;
         if popup.docs_shown {
@@ -1291,7 +1295,7 @@ fn doc_lines(lines: &[Line], cols: usize) -> Vec<DocLine> {
 
 /// A box of documentation: `cols` wide, as many rows as the lines take up
 /// to `max_rows` in all, separators as rules joining the frame. Returns
-/// the box and its rows.
+/// the box, its rows and its rules.
 fn doc_box(
     lines: &[Line],
     cols: usize,
@@ -1299,7 +1303,7 @@ fn doc_box(
     theme: &Theme,
     cell: crate::skin::Cell,
     m: Metrics,
-) -> (gpui::Div, usize) {
+) -> (gpui::Div, usize, Vec<usize>) {
     let inner = cols.saturating_sub(4).max(1);
     let mut doc = doc_lines(lines, inner);
     doc.truncate(max_rows.saturating_sub(2).max(1));
@@ -1339,7 +1343,7 @@ fn doc_box(
             cols,
             rows,
             Vec::new(),
-            rules,
+            rules.clone(),
             body,
             theme.popup_bg,
             theme.popup_border,
@@ -1347,6 +1351,7 @@ fn doc_box(
             m,
         ),
         rows,
+        rules,
     )
 }
 
@@ -1374,14 +1379,12 @@ impl EditorView {
         let all_rows = crate::skin::Cell::fit(bounds.size.height, cell.h);
         let popup = self.smart.completion.as_mut().expect("open");
         let max_rows = (m.completion_max_rows as usize).max(1);
-        if popup.selected < popup.scroll_top {
-            popup.scroll_top = popup.selected;
-        } else if popup.selected >= popup.scroll_top + max_rows {
-            popup.scroll_top = popup.selected + 1 - max_rows;
-        }
         let shown = popup.filtered.len().min(max_rows);
         let total = popup.filtered.len();
-        let top = popup.scroll_top;
+        // Whole rows: the selection is revealed when it moves, and the wheel
+        // turns the list by rows without moving it.
+        popup.tui_scroll.follow(popup.selected, total, shown);
+        let top = popup.tui_scroll.top;
         let selected = popup.selected;
         // Wide enough for the widest row shown, within Fleet's width.
         let rows_data: Vec<(TuiRow, usize)> = popup
@@ -1477,8 +1480,22 @@ impl EditorView {
                 .into_any_element()
             })
             .collect();
-        let body = div().flex().flex_col().children(rows_el).into_any_element();
-        let mut out = vec![div()
+        let body = div()
+            .id("completion-rows")
+            .size_full()
+            .flex()
+            .flex_col()
+            .on_scroll_wheel(cx.listener(move |this, e, _, cx| {
+                cx.stop_propagation();
+                if let Some(p) = this.smart.completion.as_mut() {
+                    if p.tui_scroll.wheel(e, cell, total, shown) {
+                        cx.notify();
+                    }
+                }
+            }))
+            .children(rows_el)
+            .into_any_element();
+        let completion = div()
             .absolute()
             .left(x)
             .top(y)
@@ -1508,7 +1525,8 @@ impl EditorView {
                     m,
                 )),
             )
-            .into_any_element()];
+            .into_any_element();
+        let mut out = Vec::new();
         if let (Some(docs_x), Some(docs)) = (docs_x, docs) {
             let lines = if docs.is_empty() {
                 vec![Line {
@@ -1522,10 +1540,14 @@ impl EditorView {
             let max = ((m.smart_popup_max_height / cell.h).round() as usize)
                 .min(all_rows)
                 .max(3);
-            let (docs_box, docs_rows) = doc_box(&lines, docs_cols, max, theme, cell, m);
+            let (docs_box, docs_rows, docs_rules) = doc_box(&lines, docs_cols, max, theme, cell, m);
             let docs_y = y
                 .min(cell.rows(all_rows.saturating_sub(docs_rows)))
                 .max(px(0.));
+            // The documentation goes under the completion box, which keeps
+            // its frame column (and the scroll bar on it) whole; the
+            // documentation's corners and rules there are drawn again on its
+            // side of the line, so its edges join that line (`┤`, `├`).
             out.push(
                 div()
                     .absolute()
@@ -1535,6 +1557,50 @@ impl EditorView {
                     .child(docs_box)
                     .into_any_element(),
             );
+            out.push(completion);
+            let left = docs_x < x;
+            let shared = if left { x } else { x + cell.cols(cols - 1) };
+            let (top, bottom) = (y, y + cell.rows(rows));
+            let color = theme.popup_border;
+            out.push(
+                gpui::canvas(
+                    |_, _, _| (),
+                    move |bounds: Bounds<Pixels>, _, window, _| {
+                        let docs_origin = bounds.origin + point(docs_x, docs_y);
+                        let half = px(cell.w / 2.);
+                        let t = px(crate::skin::stroke(window, &m));
+                        let line = bounds.origin.x + shared + half;
+                        let (x0, x1) = if left {
+                            (line - half, line - t)
+                        } else {
+                            (line + t, line + half)
+                        };
+                        let clip = Bounds::from_corners(
+                            point(x0, bounds.origin.y + top),
+                            point(x1, bounds.origin.y + bottom),
+                        );
+                        window.with_content_mask(Some(gpui::ContentMask { bounds: clip }), |w| {
+                            crate::skin::paint_frame(
+                                w,
+                                docs_origin,
+                                cell,
+                                docs_cols,
+                                docs_rows,
+                                &docs_rules,
+                                color,
+                                &m,
+                            );
+                        });
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .into_any_element(),
+            );
+        } else {
+            out.push(completion);
         }
         out
     }
@@ -1685,7 +1751,7 @@ impl EditorView {
         let below = all_rows.saturating_sub(above + 1);
         let max = ((m.smart_popup_max_height / cell.h).round() as usize).max(3);
         let room = if above >= 3 { above } else { below };
-        let (doc, rows) = doc_box(&lines, cols, max.min(room.max(3)), theme, cell, m);
+        let (doc, rows, _) = doc_box(&lines, cols, max.min(room.max(3)), theme, cell, m);
         let x = (anchor.origin.x - cell.cols(2))
             .min(cell.cols(all_cols.saturating_sub(cols)))
             .max(px(0.));
