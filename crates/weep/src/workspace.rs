@@ -964,7 +964,8 @@ impl Workspace {
                     this.open_changed_files(path, cx);
                 }
                 EditorEvent::RunConfiguration(ix) => this.run_configuration_at(*ix, cx),
-                EditorEvent::Completion { .. }
+                EditorEvent::CloseInterline
+                | EditorEvent::Completion { .. }
                 | EditorEvent::SignatureHelp
                 | EditorEvent::Hover { .. }
                 | EditorEvent::GoToDefinition { .. }

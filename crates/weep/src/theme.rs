@@ -435,6 +435,34 @@ pub mod metrics {
     pub const STICKY_SHADOW: f32 = 3.;
     /// The fold chevron's box is 16 (`ICON_SIZE`); the folded mark `{…}` is 3
     /// character cells wide with a radius of about 3 (batch 5).
+    /// The inline usages (an interline block under the caret's line,
+    /// fifteenth pass, the `smart` scene at 1280x800): the panel 4 below the
+    /// line and 7.5 above the next, 301.5 tall, across the whole editor; the
+    /// list in its left third (header centred 20.5 from the top, text 12 in;
+    /// rows 24 tall on a 26 pitch from 40, 8 in from the panel's left and 6
+    /// from the list's end, a usage's text 30 in from the row's left); the
+    /// preview box 8.5 from the top, 8 from the right, 6 from the bottom, its
+    /// footer (the path) 26 tall, the close button 20 square centred 24 from
+    /// the box's right and 23.5 from its top.
+    pub const USAGES_GAP_TOP: f32 = 4.;
+    pub const USAGES_GAP_BOTTOM: f32 = 7.5;
+    pub const USAGES_HEIGHT: f32 = 301.5;
+    pub const USAGES_RADIUS: f32 = 8.;
+    pub const USAGES_HEADER_Y: f32 = 20.5;
+    pub const USAGES_PAD_X: f32 = 12.;
+    pub const USAGES_ROWS_TOP: f32 = 40.;
+    pub const USAGES_ROW_HEIGHT: f32 = 24.;
+    pub const USAGES_ROW_PITCH: f32 = 26.;
+    pub const USAGES_ROW_INSET_LEFT: f32 = 8.;
+    pub const USAGES_ROW_INSET_RIGHT: f32 = 6.;
+    pub const USAGES_ITEM_INDENT: f32 = 30.;
+    pub const USAGES_PREVIEW_TOP: f32 = 8.5;
+    pub const USAGES_PREVIEW_RIGHT: f32 = 8.;
+    pub const USAGES_PREVIEW_BOTTOM: f32 = 6.;
+    pub const USAGES_FOOTER_HEIGHT: f32 = 26.;
+    pub const USAGES_CLOSE_SIZE: f32 = 20.;
+    pub const USAGES_CLOSE_RIGHT: f32 = 14.;
+    pub const USAGES_CLOSE_TOP: f32 = 13.5;
     pub const FOLDED_MARK_CELLS: f32 = 3.;
     pub const FOLDED_MARK_RADIUS: f32 = 3.;
     /// The find bar (batch 5): a 416.67 × 28 field 16 from the island's right
@@ -979,6 +1007,25 @@ scaled_metrics!(
     sticky_shadow = STICKY_SHADOW,
     folded_mark_cells = FOLDED_MARK_CELLS,
     folded_mark_radius = FOLDED_MARK_RADIUS,
+    usages_gap_top = USAGES_GAP_TOP,
+    usages_gap_bottom = USAGES_GAP_BOTTOM,
+    usages_height = USAGES_HEIGHT,
+    usages_radius = USAGES_RADIUS,
+    usages_header_y = USAGES_HEADER_Y,
+    usages_pad_x = USAGES_PAD_X,
+    usages_rows_top = USAGES_ROWS_TOP,
+    usages_row_height = USAGES_ROW_HEIGHT,
+    usages_row_pitch = USAGES_ROW_PITCH,
+    usages_row_inset_left = USAGES_ROW_INSET_LEFT,
+    usages_row_inset_right = USAGES_ROW_INSET_RIGHT,
+    usages_item_indent = USAGES_ITEM_INDENT,
+    usages_preview_top = USAGES_PREVIEW_TOP,
+    usages_preview_right = USAGES_PREVIEW_RIGHT,
+    usages_preview_bottom = USAGES_PREVIEW_BOTTOM,
+    usages_footer_height = USAGES_FOOTER_HEIGHT,
+    usages_close_size = USAGES_CLOSE_SIZE,
+    usages_close_right = USAGES_CLOSE_RIGHT,
+    usages_close_top = USAGES_CLOSE_TOP,
     find_bar_width = FIND_BAR_WIDTH,
     find_bar_height = FIND_BAR_HEIGHT,
     find_bar_push = FIND_BAR_PUSH,
@@ -1412,6 +1459,17 @@ pub struct Theme {
     /// `editor.foldedMark.*`: the `{…}` box on a folded line.
     pub folded_mark_bg: Hsla,
     pub folded_mark_text: Hsla,
+    /// `editor.interline.*`: a block laid between two lines (the inline
+    /// usages): its background, text, separator, the matched word and the
+    /// preview box inside it.
+    pub interline_bg: Hsla,
+    pub interline_text: Hsla,
+    pub interline_text_hovered: Hsla,
+    pub interline_separator: Hsla,
+    pub interline_match_bg: Hsla,
+    pub interline_match_text: Hsla,
+    pub interline_preview_bg: Hsla,
+    pub interline_preview_border: Hsla,
     /// `editor.currentLine.scrollbarMark`.
     pub current_line_mark: Hsla,
     pub selection: Hsla,
@@ -1899,6 +1957,26 @@ impl Theme {
                 text_primary.with_alpha(0x1B),
             ),
             folded_mark_text: c("editor.foldedMark.text", Color::rgb(0x89, 0x8E, 0x94)),
+            interline_bg: c("editor.interline.background", Color::rgb(0x25, 0x26, 0x29)),
+            interline_text: c(
+                "editor.interline.text.default",
+                text_primary.with_alpha(0x59),
+            ),
+            interline_text_hovered: c(
+                "editor.interline.text.hovered",
+                Color::rgb(0x4B, 0x8D, 0xEC),
+            ),
+            interline_separator: c("editor.interline.separator", text_primary.with_alpha(0x2C)),
+            interline_match_bg: c(
+                "editor.interline.match.background",
+                Color::rgb(0x6C, 0x4B, 0x18),
+            ),
+            interline_match_text: c("editor.interline.match.text", text_primary),
+            interline_preview_bg: c(
+                "editor.interline.preview.background",
+                Color::rgb(0x18, 0x19, 0x1B),
+            ),
+            interline_preview_border: c("editor.interline.preview.border", Color::TRANSPARENT),
             current_line_mark: c("editor.currentLine.scrollbarMark", text_primary),
             selection: selection_attr("editor.selection")
                 .unwrap_or_else(|| to_hsla(Color::rgb(0x4C, 0x51, 0x57))),

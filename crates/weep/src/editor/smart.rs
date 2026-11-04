@@ -338,6 +338,10 @@ impl EditorView {
             cx.notify();
             return;
         }
+        if self.interline.is_some() {
+            cx.emit(EditorEvent::CloseInterline);
+            return;
+        }
         self.cancel(a, w, cx);
     }
 

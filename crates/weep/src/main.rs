@@ -41,6 +41,7 @@ mod terminal;
 mod theme;
 mod toolbar;
 mod tooltip;
+mod usages;
 mod workspace;
 
 use gpui::{

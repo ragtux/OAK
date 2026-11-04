@@ -490,7 +490,12 @@ Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
   active parameter in `parameterInfo.match.text`, re-asked as the caret
   moves, opened by `(` and `,`).
 - Done: `go-to-declaration` (also Ctrl+click), `go-to-type-declaration`,
-  `find-usages` (a popup in the Goto frame listing `file:line` rows),
+  `find-usages` as Fleet's inline usages (the fifteenth pass: a panel laid
+  between the caret's line and the next through the display map's interline
+  blocks, the usages without the declaration grouped by file in its left
+  third, the selected one in a read-only preview on the right with the path
+  under it; `editor.interline.*`; ↑ ↓ ← → Enter and Escape, a double click
+  opens; `crates/weep/src/usages.rs`),
   `back` and `forward` over the positions jumped from, `rename` (the name
   in a prompt, preselected per `rename.selectOnRename`, the server's edit
   applied across open documents and files on disk), `quick-fixes` (a menu
@@ -502,9 +507,7 @@ Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
 - Probes: batch 12 as the `smart` scene (written, not yet run on either
   editor).
 
-Left for later: find usages as Fleet's inline panel (the fifteenth pass:
-under the line in the editor, a tree of usages without the declaration on the
-left and a preview on the right; WEEP shows the Goto-framed list), inlay hints (`textDocument/inlayHint`: Fleet shows
+Left for later: inlay hints (`textDocument/inlayHint`: Fleet shows
 parameter names and types inside the line, which needs the display map to
 widen lines), the run triangle in the gutter at `fn main` (a code lens),
 the inline rename (`editor.rename.current|entries` boxes

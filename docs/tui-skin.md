@@ -258,4 +258,7 @@ Open points:
 - The documentation box beside the completion box draws its own line next to the completion
   box's frame instead of sharing one column.
 - A live window resize is clamped in code (whole rows kept) but not yet seen on screen.
+- The inline usages (`usages.rs`) have no tui form yet: the panel is drawn as in the Fleet skin
+  over its block of whole rows. Its form would be a box across the editor's columns, the list
+  and the preview split by a vertical rule joining the box, as Goto's preview is.
 

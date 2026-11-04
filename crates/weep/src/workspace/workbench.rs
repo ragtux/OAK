@@ -1659,7 +1659,6 @@ impl Workspace {
             return;
         }
         let use_selection = Self::settings(cx).editor_use_selection_for_search();
-        let threshold = Self::settings(cx).local_big_file_minimum_threshold_mb();
         let initial = if use_selection && mode != GotoMode::Workspaces {
             self.active_editor()
                 .cloned()
@@ -1670,10 +1669,21 @@ impl Workspace {
             String::new()
         };
         let sources = self.goto_sources(cx);
-        // The preview reads an open document, else the file (never a big one);
-        // a fresh document stays the panel's own and goes with it.
+        let open_document = self.open_document_fn(cx);
+        let goto = cx.new(|cx| GotoPanel::new(mode, sources, &initial, open_document, cx));
+        cx.subscribe_in(&goto, window, Self::on_goto_event).detach();
+        goto.read(cx).focus_handle(cx).focus(window, cx);
+        self.goto = Some(goto);
+        cx.notify();
+    }
+
+    /// How a preview (Goto's, the inline usages') reads a file: an open
+    /// document, else the file from disk (never a big one); a fresh document
+    /// stays the preview's own and goes with it.
+    pub(super) fn open_document_fn(&self, cx: &App) -> crate::goto::OpenDocument {
+        let threshold = Self::settings(cx).local_big_file_minimum_threshold_mb();
         let documents = self.documents.clone();
-        let open_document: crate::goto::OpenDocument = Rc::new(move |path, cx| {
+        Rc::new(move |path, cx| {
             if let Some(d) = documents
                 .iter()
                 .find(|d| d.read(cx).path.as_deref() == Some(path))
@@ -1689,12 +1699,7 @@ impl Workspace {
                 let settings = &cx.global::<AppSettings>().settings;
                 Document::new(Some(path.to_path_buf()), &text, settings)
             }))
-        });
-        let goto = cx.new(|cx| GotoPanel::new(mode, sources, &initial, open_document, cx));
-        cx.subscribe_in(&goto, window, Self::on_goto_event).detach();
-        goto.read(cx).focus_handle(cx).focus(window, cx);
-        self.goto = Some(goto);
-        cx.notify();
+        })
     }
 
     /// `find-in-path` / `replace-in-path`: the Text Search tab.

@@ -56,6 +56,9 @@ pub enum EditorEvent {
     /// A click on a run icon in `.fleet/run.json`'s gutter: the workspace
     /// runs that configuration (its index in the file).
     RunConfiguration(usize),
+    /// Escape in the editor while an interline view (the inline usages) is
+    /// open: the workspace closes it.
+    CloseInterline,
     /// M7: what the view asks the workspace to ask the document's language
     /// server. `Completion` after a typed char or `completion`;
     /// `SignatureHelp` after `(` or `show-parameter-info`; `Hover` for the
@@ -445,6 +448,9 @@ struct RowInfo {
     /// The char column each segment starts at; `[0]` for an unwrapped row.
     /// Empty for a hidden row.
     segments: Vec<usize>,
+    /// Display rows after the segments that show no text: an interline
+    /// block (Fleet's inline usages) lies over them.
+    block: usize,
 }
 
 /// Buffer rows to display rows: folded blocks collapse to their head, a
@@ -454,6 +460,8 @@ struct DisplayMap {
     version: Option<u64>,
     wrap_cols: Option<usize>,
     folds: Vec<Folded>,
+    /// Interline blocks: (buffer row, display rows) after that row.
+    blocks: Vec<(usize, usize)>,
     rows: Vec<RowInfo>,
     total: usize,
 }
@@ -505,11 +513,13 @@ impl DisplayMap {
         let mut fold_ix = 0;
         let mut hidden_until: Option<usize> = None;
         let folds = &self.folds;
+        let blocks = &self.blocks;
         for row in 0..line_count {
             if hidden_until.is_some_and(|end| row <= end) {
                 rows.push(RowInfo {
                     display_start: next,
                     segments: Vec::new(),
+                    block: 0,
                 });
                 continue;
             }
@@ -526,11 +536,17 @@ impl DisplayMap {
                 }
                 _ => vec![0],
             };
-            next += segments.len();
+            let block = blocks
+                .iter()
+                .find(|(r, _)| *r == row)
+                .map_or(0, |(_, n)| *n);
             rows.push(RowInfo {
-                display_start: next - segments.len(),
+                display_start: next,
+                block,
                 segments,
             });
+            let info = rows.last().expect("pushed");
+            next += info.segments.len() + info.block;
         }
         self.rows = rows;
         self.total = next;
@@ -539,7 +555,25 @@ impl DisplayMap {
     }
 
     fn is_identity(&self) -> bool {
-        self.folds.is_empty() && self.wrap_cols.is_none()
+        self.folds.is_empty() && self.wrap_cols.is_none() && self.blocks.is_empty()
+    }
+
+    /// Whether display row `d` is one of an interline block's rows.
+    fn in_block(&self, d: usize) -> bool {
+        if self.blocks.is_empty() || d >= self.total {
+            return false;
+        }
+        let (row, _) = self.at(d);
+        let r = &self.rows[row];
+        d >= r.display_start + r.segments.len()
+    }
+
+    /// The first display row of the block after buffer row `row`.
+    fn block_start(&self, row: usize) -> Option<usize> {
+        self.rows
+            .get(row)
+            .filter(|r| r.block > 0)
+            .map(|r| r.display_start + r.segments.len())
     }
 
     fn is_hidden(&self, row: usize) -> bool {
@@ -625,6 +659,9 @@ pub struct EditorView {
     /// version and word it was computed for.
     occurrences: Option<(u64, String, Vec<Range<usize>>)>,
     map: DisplayMap,
+    /// A view laid between two lines (`set_interline`): the buffer row it
+    /// follows, the display rows it takes, and the view.
+    interline: Option<(usize, usize, gpui::AnyView)>,
     /// The display column the caret wants when moving through shorter rows.
     goal_column: Option<usize>,
     /// `expand-selection` steps, so `shrink-selection` retraces them.
@@ -650,6 +687,15 @@ pub struct EditorView {
     space_px: Pixels,
     /// A preview (the Goto panel's): no edit changes the buffer.
     pub read_only: bool,
+    /// Paints the caret's line in this colour instead of the current line's
+    /// (the inline usages' preview washes the usage's line).
+    pub line_wash: Option<Hsla>,
+    /// No status badge and no scroll bar marks: a preview inside another
+    /// surface (the inline usages').
+    pub bare: bool,
+    /// `goto` asked to centre before the view had a size: centred on the
+    /// first layout.
+    center_pending: bool,
     /// M6: the rows of `.fleet/run.json`'s configurations (row, index) for
     /// the gutter's run icons, per buffer version.
     run_rows: Option<(u64, Vec<(usize, usize)>)>,
@@ -745,6 +791,10 @@ impl EditorView {
             search: None,
             occurrences: None,
             map: DisplayMap::default(),
+            interline: None,
+            line_wash: None,
+            bare: false,
+            center_pending: false,
             goal_column: None,
             expand_history: Vec::new(),
             expand_last: None,
@@ -1770,6 +1820,7 @@ impl EditorView {
         self.sync_map(cx);
         let height = self.last_bounds.size.height;
         if height <= px(0.) {
+            self.center_pending = true;
             return;
         }
         let lh = self.line_height();
@@ -1884,7 +1935,16 @@ impl EditorView {
                     goal = Some(column_in_seg);
                 }
                 let d = self.map.display_row(point.row, point.column) as isize;
-                let target = (d + delta).clamp(0, last_display);
+                let mut target = (d + delta).clamp(0, last_display);
+                // Past an interline block's rows, to the text on its far side.
+                while self.map.in_block(target as usize) {
+                    let next = target + delta.signum();
+                    if !(0..=last_display).contains(&next) {
+                        target = d;
+                        break;
+                    }
+                    target = next;
+                }
                 let head = if target == d {
                     if delta < 0 {
                         0
@@ -2441,6 +2501,68 @@ impl EditorView {
     pub fn replace_ranges(&mut self, edits: Vec<(Range<usize>, String)>, cx: &mut Context<Self>) {
         self.edit(cx, |c, b| c.replace_ranges(b, edits));
         self.after_edit(cx);
+    }
+
+    /// Lays `view` between buffer row `row` and the next over `rows` display
+    /// rows that show no text, scrolling with the text (Fleet's interline:
+    /// the inline usages); `None` removes it.
+    pub fn set_interline(
+        &mut self,
+        at: Option<(usize, usize, gpui::AnyView)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.map.blocks = at.iter().map(|(row, rows, _)| (*row, *rows)).collect();
+        self.map.version = None;
+        let reveal = at.as_ref().map(|(row, rows, _)| (*row, *rows));
+        self.interline = at;
+        // Fleet scrolls the block into view with two rows of text under it.
+        if let Some((row, rows)) = reveal {
+            self.sync_map(cx);
+            let height = self.last_bounds.size.height;
+            if let Some(start) = self.map.block_start(row) {
+                let lh = self.line_height();
+                let end = lh * (start + rows + 2) as f32;
+                if height > px(0.) && end > self.scroll_y + height {
+                    let max = self.max_scroll_y(cx);
+                    let line_top = lh * start.saturating_sub(1) as f32;
+                    self.scroll_y = (end - height).min(line_top).clamp(px(0.), max);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The height of a display row, as last painted (an interline block's
+    /// rows are sized by it).
+    pub fn row_height(&self, _: &App) -> f32 {
+        f32::from(self.line_height())
+    }
+
+    /// The interline view, placed over its block's rows and clipped to the view.
+    fn render_interline(&mut self, cx: &App) -> Option<gpui::AnyElement> {
+        let (row, rows, view) = self.interline.clone()?;
+        self.sync_map(cx);
+        let start = self.map.block_start(row)?;
+        let lh = self.line_height();
+        let top = lh * start as f32 - self.scroll_y;
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(top)
+                        .h(lh * rows as f32)
+                        .child(view),
+                )
+                .into_any_element(),
+        )
     }
 
     /// `goto/line`: one caret at the 0-based row and column, centred.
@@ -3750,6 +3872,7 @@ impl Render for EditorView {
             .child(EditorElement {
                 editor: cx.entity(),
             })
+            .children(self.render_interline(cx))
             .children(problems)
             .children(smart)
     }
@@ -4016,6 +4139,8 @@ struct FoldedMarkLayout {
 
 struct LaidOutRow {
     row: usize,
+    /// The display row it is painted on (an interline block's rows have none).
+    display: usize,
     /// The chars of the row this display row shows.
     cols: Range<usize>,
     line: DisplayLine,
@@ -4051,6 +4176,7 @@ struct StickyLayout {
 
 pub struct Prepaint {
     hitbox: Hitbox,
+    line_wash: Option<Hsla>,
     rows: Vec<LaidOutRow>,
     scroll_y: Pixels,
     scroll_x: Pixels,
@@ -4119,7 +4245,11 @@ impl Element for EditorElement {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let theme = cx.global::<Theme>().clone();
-        let options = ViewOptions::from(&cx.global::<AppSettings>().settings);
+        let mut options = ViewOptions::from(&cx.global::<AppSettings>().settings);
+        if self.editor.read(cx).bare {
+            options.file_status = false;
+            options.scrollbar_marks = false;
+        }
         let mut tm = TextMetrics::current(cx);
         if tm.cell.is_some() {
             // The tui gutter is sized by the line count's digits.
@@ -4129,6 +4259,7 @@ impl Element for EditorElement {
         let settings = cx.global::<AppSettings>().settings.clone();
         let lh = px(tm.line_height);
         let focused = self.editor.read(cx).focus_handle.is_focused(window);
+        let line_wash = self.editor.read(cx).line_wash;
         let space_width = match tm.cell {
             // A column of the tui grid is the cell, exactly.
             Some(cell) => px(cell.w),
@@ -4173,6 +4304,10 @@ impl Element for EditorElement {
                 }
             }
             editor.last_bounds = bounds;
+            if editor.center_pending && bounds.size.height > px(0.) {
+                editor.center_pending = false;
+                editor.center_cursor_always(cx);
+            }
             editor
                 .document
                 .update(cx, |doc, _| doc.refresh_indent(&settings));
@@ -4350,6 +4485,11 @@ impl Element for EditorElement {
             let mut d = first_display;
             let mut row_cache: Option<(usize, String)> = None;
             while d < last_display {
+                if map.in_block(d) {
+                    // An interline block's rows: its view lies over them.
+                    d += 1;
+                    continue;
+                }
                 let (row, seg) = map.at(d);
                 let source = match &row_cache {
                     Some((r, s)) if *r == row => s.clone(),
@@ -4548,6 +4688,7 @@ impl Element for EditorElement {
                     Vec::new()
                 };
                 rows.push(LaidOutRow {
+                    display: d,
                     row,
                     cols: seg_cols,
                     line,
@@ -4650,6 +4791,7 @@ impl Element for EditorElement {
             selections,
             cursor,
             focused,
+            line_wash,
             caret_visible,
             total_rows,
             tm,
@@ -4741,11 +4883,8 @@ impl Element for EditorElement {
                     e.status_hovered,
                 )
             };
-            let first_display = (prepaint.scroll_y / lh).floor().max(0.) as usize;
-            for (display_row, (laid, (line_start, line_end))) in
-                (first_display..).zip(prepaint.rows.iter().zip(buffer_rows))
-            {
-                let y = bounds.origin.y + lh * display_row as f32 - prepaint.scroll_y;
+            for (laid, (line_start, line_end)) in prepaint.rows.iter().zip(buffer_rows) {
+                let y = bounds.origin.y + lh * laid.display as f32 - prepaint.scroll_y;
                 let row_text_x = if laid.continuation {
                     text_x + px(tm.wrap_indent)
                 } else {
@@ -4753,8 +4892,12 @@ impl Element for EditorElement {
                 };
                 // The current line's wash, across gutter and text alike, under
                 // everything else on the row (it stays under a selection).
-                if options.active_line && caret_rows.contains(&laid.row) {
-                    let color = if prepaint.focused {
+                if (options.active_line || prepaint.line_wash.is_some())
+                    && caret_rows.contains(&laid.row)
+                {
+                    let color = if let Some(wash) = prepaint.line_wash {
+                        wash
+                    } else if prepaint.focused {
                         theme.current_line_focused
                     } else {
                         theme.current_line
@@ -5373,14 +5516,13 @@ fn paint_tui(
             }
         });
     }
-    let first_display = (prepaint.scroll_y / lh).floor().max(0.) as usize;
     for (i, (laid, (line_start, line_end))) in prepaint
         .rows
         .iter()
         .zip(buffer_rows.iter().copied())
         .enumerate()
     {
-        let y = bounds.origin.y + lh * (first_display + i) as f32 - prepaint.scroll_y;
+        let y = bounds.origin.y + lh * laid.display as f32 - prepaint.scroll_y;
         let row_text_x = if laid.continuation {
             text_x + px(tm.wrap_indent)
         } else {
@@ -5690,6 +5832,28 @@ fn next_segment_owns(prepaint: &Prepaint, laid: &LaidOutRow, column: usize) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interline_blocks_take_display_rows_after_their_row() {
+        let buffer = Buffer::new("a\nb\nc");
+        let mut map = DisplayMap {
+            blocks: vec![(0, 3)],
+            ..Default::default()
+        };
+        map.rebuild(&buffer, None);
+        assert!(!map.is_identity());
+        assert_eq!(map.total, 6);
+        assert_eq!(map.block_start(0), Some(1));
+        assert_eq!(map.block_start(1), None);
+        assert_eq!(map.display_row(1, 0), 4);
+        assert_eq!(map.display_row(2, 0), 5);
+        assert!(!map.in_block(0));
+        assert!((1..=3).all(|d| map.in_block(d)));
+        assert!(!map.in_block(4));
+        // A block row belongs to the row above it; text resumes after it.
+        assert_eq!(map.at(2), (0, 0));
+        assert_eq!(map.at(4), (1, 0));
+    }
 
     #[test]
     fn tui_gutter_digits() {

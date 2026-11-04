@@ -89,6 +89,8 @@ pub(super) struct SmartMode {
     completion_server: Option<usize>,
     list: Option<Entity<ListPopup>>,
     list_targets: Vec<(PathBuf, Range<usize>)>,
+    /// The inline usages: the editor they are laid in and the panel.
+    usages: Option<(Entity<EditorView>, Entity<crate::usages::UsagesPanel>)>,
     /// The Smart Mode card under the lightning is open, and its focus
     /// handle (made on first use) so Escape closes it.
     pub card_open: bool,
@@ -109,6 +111,7 @@ impl SmartMode {
             completion_server: None,
             list: None,
             list_targets: Vec::new(),
+            usages: None,
             card_open: false,
             card_focus: None,
         }
@@ -1027,6 +1030,11 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
+            EditorEvent::CloseInterline => {
+                if self.smart.usages.as_ref().is_some_and(|(e, _)| e == editor) {
+                    self.close_usages(cx);
+                }
+            }
             EditorEvent::Completion { explicit } => self.request_completion(editor, *explicit, cx),
             EditorEvent::SignatureHelp => self.request_signature(editor, cx),
             EditorEvent::Hover { offset, mouse } => {
@@ -1397,6 +1405,15 @@ impl Workspace {
 
     /// A target's range as char offsets: through the open document, else
     /// the file on disk.
+    /// Line `row` of `path` as it stands (an open document's, else the file's).
+    fn line_text(&self, path: &Path, row: usize, cx: &App) -> String {
+        if let Some(doc) = self.document_at(path, cx) {
+            return doc.read(cx).buffer.line(row);
+        }
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        LineIndex::new(&text).line(row).unwrap_or("").to_string()
+    }
+
     fn target_range(
         &self,
         path: &Path,
@@ -1460,6 +1477,60 @@ impl Workspace {
             })
             .collect();
         self.show_list(title.to_string(), rows, cx);
+    }
+
+    /// Fleet's inline usages: the panel laid under `row` in `editor`, focused.
+    fn show_usages(
+        &mut self,
+        editor: &Entity<EditorView>,
+        row: usize,
+        files: Vec<crate::usages::UsageFile>,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_usages(cx);
+        let open_document = self.open_document_fn(cx);
+        let panel = cx.new(|cx| crate::usages::UsagesPanel::new(files, open_document, cx));
+        cx.subscribe(
+            &panel,
+            |this, panel, event: &crate::usages::UsagesEvent, cx| {
+                if this.smart.usages.as_ref().map(|(_, p)| p) != Some(&panel) {
+                    return;
+                }
+                match event {
+                    crate::usages::UsagesEvent::Close => {
+                        this.close_usages(cx);
+                        this.focus_active_editor(cx);
+                    }
+                    crate::usages::UsagesEvent::Open(path, range) => {
+                        let (path, range) = (path.clone(), range.clone());
+                        this.close_usages(cx);
+                        this.record_history(cx);
+                        this.goto_position(path, range, cx);
+                    }
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+        // The block takes whole display rows: the panel and its gaps, rounded.
+        let m = *cx.global::<Metrics>();
+        let lh = editor.read(cx).row_height(cx);
+        let rows = ((m.usages_gap_top + m.usages_height + m.usages_gap_bottom) / lh)
+            .round()
+            .max(1.) as usize;
+        let view: gpui::AnyView = panel.clone().into();
+        editor.update(cx, |e, cx| e.set_interline(Some((row, rows, view)), cx));
+        let handle = panel.read(cx).focus_handle(cx);
+        self.smart.usages = Some((editor.clone(), panel));
+        self.focus_later(handle, cx);
+        cx.notify();
+    }
+
+    /// Takes the inline usages out of their editor.
+    pub(super) fn close_usages(&mut self, cx: &mut Context<Self>) {
+        if let Some((editor, _)) = self.smart.usages.take() {
+            editor.update(cx, |e, cx| e.set_interline(None, cx));
+        }
     }
 
     fn show_list(
@@ -1798,11 +1869,14 @@ impl Workspace {
         let Some(located) = self.locate(&editor, None, cx) else {
             return;
         };
-        let word = editor.update(cx, |e, cx| {
+        let (word, caret_row) = editor.update(cx, |e, cx| {
             let caret = e.caret(cx);
             let doc = e.document.read(cx);
             let range = e.cursor.word_range_at(&doc.buffer, caret);
-            doc.buffer.slice(range)
+            (
+                doc.buffer.slice(range),
+                doc.buffer.offset_to_point(caret).row,
+            )
         });
         let server = located.server;
         self.request::<References>(
@@ -1814,8 +1888,10 @@ impl Workspace {
                 },
                 work_done_progress_params: no_progress(),
                 partial_result_params: Default::default(),
+                // Fleet lists the usages without the declaration ("6 in 1
+                // file" for a struct used six times, fifteenth pass).
                 context: lsp::ReferenceContext {
-                    include_declaration: true,
+                    include_declaration: false,
                 },
             },
             move |this, result, cx| {
@@ -1847,23 +1923,33 @@ impl Workspace {
                         range.start,
                     )
                 });
-                let rows: Vec<(ListRow, (PathBuf, Range<usize>))> = found
-                    .into_iter()
-                    .map(|(path, range)| {
-                        let (chars, line) = this.target_range(&path, range, enc, cx);
-                        let rel = relative_display(&this.root, &path);
-                        (
-                            ListRow {
-                                icon: Some(icon_for(&path)),
-                                text: line.into(),
-                                detail: None,
-                                right: Some(format!("{rel}:{}", range.start.line + 1).into()),
-                            },
-                            (path, chars),
-                        )
-                    })
-                    .collect();
-                this.show_list(title, rows, cx);
+                // Grouped by file in that order, each usage's line trimmed as
+                // the list shows it.
+                let mut files: Vec<crate::usages::UsageFile> = Vec::new();
+                for (path, range) in found {
+                    let (chars, _) = this.target_range(&path, range, enc, cx);
+                    let line = this.line_text(&path, range.start.line as usize, cx);
+                    let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+                    let text: String = line.chars().skip(indent).collect();
+                    let start_col =
+                        weep_lsp::position::column_from_lsp(&line, range.start.character, enc)
+                            .saturating_sub(indent);
+                    let usage = crate::usages::Usage {
+                        hit: start_col..start_col + chars.len(),
+                        range: chars,
+                        row: range.start.line as usize,
+                        text,
+                    };
+                    match files.last_mut() {
+                        Some(f) if f.path == path => f.usages.push(usage),
+                        _ => files.push(crate::usages::UsageFile {
+                            dir: crate::usages::dir_of(&this.root, &path),
+                            path,
+                            usages: vec![usage],
+                        }),
+                    }
+                }
+                this.show_usages(&editor, caret_row, files, cx);
             },
         );
     }
