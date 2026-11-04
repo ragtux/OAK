@@ -8,6 +8,8 @@
 
 use crate::actions::{PopupBackspace, PopupCancel, PopupConfirm, PopupDown, PopupUp};
 use crate::input::{InputEvent, TextInput};
+use crate::list_popup::{tui_cols, tui_input_row, tui_row, tui_scrollbar, tui_top, TuiRow};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     deferred, div, point, prelude::*, px, App, BoxShadow, Context, ElementId, Entity, EventEmitter,
@@ -94,6 +96,7 @@ pub struct Prompt {
     pub selected: usize,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
+    tui_scroll: RowScroll,
 }
 
 impl EventEmitter<PromptEvent> for Prompt {}
@@ -116,7 +119,12 @@ impl Prompt {
     ) -> Self {
         let input = kind.has_field().then(|| {
             let placeholder = kind.placeholder();
-            let input = cx.new(|cx| TextInput::new(placeholder, cx));
+            let input = cx.new(|cx| {
+                let mut input = TextInput::new(placeholder, cx);
+                // The prompt draws its own `›` cell in the tui skin.
+                input.tui_prompt = false;
+                input
+            });
             if !initial.is_empty() {
                 input.update(cx, |i, cx| i.set_text(initial, cx));
             }
@@ -130,6 +138,7 @@ impl Prompt {
             selected: 0,
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
+            tui_scroll: RowScroll::default(),
         }
     }
 
@@ -186,6 +195,9 @@ impl Prompt {
 
 impl Render for Prompt {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let entity = cx.entity();
@@ -308,5 +320,145 @@ impl Render for Prompt {
                     )
                 }),
         )
+        .into_any_element()
+    }
+}
+
+// ---- the tui skin ---------------------------------------------------------------
+
+impl Prompt {
+    /// A box under the toolbar (`docs/tui-skin.md`, Prompts): the title set
+    /// into the top edge, the field as a `›` row, a rule joining the frame,
+    /// the rows, and the keys in the bottom edge.
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let bg = theme.popup_bg;
+        let cols = tui_cols(PROMPT_WIDTH * m.zoom, cell, window);
+        let total = self.items.len();
+        let visible = total.min(PROMPT_MAX_ROWS);
+        self.tui_scroll.follow(self.selected, total, visible);
+        let top = self.tui_scroll.top;
+        let field = self.input.clone();
+        let field_rows = usize::from(field.is_some());
+        // The rule between the field and the rows.
+        let rule = field.is_some() && visible > 0;
+        let rows = 2 + field_rows + usize::from(rule) + visible;
+        let entity = cx.entity();
+        let items: Vec<gpui::AnyElement> = self
+            .items
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(visible)
+            .map(|(ix, item)| {
+                let entity = entity.clone();
+                tui_row(
+                    ElementId::NamedInteger("prompt-row".into(), ix as u64),
+                    TuiRow::text(item.clone()),
+                    cols - 2,
+                    ix == self.selected,
+                    cell,
+                    &theme,
+                )
+                .on_click(move |_, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.selected = ix;
+                        this.confirm(cx);
+                    })
+                })
+                .into_any_element()
+            })
+            .collect();
+        let focused = field
+            .as_ref()
+            .is_some_and(|i| i.read(cx).is_focused(window));
+        let body = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .children(
+                field.map(|input| tui_input_row("›", focused, input, Vec::new(), &theme, cell)),
+            )
+            .when(rule, |d| d.child(div().h(px(cell.h)).flex_shrink_0()))
+            .child(
+                div()
+                    .id("prompt-list")
+                    .flex()
+                    .flex_col()
+                    .on_scroll_wheel(cx.listener(move |this, e, _, cx| {
+                        if this.tui_scroll.wheel(e, cell, total, visible) {
+                            cx.notify();
+                        }
+                    }))
+                    .children(items),
+            )
+            .into_any_element();
+        let hints: &[(&str, &str)] = if self.kind.has_field() {
+            &[("↵", "ok"), ("esc", "cancel")]
+        } else {
+            &[("↵", "choose"), ("esc", "cancel")]
+        };
+        let close = entity.clone();
+        let list_top = 1 + field_rows + usize::from(rule);
+        deferred(
+            div()
+                .id("prompt")
+                .key_context("Popup")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::up))
+                .on_action(cx.listener(Self::down))
+                .on_action(cx.listener(Self::confirm_action))
+                .on_action(cx.listener(Self::cancel))
+                .on_action(cx.listener(Self::backspace))
+                .on_mouse_down_out(move |_, _, cx| {
+                    close.update(cx, |_, cx| cx.emit(PromptEvent::Cancel));
+                })
+                .absolute()
+                .left(skin::centred_x(window.viewport_size().width, cols, cell))
+                .top(cell.rows(tui_top(cell, &m)))
+                .child(
+                    skin::boxed(
+                        cell,
+                        cols,
+                        rows,
+                        vec![skin::title(self.kind.title(), theme.text_primary)],
+                        if rule {
+                            vec![1 + field_rows]
+                        } else {
+                            Vec::new()
+                        },
+                        body,
+                        bg,
+                        theme.border_focused,
+                        &theme,
+                        m,
+                    )
+                    .occlude()
+                    .child(skin::edge_strip(
+                        cell,
+                        rows - 1,
+                        2,
+                        cols.saturating_sub(4),
+                        skin::hints(hints, &theme),
+                        bg,
+                    ))
+                    .when(visible > 0, |d| {
+                        d.child(tui_scrollbar(
+                            cell,
+                            cols - 1,
+                            list_top,
+                            rows - 1,
+                            top,
+                            visible,
+                            total,
+                            &theme,
+                            m,
+                        ))
+                    }),
+                ),
+        )
+        .into_any_element()
     }
 }

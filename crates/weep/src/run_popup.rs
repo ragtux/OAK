@@ -9,7 +9,9 @@
 use crate::actions::{PopupConfirm, PopupDown, PopupUp, RunDeleteConfiguration};
 use crate::assets::icon;
 use crate::input::{InputEvent, TextInput};
+use crate::list_popup::{tui_cols, tui_input_row, tui_row, tui_top, TuiRow};
 use crate::search_tool::frame;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     deferred, div, point, prelude::*, px, App, BoxShadow, Context, Entity, EventEmitter,
@@ -83,7 +85,12 @@ impl RunPopup {
         workspace: String,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new("Run command or configuration", cx));
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("Run command or configuration", cx);
+            // The popup draws its own prompt cell in the tui skin.
+            input.tui_prompt = false;
+            input
+        });
         cx.subscribe(&input, Self::on_input).detach();
         let mut popup = RunPopup {
             input,
@@ -397,6 +404,9 @@ impl RunPopup {
 
 impl Render for RunPopup {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let viewport = window.viewport_size();
@@ -473,5 +483,224 @@ impl Render for RunPopup {
                         .children(rows),
                 ),
         )
+        .into_any_element()
+    }
+}
+
+// ---- the tui skin ---------------------------------------------------------------
+
+/// A line of the tui popup under the field: a rule joining the frame (with
+/// a section's name set in) or a row.
+enum TuiLine {
+    Rule(Option<SharedString>),
+    Row(usize),
+}
+
+impl RunPopup {
+    /// A configuration's one-cell mark: `$` a shell command, the Rust
+    /// glyph for cargo, `▶` the rest.
+    fn tui_glyph(kind: &str, theme: &Theme) -> (&'static str, gpui::Hsla) {
+        match kind {
+            "command" | "shell" => ("$", theme.text_secondary),
+            "cargo" => skin::file_glyph("a.rs", theme),
+            _ => ("▶", theme.text_positive),
+        }
+    }
+
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let bg = theme.popup_goto_bg;
+        let cols = tui_cols(m.goto_width, cell, window);
+        let inner = cols - 2;
+        let mut lines: Vec<TuiLine> = Vec::new();
+        for (ix, row) in self.rows.iter().enumerate() {
+            match row {
+                Row::Header(t) => match lines.last_mut() {
+                    Some(TuiLine::Rule(title @ None)) => *title = Some(t.clone()),
+                    _ => lines.push(TuiLine::Rule(Some(t.clone()))),
+                },
+                Row::Separator => {
+                    if !matches!(lines.last(), Some(TuiLine::Rule(_))) {
+                        lines.push(TuiLine::Rule(None));
+                    }
+                }
+                _ => {
+                    if lines.is_empty() {
+                        lines.push(TuiLine::Rule(None));
+                    }
+                    lines.push(TuiLine::Row(ix));
+                }
+            }
+        }
+        let rows = 3 + lines.len();
+        let mut rules = Vec::new();
+        let mut titles = Vec::new();
+        let mut body_rows: Vec<gpui::AnyElement> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let box_row = 2 + i;
+            match line {
+                TuiLine::Rule(title) => {
+                    rules.push(box_row);
+                    if let Some(t) = title {
+                        titles.push((box_row, t.clone()));
+                    }
+                    body_rows.push(div().h(px(cell.h)).flex_shrink_0().into_any_element());
+                }
+                TuiLine::Row(ix) => {
+                    body_rows.push(self.render_tui_row(*ix, inner, &theme, cell, cx))
+                }
+            }
+        }
+        let field_focused = self.input.read(cx).is_focused(window);
+        let body = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(tui_input_row(
+                "›",
+                field_focused,
+                self.input.clone(),
+                Vec::new(),
+                &theme,
+                cell,
+            ))
+            .children(body_rows)
+            .into_any_element();
+        let close = cx.entity();
+        let mut boxed = skin::boxed(
+            cell,
+            cols,
+            rows,
+            vec![skin::title("Run & Debug", theme.text_primary)],
+            rules,
+            body,
+            bg,
+            theme.border_focused,
+            &theme,
+            m,
+        )
+        .occlude()
+        .child(skin::edge_strip(
+            cell,
+            rows - 1,
+            2,
+            cols.saturating_sub(4),
+            skin::hints(&[("↵", "run"), ("esc", "close")], &theme),
+            bg,
+        ));
+        for (row, t) in titles {
+            boxed = boxed.child(skin::edge_strip(
+                cell,
+                row,
+                2,
+                cols.saturating_sub(4),
+                vec![skin::title(t, theme.text_tertiary)],
+                bg,
+            ));
+        }
+        deferred(
+            div()
+                .id("run-popup")
+                .key_context("Popup")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::up))
+                .on_action(cx.listener(Self::down))
+                .on_action(cx.listener(Self::confirm))
+                .on_action(cx.listener(Self::delete))
+                .on_mouse_down_out(move |_, _, cx| {
+                    close.update(cx, |_, cx| cx.emit(RunPopupEvent::Cancel));
+                })
+                .absolute()
+                .left(skin::centred_x(window.viewport_size().width, cols, cell))
+                .top(cell.rows(tui_top(cell, &m)))
+                .child(boxed),
+        )
+        .into_any_element()
+    }
+
+    /// A configuration's row: its mark and name (recent ones italic), and on
+    /// the selected row `[ Run ] ⋯` at the right; or the edit row.
+    fn render_tui_row(
+        &self,
+        ix: usize,
+        cols: usize,
+        theme: &Theme,
+        cell: Cell,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let selected = ix == self.selected;
+        let entity = cx.entity();
+        let hover = entity.clone();
+        match &self.rows[ix] {
+            Row::Recent(config) | Row::Config(config) => {
+                let config_ix = *config;
+                let c = &self.configs[config_ix];
+                let mut row = TuiRow::text(skin::fit_text(&c.name, cols.saturating_sub(16)));
+                row.glyph = Some(Self::tui_glyph(&c.kind, theme));
+                row.italic = matches!(self.rows[ix], Row::Recent(_));
+                let run = entity.clone();
+                let more = entity.clone();
+                tui_row(
+                    gpui::ElementId::NamedInteger("run-row".into(), ix as u64),
+                    row,
+                    cols,
+                    selected,
+                    cell,
+                    theme,
+                )
+                .on_mouse_move(move |_, _, cx| {
+                    hover.update(cx, |this, cx| {
+                        if this.selected != ix {
+                            this.selected = ix;
+                            cx.notify();
+                        }
+                    })
+                })
+                .on_click(move |_, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.selected = ix;
+                        cx.emit(RunPopupEvent::Run(config_ix));
+                    })
+                })
+                .when(selected, |d| {
+                    d.child(
+                        skin::button("run-row-run", "Run", false, theme, cell).on_click(
+                            move |_, _, cx| {
+                                cx.stop_propagation();
+                                run.update(cx, |_, cx| cx.emit(RunPopupEvent::Run(config_ix)))
+                            },
+                        ),
+                    )
+                    .child(div().w(cell.cols(1)).flex_shrink_0())
+                    .child(
+                        div()
+                            .id("run-row-more")
+                            .w(cell.cols(1))
+                            .flex_shrink_0()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme.ghost_hovered))
+                            .child("⋯")
+                            .on_click(move |event, _, cx| {
+                                cx.stop_propagation();
+                                let at = event.position();
+                                more.update(cx, |_, cx| cx.emit(RunPopupEvent::More(config_ix, at)))
+                            }),
+                    )
+                    .child(div().w(cell.cols(1)).flex_shrink_0())
+                })
+                .into_any_element()
+            }
+            _ => {
+                let mut row = TuiRow::text("Edit Run Configurations...");
+                row.glyph = Some(("≡", theme.text_secondary));
+                tui_row("run-row-edit", row, cols, selected, cell, theme)
+                    .on_click(move |_, _, cx| {
+                        entity.update(cx, |_, cx| cx.emit(RunPopupEvent::Edit(None)))
+                    })
+                    .into_any_element()
+            }
+        }
     }
 }

@@ -23,7 +23,9 @@ use crate::document::Document;
 use crate::editor::EditorView;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap::{action_title, hint_for, is_plain_key, ACTION_IDS};
+use crate::list_popup::{icon_glyph, tui_row, tui_scrollbar, TuiRow};
 use crate::search_tool::{frame, toggle_button, Overrides};
+use crate::skin::{self, Cell, RowScroll, Skin};
 use crate::theme::{metrics::GOTO_PREVIEW_SHARE, Metrics, Theme};
 use crate::tooltip::Tooltip;
 use crate::workspace::Tool;
@@ -301,6 +303,8 @@ pub struct GotoPanel {
     preview: Option<(PathBuf, Entity<EditorView>)>,
     open_document: OpenDocument,
     search: TextSearch,
+    /// The tui skin's list, scrolled in whole rows.
+    tui_scroll: RowScroll,
 }
 
 impl EventEmitter<GotoEvent> for GotoPanel {}
@@ -347,7 +351,12 @@ impl GotoPanel {
         open_document: OpenDocument,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new(mode.placeholder(), cx));
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(mode.placeholder(), cx);
+            // The popup draws its own prompt cell in the tui skin.
+            input.tui_prompt = false;
+            input
+        });
         if !initial.is_empty() {
             input.update(cx, |i, cx| {
                 i.set_text(initial, cx);
@@ -355,8 +364,18 @@ impl GotoPanel {
             });
         }
         cx.subscribe(&input, Self::on_input).detach();
-        let replace = cx.new(|cx| TextInput::new("Replace", cx));
-        let folder = cx.new(|cx| TextInput::new("In folder", cx));
+        let replace = cx.new(|cx| {
+            let mut input = TextInput::new("Replace", cx);
+            // The popup draws its own prompt cell in the tui skin.
+            input.tui_prompt = false;
+            input
+        });
+        let folder = cx.new(|cx| {
+            let mut input = TextInput::new("In folder", cx);
+            // The popup draws its own prompt cell in the tui skin.
+            input.tui_prompt = false;
+            input
+        });
         let mask = cx.new(|cx| TextInput::new("File mask: *.*", cx));
         cx.subscribe(&replace, Self::on_replace_input).detach();
         cx.subscribe(&folder, Self::on_scope_input).detach();
@@ -370,6 +389,7 @@ impl GotoPanel {
             scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             preview: None,
+            tui_scroll: RowScroll::default(),
             open_document,
             search: TextSearch {
                 replace,
@@ -805,6 +825,7 @@ impl GotoPanel {
         self.rows = rows;
         self.selected = self.item_indices().first().copied().unwrap_or(0);
         self.scroll.scroll_to_item(0);
+        self.tui_scroll.reset();
         self.update_preview(cx);
         cx.notify();
     }
@@ -877,6 +898,7 @@ impl GotoPanel {
                 this.rows = this.match_rows();
                 this.selected = 0;
                 this.scroll.scroll_to_item(0);
+                this.tui_scroll.reset();
                 this.update_preview(cx);
                 cx.notify();
             });
@@ -1543,6 +1565,9 @@ impl GotoPanel {
 
 impl Render for GotoPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let viewport = window.viewport_size();
@@ -1787,6 +1812,7 @@ impl Render for GotoPanel {
                     )
                 }),
         )
+        .into_any_element()
     }
 }
 
@@ -1795,5 +1821,544 @@ impl GotoPanel {
     #[allow(dead_code)]
     fn px_of(v: f32) -> Pixels {
         px(v)
+    }
+}
+
+// ---- the tui skin ------------------------------------------------------------------
+
+impl GotoPanel {
+    fn tui_glyph(item: &GotoItem, theme: &Theme) -> Option<(&'static str, gpui::Hsla)> {
+        match &item.target {
+            GotoTarget::File(_) => Some(skin::file_glyph(&item.title, theme)),
+            GotoTarget::TextMatch { .. } => None,
+            GotoTarget::Workspace(_) => Some(("□", theme.text_secondary)),
+            _ => item.icon.map(|p| icon_glyph(p, theme)),
+        }
+    }
+
+    /// The tabs set into the top edge: ` Goto ` and the rest with a cell of
+    /// frame line between them, the active one filled.
+    fn render_tui_tabs(
+        &self,
+        theme: &Theme,
+        cell: Cell,
+        cx: &Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let bg = theme.popup_goto_bg;
+        if self.mode == GotoMode::Workspaces {
+            return vec![skin::title("Recent Workspaces", theme.text_primary)];
+        }
+        let current = self.mode.tab();
+        let mut out = Vec::new();
+        for (ix, tab) in Tab::ALL.into_iter().enumerate() {
+            if ix > 0 {
+                out.push(div().w(cell.cols(1)).flex_shrink_0().into_any_element());
+            }
+            let on = tab == current;
+            let entity = cx.entity();
+            let text = format!(" {} ", tab.label());
+            out.push(
+                div()
+                    .id(ElementId::NamedInteger("goto-tab".into(), ix as u64))
+                    .flex_shrink_0()
+                    .w(cell.cols(Cell::text_cols(&text)))
+                    .whitespace_nowrap()
+                    .cursor_pointer()
+                    .map(|d| {
+                        if on {
+                            d.bg(theme.tab_bg_selected_focused)
+                                .text_color(theme.tab_text_selected)
+                                .font_weight(FontWeight::BOLD)
+                        } else {
+                            d.bg(bg)
+                                .text_color(theme.tab_text)
+                                .hover(|s| s.bg(theme.tab_bg_hovered))
+                        }
+                    })
+                    .on_click(move |_, window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.set_mode(tab.mode(), cx);
+                            this.focus_handle(cx).focus(window, cx);
+                        })
+                    })
+                    .child(SharedString::from(text))
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+
+    /// The scope chips: ` Files  Symbols  Symbols in File `, the active one filled.
+    fn render_tui_filters(&self, theme: &Theme, cell: Cell, cx: &Context<Self>) -> gpui::Div {
+        let current = self.mode.filter();
+        div()
+            .h(px(cell.h))
+            .flex_shrink_0()
+            .flex()
+            .pl(cell.cols(1))
+            .children(
+                Filter::ALL
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(|(ix, filter)| {
+                        let on = current == Some(filter);
+                        let entity = cx.entity();
+                        let text = format!(" {} ", filter.label());
+                        [
+                            div()
+                                .id(ElementId::NamedInteger("goto-filter".into(), ix as u64))
+                                .flex_shrink_0()
+                                .w(cell.cols(Cell::text_cols(&text)))
+                                .whitespace_nowrap()
+                                .cursor_pointer()
+                                .map(|d| {
+                                    if on {
+                                        d.bg(theme.toggle_on_bg).text_color(theme.toggle_on_text)
+                                    } else {
+                                        d.text_color(theme.text_secondary)
+                                            .hover(|s| s.bg(theme.list_bg_hovered))
+                                    }
+                                })
+                                .on_click(move |_, window, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        let mode = if on {
+                                            GotoMode::Everything
+                                        } else {
+                                            filter.mode()
+                                        };
+                                        this.set_mode(mode, cx);
+                                        this.focus_handle(cx).focus(window, cx);
+                                    })
+                                })
+                                .child(SharedString::from(text))
+                                .into_any_element(),
+                            div().w(cell.cols(1)).flex_shrink_0().into_any_element(),
+                        ]
+                    }),
+            )
+    }
+
+    /// The rows above the list, inside the frame: the query, the scope
+    /// chips (Goto) or the replace and scope fields (Text Search).
+    fn render_tui_head(
+        &self,
+        window: &Window,
+        theme: &Theme,
+        cell: Cell,
+        cx: &Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        use crate::list_popup::{tui_gap, tui_input_row, tui_toggle};
+        let mut out = Vec::new();
+        let entity = cx.entity();
+        let s = &self.search;
+        let mut trailing = Vec::new();
+        if self.mode == GotoMode::TextSearch {
+            let options = [
+                ("Aa", s.case_sensitive, 0usize),
+                ("W", s.whole_word, 1),
+                (".*", s.regex, 2),
+                ("↳", s.replace_mode, 3),
+            ];
+            for (label, on, which) in options {
+                let entity = entity.clone();
+                trailing.push(tui_gap(cell, 1));
+                trailing.push(
+                    tui_toggle(
+                        ElementId::NamedInteger("goto-option".into(), which as u64),
+                        label,
+                        on,
+                        theme,
+                        cell,
+                    )
+                    .on_click(move |_, _, cx| {
+                        entity.update(cx, |this, cx| this.toggle_search_option(which, cx))
+                    })
+                    .into_any_element(),
+                );
+            }
+            trailing.push(tui_gap(cell, 1));
+        }
+        out.push(
+            tui_input_row(
+                "›",
+                self.input.read(cx).is_focused(window),
+                self.input.clone(),
+                trailing,
+                theme,
+                cell,
+            )
+            .into_any_element(),
+        );
+        if self.mode.tab() == Tab::Goto && self.mode != GotoMode::Workspaces {
+            out.push(self.render_tui_filters(theme, cell, cx).into_any_element());
+        }
+        if self.mode == GotoMode::TextSearch {
+            if s.replace_mode {
+                let one = entity.clone();
+                let all = entity.clone();
+                out.push(
+                    tui_input_row(
+                        "↳",
+                        s.replace.read(cx).is_focused(window),
+                        s.replace.clone(),
+                        vec![
+                            tui_gap(cell, 1),
+                            skin::button("goto-replace-one", "Replace", false, theme, cell)
+                                .on_click(move |_, _, cx| {
+                                    one.update(cx, |this, cx| this.replace_one(cx))
+                                })
+                                .into_any_element(),
+                            tui_gap(cell, 1),
+                            skin::button("goto-replace-all", "All", false, theme, cell)
+                                .on_click(move |_, _, cx| {
+                                    all.update(cx, |this, cx| this.replace_all(cx))
+                                })
+                                .into_any_element(),
+                        ],
+                        theme,
+                        cell,
+                    )
+                    .into_any_element(),
+                );
+            }
+            let label = |text: &'static str| {
+                div()
+                    .flex_shrink_0()
+                    .w(cell.cols(Cell::text_cols(text)))
+                    .bg(theme.popup_goto_bg)
+                    .text_color(theme.text_tertiary)
+                    .child(text)
+                    .into_any_element()
+            };
+            out.push(
+                tui_input_row(
+                    "⌕",
+                    s.folder.read(cx).is_focused(window) || s.mask.read(cx).is_focused(window),
+                    s.folder.clone(),
+                    vec![
+                        label(" mask "),
+                        div()
+                            .w(cell.cols(16))
+                            .flex_shrink_0()
+                            .h_full()
+                            .child(s.mask.clone())
+                            .into_any_element(),
+                    ],
+                    theme,
+                    cell,
+                )
+                .into_any_element(),
+            );
+        }
+        out
+    }
+
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use crate::list_popup::{tui_heading, tui_max_rows, tui_top};
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let bg = theme.popup_goto_bg;
+        let idle = self.search_idle(cx);
+        let full = self.mode.full_height() && !idle;
+        let show_preview = full && !self.sources.preview_hidden && self.mode.has_preview();
+        let all_cols = Cell::fit(window.viewport_size().width, cell.w);
+        let share = if show_preview { 0.8 } else { 0.6 };
+        let cols = ((all_cols as f32 * share).round() as usize)
+            .max(48)
+            .min(all_cols.saturating_sub(2))
+            .max(12);
+        // The rows to list: separators go (the next heading is a rule), and
+        // a heading at the top is set into the frame's rule instead.
+        let mut shown: Vec<usize> = (0..self.rows.len())
+            .filter(|ix| !matches!(self.rows[*ix], Row::Separator))
+            .collect();
+        let mut rule_title: Option<SharedString> = None;
+        if let Some(Row::Header(text)) = shown.first().map(|ix| &self.rows[*ix]) {
+            rule_title = Some(text.clone());
+            shown.remove(0);
+        }
+        if self.mode == GotoMode::TextSearch {
+            let count = self.count_text(cx);
+            rule_title = (!count.is_empty()).then_some(count);
+        }
+        let head = self.render_tui_head(window, &theme, cell, cx);
+        let head_rows = head.len();
+        let max_rows = tui_max_rows(cell, &m, window);
+        let room = max_rows.saturating_sub(head_rows + 3).max(1);
+        let list_rows = if idle {
+            0
+        } else if full {
+            room
+        } else {
+            shown.len().clamp(1, room)
+        };
+        let rule_row = 1 + head_rows;
+        let rows = if idle {
+            head_rows + 2
+        } else {
+            rule_row + 1 + list_rows + 1
+        };
+        let list_cols = if show_preview {
+            ((cols - 3) * 2 / 5).max(10)
+        } else {
+            cols - 2
+        };
+        let vcol = 1 + list_cols;
+        let preview_cols = cols.saturating_sub(vcol + 2);
+        let selected_pos = shown
+            .iter()
+            .position(|ix| *ix == self.selected)
+            .unwrap_or(0);
+        self.tui_scroll.follow(selected_pos, shown.len(), list_rows);
+        let top = self.tui_scroll.top;
+        let total = shown.len();
+        let entity = cx.entity();
+        let list: Vec<gpui::AnyElement> = shown
+            .iter()
+            .skip(top)
+            .take(list_rows)
+            .map(|&ix| match &self.rows[ix] {
+                Row::Header(text) => tui_heading(text.clone(), list_cols, bg, &theme, cell, m),
+                Row::Separator => div().into_any_element(),
+                Row::Item(item) => {
+                    let outline = self.mode == GotoMode::SymbolsInFile;
+                    let mut row = TuiRow::text(item.title.clone());
+                    row.glyph = Self::tui_glyph(item, &theme);
+                    row.highlights = item.highlights.clone();
+                    row.detail = item.detail.clone();
+                    row.right = item.right.clone();
+                    row.indent = if outline { item.depth * 2 } else { 0 };
+                    let hover = entity.clone();
+                    let click = entity.clone();
+                    tui_row(
+                        ElementId::NamedInteger("goto-row".into(), ix as u64),
+                        row,
+                        list_cols,
+                        ix == self.selected,
+                        cell,
+                        &theme,
+                    )
+                    .on_mouse_move(move |_, _, cx| {
+                        hover.update(cx, |this, cx| {
+                            if this.selected != ix {
+                                this.select(ix, cx);
+                            }
+                        })
+                    })
+                    .on_click(move |event, _, cx| {
+                        let shift = event.modifiers().shift;
+                        click.update(cx, |this, cx| {
+                            this.selected = ix;
+                            this.open_selected(shift, cx);
+                        })
+                    })
+                    .into_any_element()
+                }
+            })
+            .collect();
+        let empty = list.is_empty();
+        let list_area = div()
+            .id("goto-list")
+            .w(cell.cols(list_cols))
+            .h(cell.rows(list_rows))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .on_scroll_wheel(cx.listener(move |this, e, _, cx| {
+                if this.tui_scroll.wheel(e, cell, total, list_rows) {
+                    cx.notify();
+                }
+            }))
+            .map(|d| {
+                if empty && self.mode != GotoMode::TextSearch {
+                    d.items_center()
+                        .justify_center()
+                        .text_color(theme.text_tertiary)
+                        .child("Nothing found")
+                } else {
+                    d.children(list)
+                }
+            });
+        let preview = self.preview.clone().filter(|_| show_preview);
+        let body = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .children(head)
+            .when(!idle, |d| {
+                d.child(div().h(px(cell.h)).flex_shrink_0()).child(
+                    div().flex().child(list_area).when(show_preview, |d| {
+                        d.child(div().w(cell.cols(1)).flex_shrink_0()).child(
+                            div()
+                                .relative()
+                                .w(cell.cols(preview_cols))
+                                .h(cell.rows(list_rows))
+                                .flex_shrink_0()
+                                .overflow_hidden()
+                                .children(preview.map(|(_, editor)| editor))
+                                // The field keeps the keyboard: clicks on the preview go nowhere.
+                                .child(div().absolute().inset_0().occlude()),
+                        )
+                    }),
+                )
+            })
+            .into_any_element();
+        let frame_color = theme.border_focused;
+        let vrule = show_preview.then(|| {
+            gpui::canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    skin::paint_vrule(
+                        window,
+                        bounds.origin,
+                        cell,
+                        vcol,
+                        rule_row,
+                        rows - 1,
+                        frame_color,
+                        &m,
+                    );
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        });
+        let toggle = entity.clone();
+        let preview_mark = (self.mode.has_preview()).then(|| {
+            let text = if self.sources.preview_hidden {
+                " □ preview "
+            } else {
+                " ■ preview "
+            };
+            div()
+                .id("goto-preview-toggle")
+                .cursor_pointer()
+                .whitespace_nowrap()
+                .text_color(theme.text_secondary)
+                .hover(|s| s.bg(theme.list_bg_hovered))
+                .on_click(move |_, _, cx| toggle.update(cx, |this, cx| this.toggle_preview(cx)))
+                .child(text)
+                .into_any_element()
+        });
+        let crumbs = if show_preview {
+            self.breadcrumb()
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("/")
+        } else {
+            String::new()
+        };
+        let hint_cols = if show_preview {
+            vcol.saturating_sub(3)
+        } else {
+            cols.saturating_sub(4)
+        };
+        let hints: &[(&str, &str)] = match self.mode {
+            GotoMode::TextSearch if idle => &[("↵", "search"), ("⇥", "next tab"), ("esc", "close")],
+            GotoMode::Workspaces => &[("↵", "open"), ("esc", "close")],
+            _ => &[("↵", "open"), ("⇥", "next tab"), ("esc", "close")],
+        };
+        let tabs = self.render_tui_tabs(&theme, cell, cx);
+        let close = cx.entity();
+        let left = skin::centred_x(window.viewport_size().width, cols, cell);
+        let boxed = skin::boxed(
+            cell,
+            cols,
+            rows,
+            Vec::new(),
+            if idle { Vec::new() } else { vec![rule_row] },
+            body,
+            bg,
+            frame_color,
+            &theme,
+            m,
+        )
+        .occlude()
+        .children(vrule)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left(cell.cols(2))
+                .h(px(cell.h))
+                .max_w(cell.cols(cols.saturating_sub(16)))
+                .overflow_hidden()
+                .flex()
+                .children(tabs),
+        )
+        .when_some(preview_mark, |d, mark| {
+            d.child(skin::edge_strip_end(cell, 0, vec![mark], bg))
+        })
+        .when_some(rule_title.filter(|_| !idle), |d, t| {
+            d.child(skin::edge_strip(
+                cell,
+                rule_row,
+                2,
+                list_cols.saturating_sub(2),
+                vec![skin::title(
+                    skin::fit_text(&t, list_cols.saturating_sub(4)),
+                    if self.search.error.is_some() {
+                        theme.text_dangerous
+                    } else {
+                        theme.text_tertiary
+                    },
+                )],
+                bg,
+            ))
+        })
+        .child(skin::edge_strip(
+            cell,
+            rows - 1,
+            2,
+            hint_cols,
+            skin::hints(hints, &theme),
+            bg,
+        ))
+        .when(!crumbs.is_empty(), |d| {
+            d.child(skin::edge_strip_end(
+                cell,
+                rows - 1,
+                vec![skin::title(
+                    skin::fit_text(&crumbs, preview_cols.saturating_sub(4)),
+                    theme.text_secondary,
+                )],
+                bg,
+            ))
+        })
+        .when(!idle, |d| {
+            d.child(tui_scrollbar(
+                cell,
+                if show_preview { vcol } else { cols - 1 },
+                rule_row + 1,
+                rows - 1,
+                top,
+                list_rows,
+                total,
+                &theme,
+                m,
+            ))
+        });
+        deferred(
+            div()
+                .id("goto-panel")
+                .key_context("Popup")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::up))
+                .on_action(cx.listener(Self::down))
+                .on_action(cx.listener(Self::page_up))
+                .on_action(cx.listener(Self::page_down))
+                .on_mouse_down_out(move |_, _, cx| {
+                    close.update(cx, |_, cx| cx.emit(GotoEvent::Cancel));
+                })
+                .absolute()
+                .left(left)
+                .top(cell.rows(tui_top(cell, &m)))
+                .child(boxed),
+        )
+        .into_any_element()
     }
 }

@@ -12,7 +12,7 @@
 //! for the frames.
 
 use super::*;
-use gpui::AnyElement;
+use gpui::{AnyElement, Hsla};
 use weep_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, SignatureHelp};
 use weep_lsp::markup::Line;
 use weep_lsp::TextChange;
@@ -777,6 +777,24 @@ impl EditorView {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let bounds = self.last_bounds;
+        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            let cell = crate::skin::Cell::current(cx);
+            if self
+                .smart
+                .completion
+                .as_ref()
+                .is_some_and(|p| !p.filtered.is_empty())
+            {
+                out.extend(self.render_completion_tui(&theme, m, bounds, cell, window, cx));
+            }
+            if self.smart.signature.is_some() {
+                out.extend(self.render_signature_tui(&theme, m, bounds, cell, window, cx));
+            }
+            if self.smart.hover.is_some() {
+                out.extend(self.render_hover_tui(&theme, m, bounds, cell, window, cx));
+            }
+            return out;
+        }
         let lh = self.line_height();
         if let Some(popup) = &self.smart.completion {
             if !popup.filtered.is_empty() {
@@ -1209,6 +1227,479 @@ impl EditorView {
             .flex()
             .flex_col()
             .children(Self::markup_lines(&lines, theme, m))
+            .into_any_element()]
+    }
+}
+
+// ---- the tui skin ------------------------------------------------------------------
+
+/// A completion's one-cell mark (`docs/tui-skin.md`): `ƒ` callables, `◇`
+/// types, `▪` fields and values, `·` the rest.
+fn kind_glyph(kind: Option<CompletionItemKind>, theme: &Theme) -> (&'static str, Hsla) {
+    match kind {
+        Some(CompletionItemKind::FUNCTION)
+        | Some(CompletionItemKind::METHOD)
+        | Some(CompletionItemKind::CONSTRUCTOR) => ("ƒ", theme.icon_red),
+        Some(CompletionItemKind::STRUCT)
+        | Some(CompletionItemKind::CLASS)
+        | Some(CompletionItemKind::ENUM)
+        | Some(CompletionItemKind::INTERFACE)
+        | Some(CompletionItemKind::TYPE_PARAMETER)
+        | Some(CompletionItemKind::MODULE) => ("◇", theme.icon_blue),
+        Some(CompletionItemKind::FIELD)
+        | Some(CompletionItemKind::PROPERTY)
+        | Some(CompletionItemKind::VARIABLE)
+        | Some(CompletionItemKind::CONSTANT)
+        | Some(CompletionItemKind::ENUM_MEMBER) => ("▪", theme.icon_green),
+        _ => ("·", theme.text_tertiary),
+    }
+}
+
+/// A documentation line on the grid: a rule joining the frame, or text.
+enum DocLine {
+    Rule,
+    Text(String, bool),
+}
+
+/// Markdown lines as whole rows of `cols` cells: prose wrapped, code cut
+/// with `…`, a separator as a rule; no rule first or last, no two in a row.
+fn doc_lines(lines: &[Line], cols: usize) -> Vec<DocLine> {
+    let mut out: Vec<DocLine> = Vec::new();
+    for line in lines {
+        if line.separator {
+            if !out.is_empty() && !matches!(out.last(), Some(DocLine::Rule)) {
+                out.push(DocLine::Rule);
+            }
+        } else if line.code {
+            out.push(DocLine::Text(crate::skin::fit_text(&line.text, cols), true));
+        } else {
+            out.extend(
+                crate::skin::wrap(&line.text, cols)
+                    .into_iter()
+                    .map(|l| DocLine::Text(l, false)),
+            );
+        }
+    }
+    while matches!(out.last(), Some(DocLine::Rule)) {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push(DocLine::Text(String::new(), false));
+    }
+    out
+}
+
+/// A box of documentation: `cols` wide, as many rows as the lines take up
+/// to `max_rows` in all, separators as rules joining the frame. Returns
+/// the box and its rows.
+fn doc_box(
+    lines: &[Line],
+    cols: usize,
+    max_rows: usize,
+    theme: &Theme,
+    cell: crate::skin::Cell,
+    m: Metrics,
+) -> (gpui::Div, usize) {
+    let inner = cols.saturating_sub(4).max(1);
+    let mut doc = doc_lines(lines, inner);
+    doc.truncate(max_rows.saturating_sub(2).max(1));
+    while matches!(doc.last(), Some(DocLine::Rule)) {
+        doc.pop();
+    }
+    let rows = doc.len() + 2;
+    let rules: Vec<usize> = doc
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| matches!(l, DocLine::Rule))
+        .map(|(i, _)| i + 1)
+        .collect();
+    let body = div()
+        .flex()
+        .flex_col()
+        .children(doc.into_iter().map(|line| {
+            match line {
+                DocLine::Rule => div().h(px(cell.h)).flex_shrink_0(),
+                DocLine::Text(text, code) => div()
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .pl(cell.cols(1))
+                    .whitespace_nowrap()
+                    .text_color(if code {
+                        theme.editor_text
+                    } else {
+                        theme.popup_text
+                    })
+                    .child(SharedString::from(text)),
+            }
+        }))
+        .into_any_element();
+    (
+        crate::skin::boxed(
+            cell,
+            cols,
+            rows,
+            Vec::new(),
+            rules,
+            body,
+            theme.popup_bg,
+            theme.popup_border,
+            theme,
+            m,
+        ),
+        rows,
+    )
+}
+
+impl EditorView {
+    /// Completion in the tui skin: a box whose top edge is the row under
+    /// the caret's (above it when there's no room), the labels in the
+    /// completed word's column; the documentation box beside it shares its
+    /// frame column.
+    fn render_completion_tui(
+        &mut self,
+        theme: &Theme,
+        m: Metrics,
+        bounds: Bounds<Pixels>,
+        cell: crate::skin::Cell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        use crate::list_popup::{tui_row, tui_scrollbar, TuiRow};
+        let start = {
+            let p = self.smart.completion.as_ref().expect("open");
+            self.adjust_range(p.start..p.start, p.version, cx).start
+        };
+        let anchor = self.char_bounds(start, window, cx);
+        let all_cols = crate::skin::Cell::fit(bounds.size.width, cell.w);
+        let all_rows = crate::skin::Cell::fit(bounds.size.height, cell.h);
+        let popup = self.smart.completion.as_mut().expect("open");
+        let max_rows = (m.completion_max_rows as usize).max(1);
+        if popup.selected < popup.scroll_top {
+            popup.scroll_top = popup.selected;
+        } else if popup.selected >= popup.scroll_top + max_rows {
+            popup.scroll_top = popup.selected + 1 - max_rows;
+        }
+        let shown = popup.filtered.len().min(max_rows);
+        let total = popup.filtered.len();
+        let top = popup.scroll_top;
+        let selected = popup.selected;
+        // Wide enough for the widest row shown, within Fleet's width.
+        let rows_data: Vec<(TuiRow, usize)> = popup
+            .filtered
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(max_rows)
+            .map(|(row_ix, f)| {
+                let item = &popup.candidates[f.ix].item;
+                let label_detail = item
+                    .label_details
+                    .as_ref()
+                    .and_then(|d| d.detail.clone())
+                    .unwrap_or_default();
+                let description = item
+                    .label_details
+                    .as_ref()
+                    .and_then(|d| d.description.clone())
+                    .or_else(|| item.detail.clone());
+                let title = format!("{}{label_detail}", item.label);
+                let offsets: Vec<usize> = item.label.char_indices().map(|(b, _)| b).collect();
+                let highlights = f
+                    .positions
+                    .iter()
+                    .filter_map(|p| {
+                        let b = *offsets.get(*p)?;
+                        let c = item.label[b..].chars().next()?;
+                        Some(b..b + c.len_utf8())
+                    })
+                    .collect();
+                let mut row = TuiRow::text(title);
+                row.glyph = Some(kind_glyph(item.kind, theme));
+                row.highlights = highlights;
+                row.right = description.map(|d| d.lines().next().unwrap_or("").to_string().into());
+                (row, row_ix)
+            })
+            .collect();
+        let want = rows_data
+            .iter()
+            .map(|(r, _)| {
+                5 + crate::skin::Cell::text_cols(&r.title)
+                    + r.right
+                        .as_ref()
+                        .map_or(0, |d| 2 + crate::skin::Cell::text_cols(d))
+            })
+            .max()
+            .unwrap_or(10);
+        let cap = ((m.completion_width / cell.w).round() as usize).max(24);
+        let cols = (want + 2).clamp(20, cap).min(all_cols.max(4));
+        let rows = shown + 2;
+        // The labels sit in the word's column: the frame, a margin, the
+        // glyph and a space come before them.
+        let fit_x =
+            |x: Pixels, cols: usize| x.min(cell.cols(all_cols.saturating_sub(cols))).max(px(0.));
+        let mut x = fit_x(anchor.origin.x - cell.cols(4), cols);
+        let mut y = anchor.origin.y + px(cell.h);
+        if y + cell.rows(rows) > bounds.size.height && anchor.origin.y >= cell.rows(rows) {
+            y = anchor.origin.y - cell.rows(rows);
+        }
+        let docs_cols = ((m.completion_docs_width / cell.w).round() as usize).max(20);
+        let docs_x = if !popup.docs_shown {
+            None
+        } else if x + cell.cols(cols + docs_cols - 1) <= cell.cols(all_cols) {
+            Some(x + cell.cols(cols - 1))
+        } else if x >= cell.cols(docs_cols - 1) {
+            Some(x - cell.cols(docs_cols - 1))
+        } else {
+            x = fit_x(
+                cell.cols(all_cols.saturating_sub(cols + docs_cols - 1)),
+                cols,
+            );
+            Some(x + cell.cols(cols - 1))
+        };
+        let docs = popup.docs.clone();
+        let rows_el: Vec<AnyElement> = rows_data
+            .into_iter()
+            .map(|(row, row_ix)| {
+                tui_row(
+                    ElementId::NamedInteger("completion-row".into(), row_ix as u64),
+                    row,
+                    cols - 2,
+                    row_ix == selected,
+                    cell,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(p) = this.smart.completion.as_mut() {
+                        p.selected = row_ix;
+                    }
+                    this.accept_completion(cx);
+                }))
+                .into_any_element()
+            })
+            .collect();
+        let body = div().flex().flex_col().children(rows_el).into_any_element();
+        let mut out = vec![div()
+            .absolute()
+            .left(x)
+            .top(y)
+            .occlude()
+            .child(
+                crate::skin::boxed(
+                    cell,
+                    cols,
+                    rows,
+                    Vec::new(),
+                    Vec::new(),
+                    body,
+                    theme.popup_bg,
+                    theme.popup_border,
+                    theme,
+                    m,
+                )
+                .child(tui_scrollbar(
+                    cell,
+                    cols - 1,
+                    1,
+                    rows - 1,
+                    top,
+                    shown,
+                    total,
+                    theme,
+                    m,
+                )),
+            )
+            .into_any_element()];
+        if let (Some(docs_x), Some(docs)) = (docs_x, docs) {
+            let lines = if docs.is_empty() {
+                vec![Line {
+                    text: "No documentation".into(),
+                    code: false,
+                    separator: false,
+                }]
+            } else {
+                docs
+            };
+            let max = ((m.smart_popup_max_height / cell.h).round() as usize)
+                .min(all_rows)
+                .max(3);
+            let (docs_box, docs_rows) = doc_box(&lines, docs_cols, max, theme, cell, m);
+            let docs_y = y
+                .min(cell.rows(all_rows.saturating_sub(docs_rows)))
+                .max(px(0.));
+            out.push(
+                div()
+                    .absolute()
+                    .left(docs_x)
+                    .top(docs_y)
+                    .occlude()
+                    .child(docs_box)
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+
+    /// Parameter info in the tui skin: a box of one row per signature whose
+    /// bottom edge is the row above the caret's, the current parameter bold
+    /// in `parameterInfo.match.text`.
+    fn render_signature_tui(
+        &mut self,
+        theme: &Theme,
+        m: Metrics,
+        bounds: Bounds<Pixels>,
+        cell: crate::skin::Cell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let caret = self.caret(cx);
+        let anchor = self.char_bounds(caret, window, cx);
+        let all_cols = crate::skin::Cell::fit(bounds.size.width, cell.w);
+        let help = &self.smart.signature.as_ref().expect("open").help;
+        let active_sig = help.active_signature.unwrap_or(0) as usize;
+        let mut widest = 0;
+        let rows_el: Vec<AnyElement> = help
+            .signatures
+            .iter()
+            .enumerate()
+            .map(|(ix, sig)| {
+                let is_active = ix == active_sig;
+                let label: Vec<char> = sig.label.chars().collect();
+                widest = widest.max(label.len());
+                let active_param = sig
+                    .active_parameter
+                    .or(help.active_parameter)
+                    .map(|p| p as usize);
+                let range = active_param
+                    .and_then(|p| sig.parameters.as_ref()?.get(p).cloned())
+                    .and_then(|param| match param.label {
+                        weep_lsp::lsp_types::ParameterLabel::Simple(s) => {
+                            let s: Vec<char> = s.chars().collect();
+                            label
+                                .windows(s.len().max(1))
+                                .position(|w| w == s.as_slice())
+                                .map(|start| start..start + s.len())
+                        }
+                        weep_lsp::lsp_types::ParameterLabel::LabelOffsets([s, e]) => {
+                            let to_char = |u: u32| {
+                                let mut units = 0u32;
+                                for (i, c) in label.iter().enumerate() {
+                                    if units >= u {
+                                        return i;
+                                    }
+                                    units += c.len_utf16() as u32;
+                                }
+                                label.len()
+                            };
+                            Some(to_char(s)..to_char(e))
+                        }
+                    })
+                    .filter(|r| is_active && r.start < r.end && r.end <= label.len());
+                let (before, inside, after): (String, String, String) = match &range {
+                    Some(r) => (
+                        label[..r.start].iter().collect(),
+                        label[r.clone()].iter().collect(),
+                        label[r.end..].iter().collect(),
+                    ),
+                    None => (sig.label.clone(), String::new(), String::new()),
+                };
+                div()
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .flex()
+                    .pl(cell.cols(1))
+                    .whitespace_nowrap()
+                    .text_color(if is_active {
+                        theme.popup_text
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(SharedString::from(before))
+                    .when(!inside.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme.parameter_info_match_text)
+                                .child(SharedString::from(inside)),
+                        )
+                    })
+                    .child(SharedString::from(after))
+                    .into_any_element()
+            })
+            .collect();
+        let rows = rows_el.len() + 2;
+        let cols = (widest + 4).min(all_cols.max(4));
+        let x = (anchor.origin.x - cell.cols(2))
+            .min(cell.cols(all_cols.saturating_sub(cols)))
+            .max(px(0.));
+        let mut y = anchor.origin.y - cell.rows(rows);
+        if y < px(0.) {
+            y = anchor.origin.y + px(cell.h);
+        }
+        let body = div().flex().flex_col().children(rows_el).into_any_element();
+        vec![div()
+            .absolute()
+            .left(x)
+            .top(y)
+            .occlude()
+            .child(crate::skin::boxed(
+                cell,
+                cols,
+                rows,
+                Vec::new(),
+                Vec::new(),
+                body,
+                theme.popup_bg,
+                theme.popup_border,
+                theme,
+                m,
+            ))
+            .into_any_element()]
+    }
+
+    /// The documentation popup in the tui skin: a box over the symbol's
+    /// row (under it when there's no room), the Markdown as plain lines.
+    fn render_hover_tui(
+        &mut self,
+        theme: &Theme,
+        m: Metrics,
+        bounds: Bounds<Pixels>,
+        cell: crate::skin::Cell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let (anchor_offset, lines) = {
+            let h = self.smart.hover.as_ref().expect("open");
+            (h.anchor, h.lines.clone())
+        };
+        let anchor = self.char_bounds(anchor_offset, window, cx);
+        let all_cols = crate::skin::Cell::fit(bounds.size.width, cell.w);
+        let all_rows = crate::skin::Cell::fit(bounds.size.height, cell.h);
+        let cap = ((m.smart_popup_max_width / cell.w).round() as usize).max(20);
+        let widest = lines
+            .iter()
+            .map(|l| crate::skin::Cell::text_cols(&l.text))
+            .max()
+            .unwrap_or(0);
+        let cols = (widest + 4).clamp(12, cap).min(all_cols.max(4));
+        let above = crate::skin::Cell::fit(anchor.origin.y, cell.h);
+        let below = all_rows.saturating_sub(above + 1);
+        let max = ((m.smart_popup_max_height / cell.h).round() as usize).max(3);
+        let room = if above >= 3 { above } else { below };
+        let (doc, rows) = doc_box(&lines, cols, max.min(room.max(3)), theme, cell, m);
+        let x = (anchor.origin.x - cell.cols(2))
+            .min(cell.cols(all_cols.saturating_sub(cols)))
+            .max(px(0.));
+        let y = if above >= rows {
+            anchor.origin.y - cell.rows(rows)
+        } else {
+            anchor.origin.y + px(cell.h)
+        };
+        vec![div()
+            .absolute()
+            .left(x)
+            .top(y)
+            .occlude()
+            .child(doc)
             .into_any_element()]
     }
 }

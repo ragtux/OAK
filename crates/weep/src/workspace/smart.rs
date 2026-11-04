@@ -253,6 +253,14 @@ impl Workspace {
         let close = ws.clone();
         let escape = ws.clone();
         let focus = self.smart.card_focus.clone()?;
+        let tui = TuiCard {
+            title,
+            text,
+            errors: errors.clone(),
+            label: label.clone(),
+            ws: ws.clone(),
+            focus: focus.clone(),
+        };
         let button = crate::dialog::button(
             "smart-card-button",
             label,
@@ -268,7 +276,7 @@ impl Workspace {
                 cx.notify();
             })
         });
-        Some(
+        let fleet = Some(
             deferred(
                 div()
                     .id("smart-card")
@@ -379,6 +387,20 @@ impl Workspace {
                             )
                     }),
             )
+            .into_any_element(),
+        );
+        // The skin is known once the window is: the card is built there.
+        let theme = theme.clone();
+        let m = *m;
+        let mut fleet = fleet;
+        Some(
+            crate::skin::with_window(move |window, cx| {
+                if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+                    tui.render(&theme, m, window, cx)
+                } else {
+                    fleet.take().expect("built once").into_any_element()
+                }
+            })
             .into_any_element(),
         )
     }
@@ -2184,5 +2206,147 @@ impl Workspace {
         if let Err(e) = editor.update(cx, |e, cx| e.save(cx)) {
             self.notify_error("Save failed", format!("{e}"), cx);
         }
+    }
+}
+
+/// The Smart Mode card in the tui skin (`docs/tui-skin.md`, rule 7): a box
+/// under the toolbar's right end, its state set into the top edge, the
+/// text wrapped on the grid, the button right-aligned, and the servers'
+/// errors under a rule joining the frame.
+struct TuiCard {
+    title: &'static str,
+    text: &'static str,
+    errors: Vec<SharedString>,
+    label: SharedString,
+    ws: Entity<Workspace>,
+    focus: FocusHandle,
+}
+
+impl TuiCard {
+    fn render(self, theme: &Theme, m: Metrics, window: &mut Window, cx: &mut App) -> AnyElement {
+        use crate::skin::{self, Cell};
+        let cell = Cell::current(cx);
+        let all_cols = Cell::fit(window.viewport_size().width, cell.w);
+        let cols = ((m.notifications_width / cell.w).round() as usize)
+            .clamp(24, all_cols.saturating_sub(2).max(24));
+        let inner = cols - 4;
+        let text = skin::wrap(self.text, inner);
+        let errors: Vec<String> = self
+            .errors
+            .iter()
+            .flat_map(|e| {
+                skin::wrap(e, inner.saturating_sub(2))
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, l)| format!("{}{l}", if i == 0 { "✗ " } else { "  " }))
+            })
+            .collect();
+        let rule = 1 + text.len() + 2;
+        let rows = rule
+            + 1
+            + if errors.is_empty() {
+                0
+            } else {
+                errors.len() + 1
+            };
+        let ws = self.ws.clone();
+        let line = |t: String, color| {
+            div()
+                .h(px(cell.h))
+                .flex_shrink_0()
+                .pl(cell.cols(1))
+                .whitespace_nowrap()
+                .text_color(color)
+                .child(SharedString::from(t))
+        };
+        let body = div()
+            .flex()
+            .flex_col()
+            .children(text.into_iter().map(|t| line(t, theme.text_secondary)))
+            .child(div().h(px(cell.h)).flex_shrink_0())
+            .child(
+                div()
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_end()
+                    .pr(cell.cols(1))
+                    .child(
+                        skin::button("smart-card-button", &self.label, false, theme, cell)
+                            .on_click(move |_, _, cx| {
+                                ws.update(cx, |this, cx| {
+                                    this.toggle_smart_mode(cx);
+                                    this.smart.card_open = this.smart.enabled;
+                                    cx.notify();
+                                })
+                            }),
+                    ),
+            )
+            .when(!errors.is_empty(), |d| {
+                d.child(div().h(px(cell.h)).flex_shrink_0())
+                    .children(errors.into_iter().map(|e| {
+                        let (mark, rest) =
+                            e.split_at(e.char_indices().nth(2).map_or(e.len(), |(b, _)| b));
+                        div()
+                            .h(px(cell.h))
+                            .flex_shrink_0()
+                            .flex()
+                            .pl(cell.cols(1))
+                            .whitespace_nowrap()
+                            .child(
+                                div()
+                                    .text_color(theme.text_dangerous)
+                                    .child(SharedString::from(mark.to_string())),
+                            )
+                            .child(SharedString::from(rest.to_string()))
+                    }))
+            })
+            .into_any_element();
+        let close = self.ws.clone();
+        let escape = self.ws.clone();
+        let top = ((m.toolbar_height + m.notifications_top_gap) / cell.h).ceil() as usize;
+        deferred(
+            div()
+                .id("smart-card")
+                .absolute()
+                .left(cell.cols(all_cols.saturating_sub(cols + 1)))
+                .top(cell.rows(top))
+                .track_focus(&self.focus)
+                .key_context("Popup")
+                .on_action(move |_: &PopupCancel, _, cx| {
+                    escape.update(cx, |this, cx| {
+                        this.smart.card_open = false;
+                        this.focus_active_editor(cx);
+                        cx.notify();
+                    })
+                })
+                .on_mouse_down_out(move |_, _, cx| {
+                    close.update(cx, |this, cx| {
+                        this.smart.card_open = false;
+                        this.focus_active_editor(cx);
+                        cx.notify();
+                    })
+                })
+                .child(
+                    skin::boxed(
+                        cell,
+                        cols,
+                        rows,
+                        vec![skin::title(self.title, theme.text_primary)],
+                        if rows > rule + 1 {
+                            vec![rule]
+                        } else {
+                            Vec::new()
+                        },
+                        body,
+                        theme.popup_bg,
+                        theme.border_focused,
+                        theme,
+                        m,
+                    )
+                    .occlude(),
+                ),
+        )
+        .into_any_element()
     }
 }

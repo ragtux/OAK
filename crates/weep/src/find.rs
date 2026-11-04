@@ -9,7 +9,9 @@
 use crate::assets::icon;
 use crate::editor::{EditorEvent, EditorView, Search};
 use crate::input::{InputEvent, TextInput};
+use crate::list_popup::{tui_gap, tui_input_row, tui_toggle};
 use crate::settings::AppSettings;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
@@ -61,11 +63,15 @@ impl FindBar {
                 cx,
             );
             input.mono = true;
+            // The bar draws its own prompt cells (`/`, `↳`) in the tui skin.
+            input.tui_prompt = false;
             input
         });
         let replace = cx.new(|cx| {
             let mut input = TextInput::new("Replace", cx);
             input.mono = true;
+            // The bar draws its own prompt cells (`/`, `↳`) in the tui skin.
+            input.tui_prompt = false;
             input
         });
         cx.subscribe(&find, Self::on_find_input).detach();
@@ -490,6 +496,9 @@ impl Render for FindBar {
         if !self.open {
             return div().into_any_element();
         }
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let entity = cx.entity();
@@ -662,6 +671,171 @@ impl Render for FindBar {
             .text_color(theme.text_primary)
             // The bar sits over the text; clicks on it must not reach the editor.
             .occlude()
+            .child(find_row)
+            .children(replace_row)
+            .into_any_element()
+    }
+}
+
+// ---- the tui skin ---------------------------------------------------------------
+
+impl FindBar {
+    /// The rows the bar takes at the bottom of the editor's island in the
+    /// tui skin, its rule included: 0 closed, 2, or 3 with the replace row.
+    /// The rule is the second of them counted up from the frame's bottom
+    /// edge plus the replace row (`Edges::rules_from_bottom`).
+    pub fn tui_rows(&self) -> usize {
+        if self.open {
+            2 + usize::from(self.replace_shown)
+        } else {
+            0
+        }
+    }
+
+    /// The command line (`docs/tui-skin.md`, Find / replace bar): a rule
+    /// across the island, then `/ query  [Aa] [W] [.*] [↳]  3/17  ↑ ↓ ×`
+    /// and, with replace, `↳ text  [ Replace ] [ All ]`; at the bottom of
+    /// the editor's body, which the bar is laid over.
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let entity = cx.entity();
+        let find_focused = self.find.read(cx).is_focused(window);
+        let replace_focused = self.replace.read(cx).is_focused(window);
+        let empty_query = self.find.read(cx).is_empty();
+        let (counter, counter_color) = match self.counter_text() {
+            Some(c) if self.error.is_some() => (c, theme.text_dangerous),
+            Some(c) => (c, theme.text_secondary),
+            None if !empty_query => ("0/0".into(), theme.text_dangerous),
+            None => ("".into(), theme.text_secondary),
+        };
+        let counter = skin::fit_text(&counter, 24);
+        let toggle = |label: &'static str, on: bool, which: Option<Toggle>, ix: u64| {
+            let entity = entity.clone();
+            tui_toggle(
+                ElementId::NamedInteger("find-option".into(), ix),
+                label,
+                on,
+                &theme,
+                cell,
+            )
+            .on_click(move |_, window, cx| {
+                entity.update(cx, |this, cx| match which {
+                    Some(which) => this.toggle(which, cx),
+                    None => this.toggle_replace(window, cx),
+                })
+            })
+            .into_any_element()
+        };
+        let mark =
+            |id: &'static str, glyph: &'static str, f: fn(&mut FindBar, &mut Context<FindBar>)| {
+                let entity = entity.clone();
+                div()
+                    .id(id)
+                    .w(cell.cols(1))
+                    .flex_shrink_0()
+                    .cursor_pointer()
+                    .text_color(theme.text_secondary)
+                    .hover(|s| s.bg(theme.list_bg_hovered).text_color(theme.text_primary))
+                    .on_click(move |_, _, cx| entity.update(cx, f))
+                    .child(glyph)
+                    .into_any_element()
+            };
+        let find_row = tui_input_row(
+            "/",
+            find_focused,
+            self.find.clone(),
+            vec![
+                tui_gap(cell, 1),
+                toggle("Aa", self.case_sensitive, Some(Toggle::Case), 0),
+                tui_gap(cell, 1),
+                toggle("W", self.whole_word, Some(Toggle::Word), 1),
+                tui_gap(cell, 1),
+                toggle(".*", self.regex, Some(Toggle::Regex), 2),
+                tui_gap(cell, 1),
+                toggle("↳", self.replace_shown, None, 3),
+                tui_gap(cell, 2),
+                div()
+                    .flex_shrink_0()
+                    .w(cell.cols(Cell::text_cols(&counter)))
+                    .whitespace_nowrap()
+                    .text_color(counter_color)
+                    .child(SharedString::from(counter))
+                    .into_any_element(),
+                tui_gap(cell, 2),
+                mark("find-prev", "↑", |this, cx| this.step(false, cx)),
+                tui_gap(cell, 1),
+                mark("find-next", "↓", |this, cx| this.step(true, cx)),
+                tui_gap(cell, 1),
+                mark("find-close", "×", |this, cx| this.close(cx)),
+                tui_gap(cell, 1),
+            ],
+            &theme,
+            cell,
+        );
+        let replace_row = self.replace_shown.then(|| {
+            let one = entity.clone();
+            let all = entity.clone();
+            tui_input_row(
+                "↳",
+                replace_focused,
+                self.replace.clone(),
+                vec![
+                    tui_gap(cell, 1),
+                    skin::button("replace-one", "Replace", false, &theme, cell)
+                        .on_click(move |_, _, cx| one.update(cx, |this, cx| this.replace_one(cx)))
+                        .into_any_element(),
+                    tui_gap(cell, 1),
+                    skin::button("replace-all", "All", false, &theme, cell)
+                        .on_click(move |_, _, cx| all.update(cx, |this, cx| this.replace_all(cx)))
+                        .into_any_element(),
+                    tui_gap(cell, 1),
+                ],
+                &theme,
+                cell,
+            )
+        });
+        // The island's frame is focused while one of the bar's fields is.
+        let line = if find_focused || replace_focused {
+            theme.border_focused
+        } else {
+            theme.border
+        };
+        let rule = gpui::canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let t = skin::stroke(window, &m);
+                let y = skin::snap(window, f32::from(bounds.origin.y) + cell.h / 2.) - t / 2.;
+                window.paint_quad(gpui::fill(
+                    gpui::Bounds::new(
+                        point(bounds.origin.x, px(y)),
+                        gpui::size(bounds.size.width, px(t)),
+                    ),
+                    line,
+                ));
+            },
+        )
+        .w_full()
+        .h(px(cell.h))
+        .flex_shrink_0();
+        div()
+            .id("find-bar")
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(cell.rows(self.tui_rows()))
+            .flex()
+            .flex_col()
+            .bg(theme.island_background)
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .text_color(theme.text_primary)
+            // The bar sits over the text; clicks on it must not reach the editor.
+            .occlude()
+            .child(rule)
             .child(find_row)
             .children(replace_row)
             .into_any_element()
