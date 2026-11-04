@@ -1,12 +1,12 @@
 {
   "name": "wrap",
-  "about": "M2 rendering settings, the ones batch 5 left: soft wrap on the 300-column line, rendered whitespace, an editor.guides ruler at 80, relative line numbers and a block caret. Fleet reads them from its settings.json for the run; WEEP gets the same file through the weep-settings step (live reload). Both open long-line.txt from the fixture.",
+  "about": "M2 rendering settings, the ones batch 5 left: soft wrap on the 300-column line, rendered whitespace, an editor.guides ruler at 80, relative line numbers and a block caret. Fleet reads them from its settings.json for the run (its own values: Show whitespace is a dropdown writing \"All\" or \"None\", sixteenth pass; the second shot catches the caret's other blink phase); WEEP gets the same file through the weep-settings step (live reload). Both open long-line.txt from the fixture.",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
   "fleet_settings": {
     "editor.softWrapEnabled": true,
-    "editor.renderWhitespace": true,
+    "editor.renderWhitespace": "All",
     "editor.guides": [80],
     "editor.lineNumbers": "Relative",
     "editor.caretShape": "Block"
@@ -15,19 +15,19 @@
     "fleet": [
       ["wait", 2000], ["key", "escape"], ["wait", 500],
       ["key", "ctrl+k"], ["wait", 800], ["type", "wide.txt"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
-      ["key", "ctrl+home"], ["key", "down"], ["key", "down"], ["wait", 600], ["shot", "wrapped"]
+      ["key", "ctrl+home"], ["key", "down"], ["key", "down"], ["wait", 600], ["shot", "wrapped"], ["wait", 600], ["shot", "wrapped-blink"]
     ],
     "weep": [
       ["wait", 1000],
       ["weep-settings", {
         "editor.softWrapEnabled": true,
-        "editor.renderWhitespace": true,
+        "editor.renderWhitespace": "All",
         "editor.guides": [80],
         "editor.lineNumbers": "Relative",
         "editor.caretShape": "Block"
       }],
       ["wait", 1500],
-      ["key", "ctrl+home"], ["key", "down"], ["key", "down"], ["wait", 600], ["shot", "wrapped"]
+      ["key", "ctrl+home"], ["key", "down"], ["key", "down"], ["wait", 600], ["shot", "wrapped"], ["wait", 600], ["shot", "wrapped-blink"]
     ]
   },
   "weep_args": ["{workspace}/long/wide.txt"],

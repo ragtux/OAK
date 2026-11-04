@@ -126,8 +126,11 @@ const LINE_NUMBERS: &[(&str, &str)] = &[
     ("\"Relative\"", "Relative"),
 ];
 const INDENT: &[(&str, &str)] = &[("\"Spaces\"", "Spaces"), ("\"Tabs\"", "Tabs")];
+// Fleet's values as its Settings dropdown writes them (sixteenth pass): Block,
+// Outline, Underline, Vertical (the default) and VerticalThin; WEEP draws the
+// three listed.
 const CARETS: &[(&str, &str)] = &[
-    ("\"Line\"", "Vertical"),
+    ("\"Vertical\"", "Vertical"),
     ("\"Block\"", "Block"),
     ("\"Underline\"", "Underline"),
 ];
@@ -137,7 +140,7 @@ const CLICKS: &[(&str, &str)] = &[
 ];
 const TERMINAL_CARETS: &[(&str, &str)] = &[
     ("null", "Same as in the editor"),
-    ("\"Line\"", "Vertical"),
+    ("\"Vertical\"", "Vertical"),
     ("\"Block\"", "Block"),
     ("\"Underline\"", "Underline"),
 ];
@@ -264,7 +267,7 @@ pub const SECTIONS: &[Section] = &[
                 items: &[
                     check("Enable caret blinking", "editor.caretBlinkingEnabled", "true"),
                     check("Enable smooth caret animation", "editor.caretSmoothAnimation", "true"),
-                    item("Caret shape", "editor.caretShape", Kind::Dropdown(CARETS), "\"Line\""),
+                    item("Caret shape", "editor.caretShape", Kind::Dropdown(CARETS), "\"Vertical\""),
                 ],
             },
             Group {

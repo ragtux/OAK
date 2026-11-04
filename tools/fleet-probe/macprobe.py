@@ -33,12 +33,17 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 CACHE = os.path.expanduser("~/Library/Caches/weep-probe")
 MACINPUT = os.path.join(CACHE, "macinput")
 FLEET = os.environ.get("FLEET_EXE", "/Applications/Fleet.app/Contents/MacOS/Fleet")
-# Where Fleet reads its user settings on macOS is not settled yet: both are written for a run
-# and put back after it.
+# Fleet's user settings on macOS (its log names the file it loads); written for a run and put
+# back after it.
 FLEET_SETTINGS = [
-    os.path.expanduser("~/.fleet/settings.json"),
     os.path.expanduser("~/Library/Application Support/JetBrains/Fleet/settings.json"),
 ]
+# Written into the workspace's `.fleet/settings.json` for every Fleet run and removed after it.
+# Fleet 1.48 bundles a rust-analyzer (2025-01-28) older than the stable toolchain's proc-macro
+# server, which puts a "Failed spawning proc-macro server" toast over the editor's top right
+# corner; the fixture uses only built-in derives, so expansion is not needed. Fleet reads
+# `rust-analyzer.*` from the workspace's settings, not from the user's.
+FLEET_WORKSPACE_SETTINGS = {"rust-analyzer.procMacro.enable": False}
 
 
 def macinput(*args, check=True):
@@ -237,6 +242,18 @@ def restore_fleet_settings():
             os.replace(backup, path)
 
 
+def with_workspace_settings(workspace):
+    """Write FLEET_WORKSPACE_SETTINGS unless the workspace has its own file; returns the path to
+    remove after the run, or None."""
+    path = os.path.join(workspace, ".fleet", "settings.json")
+    if os.path.exists(path):
+        return None
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(FLEET_WORKSPACE_SETTINGS, fh, indent=2)
+    return path
+
+
 # --- scenes ---------------------------------------------------------------------------------
 
 INPUT_STEPS = ("key", "type", "move", "click", "drag", "hover", "mousedown", "mouseup", "wheel")
@@ -317,6 +334,7 @@ def run_scene(scene_path, editor, workspace, out_dir):
     extra = [a.replace("{workspace}", workspace) for a in scene.get(f"{editor}_args", [])]
     if editor == "fleet" and "fleet_settings" in scene:
         with_fleet_settings(scene["fleet_settings"])
+    written = with_workspace_settings(workspace) if editor == "fleet" else None
     try:
         s = launch(editor, workspace, size, pos, extra)
         time.sleep(scene.get("settle_ms", 4000) / 1000)
@@ -330,6 +348,8 @@ def run_scene(scene_path, editor, workspace, out_dir):
     finally:
         if editor == "fleet" and "fleet_settings" in scene:
             restore_fleet_settings()
+        if written:
+            os.remove(written)
 
 
 def attach_scene(scene_path, editor, pid, out_dir):

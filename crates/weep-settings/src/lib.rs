@@ -556,8 +556,10 @@ impl Settings {
             .unwrap_or(LineNumbers::On)
     }
 
-    /// `editor.caretShape`: "Caret shape": line, block or underline (`bar` and
-    /// `vertical` also mean line). Default line (estimate).
+    /// `editor.caretShape`: "Caret shape". Fleet writes `Vertical` (its
+    /// default), `VerticalThin`, `Block`, `Outline` or `Underline`; WEEP draws
+    /// the vertical bar for `Vertical` (also `line`, `bar`), a block and an
+    /// underline.
     pub fn editor_caret_shape(&self) -> CaretShape {
         self.str("editor.caretShape")
             .and_then(CaretShape::parse)

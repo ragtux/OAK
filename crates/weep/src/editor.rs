@@ -142,6 +142,8 @@ pub struct TextMetrics {
     pub code_vision_font: f32,
     pub code_vision_baseline: f32,
     pub code_vision_gap: f32,
+    /// A rendered space's dot (Fleet's skin; the tui skin draws `·`).
+    pub whitespace_dot: f32,
     pub sticky_shadow: f32,
     pub wrap_indent: f32,
     pub centered_columns: f32,
@@ -380,6 +382,7 @@ impl TextMetrics {
             code_vision_font: m.code_vision_font,
             code_vision_baseline: m.code_vision_baseline,
             code_vision_gap: m.code_vision_gap,
+            whitespace_dot: m.whitespace_dot,
             sticky_shadow: m.sticky_shadow,
             wrap_indent: m.wrap_indent,
             centered_columns: m.centered_columns,
@@ -508,9 +511,12 @@ struct DisplayMap {
     lens_h: f32,
 }
 
-/// Where a line breaks when soft-wrapped at `cols` display columns: after the
-/// last blank at or before the limit, else hard at the limit (`line` is the
-/// row's text with tabs expanded, as the shaper sees it).
+/// Where a line breaks when soft-wrapped at `cols` display columns: a blank
+/// that would cross the limit starts the next row; any other character breaks
+/// after the last blank on the row, else hard at the limit (`line` is the row's
+/// text with tabs expanded, as the shaper sees it). Fleet's rule, from the
+/// sixteenth pass's `wrap` scene: at 104 columns `col001 … col015` filled the
+/// first row exactly and the second began with the space before `col016`.
 fn wrap_points(line: &str, tab_width: usize, cols: usize) -> Vec<usize> {
     let cols = cols.max(1);
     let mut starts = vec![0];
@@ -528,6 +534,7 @@ fn wrap_points(line: &str, tab_width: usize, cols: usize) -> Vec<usize> {
         };
         if column + width > cols && i > seg_start_char {
             let at = match last_blank {
+                _ if c == ' ' || c == '\t' => i,
                 Some(b) if b > seg_start_char => b + 1,
                 _ => i,
             };
@@ -2913,7 +2920,15 @@ impl EditorView {
                 }
             }
             Hit::FoldedMark(row) => {
+                // Fleet unfolds and puts the caret at the start of the block's
+                // inside, just after its opening bracket (sixteenth pass: 7:20 on
+                // `pub struct Record {`).
+                let at = self.map.fold_at_head(row).map(|f| f.inner.start);
                 self.unfold_row(row, cx);
+                if let Some(at) = at {
+                    self.go(cx, |c, b| c.set_cursor(b, at));
+                    self.restart_blink(cx);
+                }
             }
             Hit::RunIcon(ix) => {
                 cx.emit(EditorEvent::RunConfiguration(ix));
@@ -5456,17 +5471,20 @@ impl Element for EditorElement {
                         cx,
                     );
                 }
-                // Whitespace glyphs under the text.
-                if let Some(dot) = &prepaint.space_glyph {
+                // Whitespace marks under the text: a dot centred in each
+                // space's cell.
+                if prepaint.space_glyph.is_some() {
+                    let d = px(tm.whitespace_dot);
                     for b in &laid.spaces {
-                        let x = laid.shaped.x_for_index(*b);
-                        let _ = dot.paint(
-                            point(row_text_x + x, y),
-                            lh,
-                            TextAlign::Left,
-                            None,
-                            window,
-                            cx,
+                        let x0 = laid.shaped.x_for_index(*b);
+                        let x1 = laid.shaped.x_for_index(*b + 1);
+                        let centre = point(row_text_x + (x0 + x1) / 2., y + lh / 2.);
+                        window.paint_quad(
+                            fill(
+                                Bounds::new(centre - point(d / 2., d / 2.), size(d, d)),
+                                theme.whitespace_indicator,
+                            )
+                            .corner_radii(d / 2.),
                         );
                     }
                 }
@@ -6166,6 +6184,23 @@ fn next_segment_owns(prepaint: &Prepaint, laid: &LaidOutRow, column: usize) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_breaks_like_fleet() {
+        // The fixture's wide.txt line: `col001 col002 … col043`.
+        let line: String = (1..=43)
+            .map(|n| format!("col{n:03}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Fleet at 104 columns: the first row ends with col015 exactly, the
+        // second starts at the space before col016 and keeps its trailing
+        // space, the third starts at col030.
+        assert_eq!(wrap_points(&line, 4, 104), vec![0, 104, 203]);
+        // A word longer than the row breaks hard; blanks after a full row of
+        // text start the next one.
+        assert_eq!(wrap_points("abcdefghij", 4, 4), vec![0, 4, 8]);
+        assert_eq!(wrap_points("abcd  ef", 4, 4), vec![0, 4]);
+    }
 
     #[test]
     fn interline_blocks_take_display_rows_after_their_row() {

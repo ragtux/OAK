@@ -904,6 +904,44 @@ reads its user settings on macOS (the driver writes both `~/.fleet` and
 `~/Library/Application Support/JetBrains/Fleet` for a run, and `wrap` showed
 one of them is read).
 
+## Sixteenth pass: macOS, the M2 scenes again (2026-11-04)
+
+The same Mac and versions as the fifteenth pass, the scenes `find`, `fold` and
+`wrap` replayed on both editors after two driver fixes, plus a few clicks into
+Fleet's Settings for the values its dropdowns write; values in points.
+
+Driver: Fleet 1.48 bundles a rust-analyzer (2025-01-28) older than the stable
+toolchain's proc-macro server (protocol 5 against 6), so every run put a "Failed
+spawning proc-macro server" toast over the editor's top right corner, on the
+find bar. Fleet takes `rust-analyzer.*` keys from the workspace's
+`.fleet/settings.json`, not the user's file, so `macprobe.py` now writes
+`"rust-analyzer.procMacro.enable": false` there for each Fleet run and removes
+it after (the fixture's derives are built in). Fleet's user settings on macOS
+are `~/Library/Application Support/JetBrains/Fleet/settings.json` (its log
+names the file; `~/.fleet` is not read), now the only one the driver writes.
+
+| what | Fleet | WEEP before → now |
+|---|---|---|
+| find field's right end | from the border inward: 7, the 16 px close box with a 9 px cross (ink 11, `expui/general/close`), 8, a separator, 6, the three 20 px toggles 2 apart, 6, a separator, 8, ↓ and ↑ 6 apart, 8, the counter | 8 pad, `closeSmall` (ink 8), 7 right of the first separator: everything left of the cross 2.5 to the left → 7, `close`, 6 (`FIND_BAR_PAD_RIGHT`, `FIND_BAR_SEPARATOR_GAP_RIGHT`); within 1 of Fleet after the run |
+| replace row | "Replace" ink 1119.5-1168, "Replace All" 1179.5-1247: 11.5 between them and 8 from the border, so buttons padded 5 a side in a field padded 2 | `TEXT_BUTTON_PAD_X` (8, an estimate) and 4: the ink 18 apart and 13.5 from the border → `FIND_BAR_REPLACE_BUTTON_PAD_X` 5, the field's pad 7 - 5; "Replace" starts at 1119.5 like Fleet's |
+| find and replace fields | 28 tall, the replace field 6 below the find field (89-117 and 123-151 at x 1000) | the same |
+| Tab in the find field | moves focus to the ↑ button (a focus ring on it), not to the replace field: the scene's "Row" went nowhere | Tab goes to the replace field (open; the scene's `replace-typed` shots differ for that) |
+| toggles' glyphs | "Aa" 16 wide, "W" 14, ".*" with an 8 × 8 asterisk | Inter text at the UI size: 15.5, 12.5 and 6 × 6 (open: Fleet's toggles may be icons or a larger size) |
+| query text | Inter (the UI font) | the editor's mono font (open) |
+| click on the folded `{...}` | unfolds and puts the caret just inside the bracket (7:20 on `pub struct Record {`), both brackets matched | unfolded and left the caret where it was → the caret at the fold's inner start |
+| fold scene's aim | `pub struct Record` at y 241 below the code-vision row | WEEP draws the code-vision row too now: both editors' steps aim at 241; the unfold click moved from x 560 (on "Record") to 597, on the mark (585-608) |
+| code vision 6 s after launch | "4 implementations" | "0 implementations" (rust-analyzer answers before its indexing ends and WEEP does not ask again when it finishes; open) |
+| `editor.renderWhitespace` | Settings shows a dropdown, All or None, and writes `"All"`; `true` draws nothing | the scene wrote `true` → `"All"` on both sides (WEEP reads any value but none/off) |
+| rendered space | a 1.5 dot centred in the space's cell (480-481.5 × 87-88.5 between "short" and "line"), `#4B4B4D` (`editor.whitespaceIndicator`) | the `·` glyph, 3 × 2.5 → a 1.5 dot centred in the cell (`WHITESPACE_DOT`): the same pixels |
+| `editor.caretShape` | a dropdown of Block, Outline, Underline, Vertical (the default) and VerticalThin, written as shown | Settings wrote `"Line"` for Vertical → `"Vertical"`; Outline and VerticalThin are not drawn (open) |
+| soft wrap of the 300-column line | 104 columns here: `col001 … col015` fill the first row, the second starts with the space before `col016` and keeps its trailing space, the third starts at `col030` | a blank that crosses the limit now starts the next row (`wrap_points`, tested on this line); WEEP still counts 105 columns in the same window (its width less the gutter, the scroll bar thumb and the text offset), one more than Fleet (open: one sample does not say where Fleet's extra column goes) |
+| block caret | a filled cell under the caret (on the wrapped row's leading space) | the same shape |
+| ruler at 80, relative numbers | the ruler at x 1062.5; the caret line's own number, 1 and 2 around it | the same |
+
+Not settled by this pass: sticky lines (`main.rs` is 37 lines, shorter than
+the window, so `fn main` never leaves the top; the scene needs a longer Rust
+file in the fixture); the rest of the open rows above.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

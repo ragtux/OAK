@@ -108,15 +108,18 @@ does not draw (the `shadow.*` keys are the popups').
 Theme groups: `tab`, `tooltip`, `scrollbar`, `focusOutline`, `island`,
 `layout`, `separator`, `shadow`, `border`, `background`, `text`, `icon`.
 
-### M2 Editor core (built 2026-11-02; the M2 scenes still to run against Fleet)
+### M2 Editor core (built 2026-11-02; the M2 scenes run against Fleet on the Mac, fifteenth and sixteenth passes)
 
 Everything Fleet's editor does to a plain text file. Built in one pass on
 2026-11-02 against the batch 5 measurements (`docs/fleet-probe.md`, fourth
 and fifth passes). What batch 5 did not measure is marked "estimate" in
 `theme.rs::metrics` and in the probe record; the scenes `find`, `fold` and
-`wrap` are written for the missing measurements and have not yet been run
-against Fleet, so M2's end condition (every scene passing `compare.py`) is
-still open. Left for later: the smooth caret (`editor.caretSmoothAnimation`
+`wrap` ran on both editors on the Mac (`docs/fleet-probe.md`, fifteenth and
+sixteenth passes) and corrected the find bar, the replace row, the fold mark's
+click, rendered spaces and the wrap rule. Still open from them: Tab in the find
+field (Fleet goes to the ↑ button), the toggles' and the query's fonts, one
+wrap column more than Fleet, the Outline and VerticalThin carets, and the
+sticky lines (the fixture has no Rust file longer than the window). Left for later: the smooth caret (`editor.caretSmoothAnimation`
 is read, not animated), an "in selection" button on the find bar (the mode
 engages by itself when the bar opens on a multi-line selection; whether
 Fleet also shows a toggle is unprobed), the breakpoint hint circle in the

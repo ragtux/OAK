@@ -577,7 +577,7 @@ impl Render for FindBar {
         };
         let close = {
             let entity = entity.clone();
-            ghost_icon("find-close", "expui/general/closeSmall", &theme, &m)
+            ghost_icon("find-close", "expui/general/close", &theme, &m)
                 .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.close(cx)))
         };
         let find_row = div().flex().items_center().child(chevron).child(
@@ -614,7 +614,7 @@ impl Render for FindBar {
                 div()
                     .id(id)
                     .h(px(m.button_height))
-                    .px(px(m.text_button_pad_x))
+                    .px(px(m.find_bar_replace_button_pad_x))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
@@ -641,7 +641,7 @@ impl Render for FindBar {
                 .child(
                     frame(replace_focused, &theme, &m)
                         .pl(px(m.find_bar_pad_left))
-                        .pr(px(m.find_bar_pad_right - m.text_button_pad_x / 2.))
+                        .pr(px(m.find_bar_pad_right - m.find_bar_replace_button_pad_x))
                         .child(
                             div()
                                 .flex_1()

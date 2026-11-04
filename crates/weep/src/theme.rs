@@ -475,14 +475,20 @@ pub mod metrics {
     pub const CODE_VISION_FONT: f32 = 10.2;
     pub const CODE_VISION_BASELINE: f32 = 15.5;
     pub const CODE_VISION_GAP: f32 = 12.;
+    /// `editor.renderWhitespace` "All": a space is a 1.5 px dot centred in
+    /// its cell (the sixteenth pass's `wrap` scene: 480-481.5 x 87-88.5 in
+    /// "short line", `editor.whitespaceIndicator`); WEEP drew `·`, 3 x 2.5.
+    pub const WHITESPACE_DOT: f32 = 1.5;
     pub const FOLDED_MARK_CELLS: f32 = 3.;
     pub const FOLDED_MARK_RADIUS: f32 = 3.;
     /// The find bar (batch 5): a 416.67 × 28 field 16 from the island's right
     /// edge and 12 below the tab row; a 1.33 focus border inside a 2 px focus
     /// outline; the replace field 6 below it. Inside the field, from the left:
-    /// text at 6; from the right: 8 pad, the 16 px close box, 8, a separator,
-    /// 6, three 20 px toggles 2 apart, 7, a separator, 8, the ↓ and ↑ boxes 6
-    /// apart, 8, the match counter. The chevron that opens the replace row sits
+    /// text at 6; from the right: 7 pad, the 16 px close box (`close`, a 9 px
+    /// cross), 8, a separator, 6, three 20 px toggles 2 apart, 6, a separator,
+    /// 8, the ↓ and ↑ boxes 6 apart, 8, the match counter (the sixteenth pass's
+    /// `find` scene on the Mac corrected the pad and the right gap, 8 and 7,
+    /// and the cross, `closeSmall`). The chevron that opens the replace row sits
     /// in a 16 px box 5.33 left of the field (its glyph 10 from the field).
     pub const FIND_BAR_WIDTH: f32 = 416.67;
     pub const FIND_BAR_HEIGHT: f32 = 28.;
@@ -490,15 +496,19 @@ pub mod metrics {
     pub const FIND_BAR_TOP: f32 = 12.;
     pub const FIND_BAR_ROW_GAP: f32 = 6.;
     pub const FIND_BAR_PAD_LEFT: f32 = 6.;
-    pub const FIND_BAR_PAD_RIGHT: f32 = 8.;
+    pub const FIND_BAR_PAD_RIGHT: f32 = 7.;
     pub const FIND_BAR_CLOSE_GAP: f32 = 8.;
     pub const FIND_BAR_SEPARATOR_GAP_LEFT: f32 = 6.;
-    pub const FIND_BAR_SEPARATOR_GAP_RIGHT: f32 = 7.;
+    pub const FIND_BAR_SEPARATOR_GAP_RIGHT: f32 = 6.;
     pub const FIND_BAR_TOGGLE: f32 = 20.;
     pub const FIND_BAR_TOGGLE_GAP: f32 = 2.;
     pub const FIND_BAR_ARROW_GAP: f32 = 6.;
     pub const FIND_BAR_COUNTER_GAP: f32 = 8.;
     pub const FIND_BAR_CHEVRON_GAP: f32 = 5.33;
+    /// The replace row's Replace and Replace All (sixteenth pass): their text
+    /// 11.5 apart and the last one's 8 from the field's border fit buttons
+    /// padded 5 a side, so the field keeps 7 - 5 = 2 on its right.
+    pub const FIND_BAR_REPLACE_BUTTON_PAD_X: f32 = 5.;
     /// Estimates: the field's corner radius and its separators' height, and a
     /// text button's horizontal padding ("Replace", "Replace All").
     pub const INPUT_RADIUS: f32 = 4.;
@@ -1021,6 +1031,7 @@ scaled_metrics!(
     code_vision_font = CODE_VISION_FONT,
     code_vision_baseline = CODE_VISION_BASELINE,
     code_vision_gap = CODE_VISION_GAP,
+    whitespace_dot = WHITESPACE_DOT,
     folded_mark_cells = FOLDED_MARK_CELLS,
     folded_mark_radius = FOLDED_MARK_RADIUS,
     usages_gap_top = USAGES_GAP_TOP,
@@ -1066,6 +1077,7 @@ scaled_metrics!(
     find_bar_arrow_gap = FIND_BAR_ARROW_GAP,
     find_bar_counter_gap = FIND_BAR_COUNTER_GAP,
     find_bar_chevron_gap = FIND_BAR_CHEVRON_GAP,
+    find_bar_replace_button_pad_x = FIND_BAR_REPLACE_BUTTON_PAD_X,
     input_radius = INPUT_RADIUS,
     input_focus_border = INPUT_FOCUS_BORDER,
     find_bar_separator_height = FIND_BAR_SEPARATOR_HEIGHT,
