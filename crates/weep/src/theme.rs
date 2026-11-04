@@ -489,8 +489,11 @@ pub mod metrics {
     /// 8, the ↓ and ↑ boxes 6 apart, 8, the match counter (the sixteenth pass's
     /// `find` scene on the Mac corrected the pad and the right gap, 8 and 7,
     /// and the cross, `closeSmall`). The chevron that opens the replace row sits
-    /// in a 16 px box 5.33 left of the field (its glyph 10 from the field).
-    pub const FIND_BAR_WIDTH: f32 = 416.67;
+    /// in a 16 px box 6 left of the field (its glyph 10 from the field). Width
+    /// and gap from the Mac (seventeenth pass: the border box 840-1256, the
+    /// chevron's ring 816-836), crisp there; batch 5's 416.67 and 5.33 at
+    /// 150 % are within a device pixel of them.
+    pub const FIND_BAR_WIDTH: f32 = 416.;
     pub const FIND_BAR_HEIGHT: f32 = 28.;
     pub const FIND_BAR_RIGHT: f32 = 16.;
     pub const FIND_BAR_TOP: f32 = 12.;
@@ -504,7 +507,7 @@ pub mod metrics {
     pub const FIND_BAR_TOGGLE_GAP: f32 = 2.;
     pub const FIND_BAR_ARROW_GAP: f32 = 6.;
     pub const FIND_BAR_COUNTER_GAP: f32 = 8.;
-    pub const FIND_BAR_CHEVRON_GAP: f32 = 5.33;
+    pub const FIND_BAR_CHEVRON_GAP: f32 = 6.;
     /// The replace row's Replace and Replace All (sixteenth pass): their text
     /// 11.5 apart and the last one's 8 from the field's border fit buttons
     /// padded 5 a side, so the field keeps 7 - 5 = 2 on its right.
