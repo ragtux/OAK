@@ -1273,7 +1273,7 @@ impl FileTree {
     fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
-        let cell = Cell::measure(window, &theme, &m);
+        let cell = Cell::current(cx);
         let focused = self.focus_handle.is_focused(window);
         let count = self.rows.len();
         let entity = cx.entity();

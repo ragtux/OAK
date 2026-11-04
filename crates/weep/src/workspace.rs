@@ -2356,7 +2356,7 @@ impl Workspace {
         let show_tabs = Self::settings(cx).editor_show_tabs()
             && !Self::settings(cx).editor_distraction_free_mode();
         if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
-            let cell = crate::skin::Cell::measure(window, theme, m);
+            let cell = crate::skin::Cell::current(cx);
             let strip: Vec<gpui::AnyElement> = if show_tabs {
                 let drop_end = cx.entity();
                 vec![div()
@@ -2816,7 +2816,7 @@ impl Workspace {
     ) -> gpui::AnyElement {
         use crate::skin::Cell as Grid;
         let panel = self.panel(side);
-        let cell = Grid::measure(window, theme, m);
+        let cell = Grid::current(cx);
         let cols = panel.tui_grid.get().0;
         let panel_focused = panel.focus_handle.contains_focused(window, cx);
         // One label: ` name ` on the island's colour, so it cuts the frame;
@@ -3512,7 +3512,7 @@ impl Render for Workspace {
             .when(Self::settings(cx).editor_show_status_bar(), |d| {
                 d.child({
                     let tui = (crate::skin::Skin::current(cx) == crate::skin::Skin::Tui)
-                        .then(|| crate::skin::Cell::measure(window, &theme, &m));
+                        .then(|| crate::skin::Cell::current(cx));
                     self.render_status_bar(&theme, &m, tui, cx)
                 })
             })

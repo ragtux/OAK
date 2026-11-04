@@ -126,11 +126,56 @@ pub fn open_workspace_window(
             window_min_size: Some(size(px(480.), px(320.))),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Workspace::new(root, open, scratch, window, cx)),
+        |window, cx| {
+            probe_keys(window, cx);
+            cx.new(|cx| Workspace::new(root, open, scratch, window, cx))
+        },
     );
     if let Err(e) = result {
         eprintln!("weep: cannot open a window: {e:#}");
     }
+}
+
+/// `WEEP_KEYS`: keystrokes sent to a new window once it is up, for the
+/// screenshot probes on a machine where no input can be scripted. Comma
+/// separated, in gpui's spelling (`cmd-shift-p`, `down`, `escape`);
+/// `type:text` types text, `wait:ms` pauses (each step waits 300 ms).
+fn probe_keys(window: &mut gpui::Window, cx: &mut App) {
+    let Ok(keys) = std::env::var("WEEP_KEYS") else {
+        return;
+    };
+    window
+        .spawn(cx, async move |cx| {
+            let executor = cx.background_executor().clone();
+            let pause = |ms| executor.timer(std::time::Duration::from_millis(ms));
+            pause(1500).await;
+            for step in keys.split(',').map(str::trim).filter(|k| !k.is_empty()) {
+                if let Some(ms) = step.strip_prefix("wait:") {
+                    pause(ms.parse().unwrap_or(500)).await;
+                    continue;
+                }
+                let strokes: Vec<String> = match step.strip_prefix("type:") {
+                    Some(text) => text
+                        .chars()
+                        .map(|c| match c {
+                            ' ' => "space".to_string(),
+                            c => c.to_string(),
+                        })
+                        .collect(),
+                    None => vec![step.to_string()],
+                };
+                for stroke in strokes {
+                    match gpui::Keystroke::parse(&stroke) {
+                        Ok(k) => {
+                            let _ = cx.update(|window, cx| window.dispatch_keystroke(k, cx));
+                        }
+                        Err(e) => eprintln!("weep: WEEP_KEYS: {stroke}: {e}"),
+                    }
+                }
+                pause(300).await;
+            }
+        })
+        .detach();
 }
 
 /// macOS: the menu bar holds the application menu alone, as Fleet's does
