@@ -161,6 +161,17 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 - Parameter info: a one-row box above the caret, the current parameter in
   `parameter_info_match_text`, bold.
 
+### Inline usages (find usages)
+- A box filling the interline block between the caret's line and the next: whole rows of the
+  grid (the block's height is re-rounded to the tui row on a skin switch or a zoom), across the
+  editor's columns. ` Usages 6 in 1 file ` set into the top edge, ` × ` at its right end.
+- The list in the left third, a rule joining the box (`┬ │ ┴`) to the preview on the right
+  (the read-only editor on the grid). A file row `▾ ◆ main.rs  src        6`; a usage row
+  indented four cells, the match filled with `editor.interline.match.background`, a row too
+  long for its cells dropping just enough of its start for the match to fit. The selected row
+  filled.
+- The bottom edge: ` ↵ open  esc close ` at the left, the path at the right.
+
 ### Menus (context, main, branch)
 - A box with no title. Rows: `  Label            ⌘C ` with one cell of margin, the shortcut
   right-aligned in `text_tertiary`; disabled rows in `text_disabled`; separators are rules that
@@ -258,7 +269,4 @@ Open points:
 - The documentation box beside the completion box draws its own line next to the completion
   box's frame instead of sharing one column.
 - A live window resize is clamped in code (whole rows kept) but not yet seen on screen.
-- The inline usages (`usages.rs`) have no tui form yet: the panel is drawn as in the Fleet skin
-  over its block of whole rows. Its form would be a box across the editor's columns, the list
-  and the preview split by a vertical rule joining the box, as Goto's preview is.
 

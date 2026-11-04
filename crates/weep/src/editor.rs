@@ -440,6 +440,10 @@ impl Folded {
     }
 }
 
+/// The height an interline view wants at the current zoom (its display rows
+/// are the nearest whole number of them).
+pub type InterlineHeight = fn(&Metrics) -> f32;
+
 /// Per buffer row: where it starts in display rows and how its characters
 /// split into wrapped segments.
 #[derive(Clone, Debug, Default)]
@@ -661,7 +665,7 @@ pub struct EditorView {
     map: DisplayMap,
     /// A view laid between two lines (`set_interline`): the buffer row it
     /// follows, the display rows it takes, and the view.
-    interline: Option<(usize, usize, gpui::AnyView)>,
+    interline: Option<(usize, InterlineHeight, gpui::AnyView)>,
     /// The display column the caret wants when moving through shorter rows.
     goal_column: Option<usize>,
     /// `expand-selection` steps, so `shrink-selection` retraces them.
@@ -1597,6 +1601,25 @@ impl EditorView {
 
     /// Brings the map up to date with the buffer and the wrap width.
     fn sync_map(&mut self, cx: &App) {
+        // An interline block takes the whole display rows nearest its height,
+        // so a zoom or a skin (the tui grid's rows) resizes it.
+        let blocks: Vec<(usize, usize)> = match &self.interline {
+            Some((row, height, _)) => {
+                let lh = f32::from(self.line_height());
+                let want = height(cx.global::<Metrics>());
+                let rows = if lh > 0. {
+                    (want / lh).round().max(1.) as usize
+                } else {
+                    1
+                };
+                vec![(*row, rows)]
+            }
+            None => Vec::new(),
+        };
+        if self.map.blocks != blocks {
+            self.map.blocks = blocks;
+            self.map.version = None;
+        }
         let doc = self.document.read(cx);
         let buffer = &doc.buffer;
         let version = buffer.version();
@@ -2508,16 +2531,16 @@ impl EditorView {
     /// the inline usages); `None` removes it.
     pub fn set_interline(
         &mut self,
-        at: Option<(usize, usize, gpui::AnyView)>,
+        at: Option<(usize, InterlineHeight, gpui::AnyView)>,
         cx: &mut Context<Self>,
     ) {
-        self.map.blocks = at.iter().map(|(row, rows, _)| (*row, *rows)).collect();
-        self.map.version = None;
-        let reveal = at.as_ref().map(|(row, rows, _)| (*row, *rows));
+        let row = at.as_ref().map(|(row, _, _)| *row);
         self.interline = at;
         // Fleet scrolls the block into view with two rows of text under it.
-        if let Some((row, rows)) = reveal {
-            self.sync_map(cx);
+        self.sync_map(cx);
+        if let Some((row, rows)) =
+            row.and_then(|r| self.map.blocks.iter().find(|b| b.0 == r).copied())
+        {
             let height = self.last_bounds.size.height;
             if let Some(start) = self.map.block_start(row) {
                 let lh = self.line_height();
@@ -2532,17 +2555,12 @@ impl EditorView {
         cx.notify();
     }
 
-    /// The height of a display row, as last painted (an interline block's
-    /// rows are sized by it).
-    pub fn row_height(&self, _: &App) -> f32 {
-        f32::from(self.line_height())
-    }
-
     /// The interline view, placed over its block's rows and clipped to the view.
     fn render_interline(&mut self, cx: &App) -> Option<gpui::AnyElement> {
-        let (row, rows, view) = self.interline.clone()?;
+        let (row, _, view) = self.interline.clone()?;
         self.sync_map(cx);
         let start = self.map.block_start(row)?;
+        let rows = self.map.rows.get(row).map_or(0, |r| r.block);
         let lh = self.line_height();
         let top = lh * start as f32 - self.scroll_y;
         Some(

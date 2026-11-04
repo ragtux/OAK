@@ -1512,14 +1512,10 @@ impl Workspace {
             },
         )
         .detach();
-        // The block takes whole display rows: the panel and its gaps, rounded.
-        let m = *cx.global::<Metrics>();
-        let lh = editor.read(cx).row_height(cx);
-        let rows = ((m.usages_gap_top + m.usages_height + m.usages_gap_bottom) / lh)
-            .round()
-            .max(1.) as usize;
         let view: gpui::AnyView = panel.clone().into();
-        editor.update(cx, |e, cx| e.set_interline(Some((row, rows, view)), cx));
+        editor.update(cx, |e, cx| {
+            e.set_interline(Some((row, crate::usages::block_height, view)), cx)
+        });
         let handle = panel.read(cx).focus_handle(cx);
         self.smart.usages = Some((editor.clone(), panel));
         self.focus_later(handle, cx);

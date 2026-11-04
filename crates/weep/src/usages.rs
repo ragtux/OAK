@@ -9,13 +9,22 @@ use crate::actions::{Cancel, MoveDown, MoveLeft, MoveRight, MoveUp, Newline};
 use crate::assets::{file_icon, icon};
 use crate::editor::{EditorView, Search};
 use crate::goto::OpenDocument;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     div, prelude::*, px, relative, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
     FontWeight, MouseButton, SharedString, Window,
 };
+use std::cell::Cell as Shared;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+/// The height the panel's block asks of the editor: the panel and its gaps
+/// (the editor rounds it to whole display rows, the tui grid's included).
+pub fn block_height(m: &Metrics) -> f32 {
+    m.usages_gap_top + m.usages_height + m.usages_gap_bottom
+}
 
 /// One usage: where it is in its document (chars), its row, and the line's
 /// text as the list shows it (leading blanks trimmed) with the usage's char
@@ -59,6 +68,8 @@ pub struct UsagesPanel {
     preview: Option<(PathBuf, Entity<EditorView>)>,
     open_document: OpenDocument,
     focus_handle: FocusHandle,
+    /// The tui skin: the block's size in cells, read back while painting.
+    tui_grid: Rc<Shared<(usize, usize)>>,
 }
 
 impl EventEmitter<UsagesEvent> for UsagesPanel {}
@@ -79,6 +90,7 @@ impl UsagesPanel {
             preview: None,
             open_document,
             focus_handle: cx.focus_handle(),
+            tui_grid: Rc::default(),
         };
         panel.show_preview(cx);
         panel
@@ -181,6 +193,36 @@ impl UsagesPanel {
                 ));
             }
         }
+    }
+
+    /// Keeps the selected row among the `fit` rows shown from `top`.
+    fn follow(&mut self, rows: &[Row], fit: usize) {
+        let at = rows.iter().position(|r| *r == self.selected).unwrap_or(0);
+        if at < self.top {
+            self.top = at;
+        } else if at >= self.top + fit {
+            self.top = at + 1 - fit;
+        }
+        self.top = self.top.min(rows.len().saturating_sub(fit));
+    }
+
+    /// The path under the preview: the folder's parts and the file's name.
+    fn crumbs(&self) -> Vec<String> {
+        self.previewed()
+            .map(|(f, _)| {
+                let file = &self.files[f];
+                let mut parts: Vec<String> = file
+                    .dir
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                if let Some(name) = file.path.file_name() {
+                    parts.push(name.to_string_lossy().into_owned());
+                }
+                parts
+            })
+            .unwrap_or_default()
     }
 
     /// Left: fold the file and select it.
@@ -334,8 +376,250 @@ pub fn dir_of(root: &Path, path: &Path) -> String {
         .unwrap_or_default()
 }
 
+impl UsagesPanel {
+    /// The tui skin's form (docs/tui-skin.md): a box filling the block's
+    /// cells, the summary and a `×` set into its top edge, the list left of
+    /// a rule joining the box (`┬ │ ┴`) and the preview right of it on the
+    /// grid, the key hints and the path set into the bottom edge.
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let measure = skin::measure(cell, &self.tui_grid);
+        let (cols, rows) = self.tui_grid.get();
+        let shell = div()
+            .id("usages")
+            .key_context("Usages")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .relative()
+            .on_action(cx.listener(|this, _: &MoveUp, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &MoveDown, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &MoveLeft, _, cx| this.collapse(cx)))
+            .on_action(cx.listener(|this, _: &MoveRight, _, cx| this.expand(cx)))
+            .on_action(cx.listener(|this, _: &Newline, _, cx| this.open(cx)))
+            .on_action(cx.listener(|_, _: &Cancel, _, cx| cx.emit(UsagesEvent::Close)))
+            .child(measure);
+        if cols < 16 || rows < 4 {
+            return shell.into_any_element();
+        }
+        let focused = self.focus_handle.contains_focused(window, cx);
+        let frame = if focused {
+            theme.border_focused
+        } else {
+            theme.border
+        };
+        let bg = theme.interline_bg;
+        // The rule's column in the box's cells; the list and the preview one
+        // cell in from the frame and from the rule.
+        let vcol = (cols / 3).max(8);
+        let list_cols = vcol - 1;
+        let preview_cols = cols.saturating_sub(vcol + 2);
+        let body_rows = rows - 2;
+        let all = self.rows();
+        self.follow(&all, body_rows);
+        let entity = cx.entity();
+        let mut list: Vec<gpui::AnyElement> = Vec::new();
+        for (ix, row) in all
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(self.top)
+            .take(body_rows)
+        {
+            let selected = row == self.selected;
+            let entity = entity.clone();
+            let line = div()
+                .id(("usage-tui-row", ix))
+                .h(px(cell.h))
+                .w(cell.cols(list_cols))
+                .flex_shrink_0()
+                .flex()
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_color(theme.text_primary)
+                .when(selected, |d| {
+                    d.bg(if focused {
+                        theme.list_bg_focused
+                    } else {
+                        theme.list_bg_selected
+                    })
+                })
+                .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                    let handle = entity.read(cx).focus_handle.clone();
+                    window.focus(&handle, cx);
+                    entity.update(cx, |this, cx| {
+                        this.select(row, cx);
+                        if e.click_count >= 2 {
+                            this.open(cx);
+                        }
+                    });
+                });
+            let element = match row {
+                Row::File(f) => {
+                    let file = &self.files[f];
+                    let name = file
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let (glyph, glyph_color) = skin::file_glyph(&name, &theme);
+                    let count = format!(" {} ", file.usages.len());
+                    let fold = if self.collapsed[f] { "▸ " } else { "▾ " };
+                    let room = list_cols.saturating_sub(4 + Cell::text_cols(&count));
+                    let name = skin::fit_text(&name, room);
+                    let dir = skin::fit_text(
+                        &format!("  {}", file.dir),
+                        room.saturating_sub(Cell::text_cols(&name)),
+                    );
+                    line.child(div().text_color(theme.text_tertiary).child(fold))
+                        .child(div().text_color(glyph_color).child(format!("{glyph} ")))
+                        .child(div().child(SharedString::from(name)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_color(theme.text_tertiary)
+                                .child(SharedString::from(dir)),
+                        )
+                        .child(div().text_color(theme.text_tertiary).child(count))
+                        .into_any_element()
+                }
+                Row::Usage(f, u) => {
+                    let usage = &self.files[f].usages[u];
+                    let chars: Vec<char> = usage.text.chars().collect();
+                    let room = list_cols.saturating_sub(4);
+                    // A match past the row's cells drops just enough of the
+                    // line's start for it to fit, with a cell after it.
+                    let skip = if usage.hit.end + 1 > room {
+                        (usage.hit.end + 1 - room).min(usage.hit.start)
+                    } else {
+                        0
+                    };
+                    let part = |a: usize, b: usize| -> SharedString {
+                        let (a, b) = (a.max(skip).min(chars.len()), b.max(skip).min(chars.len()));
+                        chars[a..b].iter().collect::<String>().into()
+                    };
+                    let (hs, he) = (
+                        usage.hit.start.min(chars.len()),
+                        usage.hit.end.min(chars.len()),
+                    );
+                    line.child(div().w(cell.cols(4)).flex_shrink_0())
+                        .child(div().child(part(0, hs)))
+                        .child(
+                            div()
+                                .bg(theme.interline_match_bg)
+                                .text_color(theme.interline_match_text)
+                                .child(part(hs, he)),
+                        )
+                        .child(div().child(part(he, chars.len())))
+                        .into_any_element()
+                }
+            };
+            list.push(element);
+        }
+        let rule = gpui::canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                skin::paint_vrule(window, bounds.origin, cell, vcol, 0, rows - 1, frame, &m);
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let files = self.files.len();
+        let summary = format!(
+            "Usages {} in {files} file{}",
+            self.count(),
+            if files == 1 { "" } else { "s" }
+        );
+        let close_entity = cx.entity();
+        let close = div()
+            .id("usages-tui-close")
+            .cursor_pointer()
+            .text_color(theme.text_secondary)
+            .hover(|s| s.bg(theme.list_bg_hovered))
+            .on_click(move |_, _, cx| close_entity.update(cx, |_, cx| cx.emit(UsagesEvent::Close)))
+            .child(" × ")
+            .into_any_element();
+        let crumbs = self.crumbs().join("/");
+        let boxed = skin::boxed(
+            cell,
+            cols,
+            rows,
+            Vec::new(),
+            Vec::new(),
+            div().into_any_element(),
+            bg,
+            frame,
+            &theme,
+            m,
+        )
+        .occlude()
+        .child(rule)
+        .child(
+            div()
+                .absolute()
+                .left(cell.cols(1))
+                .top(cell.rows(1))
+                .w(cell.cols(list_cols))
+                .h(cell.rows(body_rows))
+                .overflow_hidden()
+                .flex()
+                .flex_col()
+                .children(list),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(cell.cols(vcol + 1))
+                .top(cell.rows(1))
+                .w(cell.cols(preview_cols))
+                .h(cell.rows(body_rows))
+                .overflow_hidden()
+                .children(self.preview.as_ref().map(|(_, e)| e.clone())),
+        )
+        .child(skin::edge_strip(
+            cell,
+            0,
+            2,
+            vcol.saturating_sub(3),
+            vec![skin::title(
+                skin::fit_text(&summary, vcol.saturating_sub(5)),
+                theme.text_primary,
+            )],
+            bg,
+        ))
+        .child(skin::edge_strip_end(cell, 0, vec![close], bg))
+        .child(skin::edge_strip(
+            cell,
+            rows - 1,
+            2,
+            vcol.saturating_sub(3),
+            skin::hints(&[("↵", "open"), ("esc", "close")], &theme),
+            bg,
+        ))
+        .when(!crumbs.is_empty(), |d| {
+            d.child(skin::edge_strip_end(
+                cell,
+                rows - 1,
+                vec![skin::title(
+                    skin::fit_text(&crumbs, preview_cols.saturating_sub(4)),
+                    theme.text_secondary,
+                )],
+                bg,
+            ))
+        });
+        shell.child(boxed).into_any_element()
+    }
+}
+
 impl Render for UsagesPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let focused = self.focus_handle.contains_focused(window, cx);
@@ -349,13 +633,7 @@ impl Render for UsagesPanel {
         let rows = self.rows();
         let fit =
             (((m.usages_height - m.usages_rows_top) / m.usages_row_pitch).floor() as usize).max(1);
-        let at = rows.iter().position(|r| *r == self.selected).unwrap_or(0);
-        if at < self.top {
-            self.top = at;
-        } else if at >= self.top + fit {
-            self.top = at + 1 - fit;
-        }
-        self.top = self.top.min(rows.len().saturating_sub(fit));
+        self.follow(&rows, fit);
         let list: Vec<gpui::AnyElement> = rows
             .iter()
             .enumerate()
@@ -363,22 +641,7 @@ impl Render for UsagesPanel {
             .take(fit)
             .map(|(ix, row)| self.render_row(ix, *row, focused, &theme, &m, cx))
             .collect();
-        let path_parts: Vec<String> = self
-            .previewed()
-            .map(|(f, _)| {
-                let file = &self.files[f];
-                let mut parts: Vec<String> = file
-                    .dir
-                    .split('/')
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect();
-                if let Some(name) = file.path.file_name() {
-                    parts.push(name.to_string_lossy().into_owned());
-                }
-                parts
-            })
-            .unwrap_or_default();
+        let path_parts = self.crumbs();
         let mut footer = div()
             .h(px(m.usages_footer_height))
             .flex_shrink_0()
@@ -500,5 +763,6 @@ impl Render for UsagesPanel {
                     )
                     .child(preview),
             )
+            .into_any_element()
     }
 }
