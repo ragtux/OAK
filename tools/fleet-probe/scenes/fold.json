@@ -1,6 +1,6 @@
 {
   "name": "fold",
-  "about": "M2: the gutter hovered for fold chevrons on main.rs, the struct block folded by a click on its chevron (line 7, the island starts at 376 so the box is at 416-432), the caret moved past the fold with the keyboard, then the block unfolded by a click on the {...} mark; last, scrolled into fn main for the sticky lines.",
+  "about": "M2: the gutter hovered for fold chevrons on main.rs, the struct block folded by a click on its chevron (line 7, the island starts at 376 so the box is at 416-432), the caret moved past the fold with the keyboard, then the block unfolded by a click on the {...} mark; last, scrolled into fn main for the sticky lines. Fleet's Smart Mode puts a code-vision row (\"4 implementations\") above `pub struct Record`, so its steps aim one 22 px row lower (y 241) than WEEP's (fifteenth pass).",
   "size": [1280, 800],
   "pos": [100, 100],
   "settle_ms": 6000,
@@ -9,10 +9,10 @@
       ["wait", 2000], ["key", "escape"], ["wait", 500],
       ["key", "ctrl+k"], ["wait", 800], ["type", "main.rs"], ["wait", 1500], ["key", "enter"], ["wait", 2000],
       ["key", "ctrl+home"], ["wait", 300],
-      ["hover", 424, 219, 900], ["shot", "fold-hover"],
+      ["hover", 424, 241, 900], ["shot", "fold-hover"],
       ["click"], ["wait", 800], ["shot", "folded"],
       ["key", "down"], ["key", "down"], ["key", "down"], ["wait", 500], ["shot", "folded-caret"],
-      ["move", 560, 219], ["click"], ["wait", 800], ["shot", "unfolded"],
+      ["move", 560, 241], ["click"], ["wait", 800], ["shot", "unfolded"],
       ["move", 900, 400], ["wait", 300],
       ["key", "ctrl+end"], ["wait", 300], ["key", "up"], ["key", "up"], ["key", "up"], ["wait", 600], ["shot", "sticky"]
     ],

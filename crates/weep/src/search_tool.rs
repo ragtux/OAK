@@ -659,7 +659,10 @@ pub fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
         .bg(theme.input_bg)
         .map(|d| {
             if focused {
-                d.border(px(m.input_focus_border))
+                // gpui paints a shadow under the whole box, so a clear field
+                // would show the outline inside it: fill it as what is under it.
+                d.bg(theme.island_background.blend(theme.input_bg))
+                    .border(px(m.input_focus_border))
                     .border_color(theme.input_focus_border)
                     .shadow(vec![BoxShadow {
                         color: theme.input_focus_outline,

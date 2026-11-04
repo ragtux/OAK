@@ -1765,6 +1765,20 @@ impl EditorView {
     }
 
     /// Scrolls the caret's row to the middle of the view (a jump: goto, find).
+    /// Scrolls the caret's row to the middle of the view, visible or not.
+    fn center_cursor_always(&mut self, cx: &App) {
+        self.sync_map(cx);
+        let height = self.last_bounds.size.height;
+        if height <= px(0.) {
+            return;
+        }
+        let lh = self.line_height();
+        let point = self.cursor_position(cx);
+        let row = self.map.display_row(point.row, point.column) as f32;
+        let max = self.max_scroll_y(cx);
+        self.scroll_y = (lh * row - (height - lh) / 2.).clamp(px(0.), max);
+    }
+
     fn center_cursor(&mut self, cx: &App) {
         self.sync_map(cx);
         let lh = self.line_height();
@@ -2433,7 +2447,9 @@ impl EditorView {
     pub fn goto(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
         self.go(cx, |c, b| c.goto(b, row, column));
         self.reveal_carets(cx);
-        self.center_cursor(cx);
+        // Fleet centres the line even when it was already in view (fifteenth
+        // pass, the `smart` scene's jump to 29:5).
+        self.center_cursor_always(cx);
         self.restart_blink(cx);
         cx.notify();
     }
@@ -4399,8 +4415,10 @@ impl Element for EditorElement {
                 let shaped =
                     shape_display_line(&line, &seg_spans, &theme, tm.font_size, &options, window);
                 let folded_layout = folded.map(|f| {
+                    // Fleet writes three periods across the mark's three cells
+                    // (fifteenth pass), not an ellipsis glyph.
                     let mark = shape_glyph(
-                        if tm.cell.is_some() { "⋯" } else { "…" },
+                        if tm.cell.is_some() { "⋯" } else { "..." },
                         theme.folded_mark_text,
                         &theme,
                         tm.font_size,
@@ -4930,8 +4948,11 @@ impl Element for EditorElement {
                         );
                     }
                 }
-                // Line number, right-aligned in the gutter.
-                if let Some(number) = &laid.number {
+                // Line number, right-aligned in the gutter. The hovered row
+                // shows the breakpoint hint in its place: Fleet leaves the
+                // number out there (fifteenth pass, the `fold` scene).
+                let hinted = prepaint.gutter_hovered && prepaint.hovered_row == Some(laid.row);
+                if let Some(number) = laid.number.as_ref().filter(|_| !hinted) {
                     let _ = number.paint(
                         point(number_right - number.width, y),
                         lh,
@@ -4964,7 +4985,7 @@ impl Element for EditorElement {
                 }
                 // The hovered row shows the breakpoint hint: a filled circle at
                 // 21.3 (batch 5; the `fold` scene showed no wash under the chevron).
-                if prepaint.gutter_hovered && prepaint.hovered_row == Some(laid.row) {
+                if hinted {
                     let d = px(tm.breakpoint_hint_size);
                     let hint = Bounds::new(
                         point(origin_x + px(tm.breakpoint_hint_x), y + (lh - d) / 2.),

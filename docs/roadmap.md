@@ -502,7 +502,9 @@ Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
 - Probes: batch 12 as the `smart` scene (written, not yet run on either
   editor).
 
-Left for later: inlay hints (`textDocument/inlayHint`: Fleet shows
+Left for later: find usages as Fleet's inline panel (the fifteenth pass:
+under the line in the editor, a tree of usages without the declaration on the
+left and a preview on the right; WEEP shows the Goto-framed list), inlay hints (`textDocument/inlayHint`: Fleet shows
 parameter names and types inside the line, which needs the display map to
 widen lines), the run triangle in the gutter at `fn main` (a code lens),
 the inline rename (`editor.rename.current|entries` boxes

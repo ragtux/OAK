@@ -21,9 +21,11 @@ use weep_theme::Color;
 /// The app paints from [`Metrics`], these values times the zoom level.
 pub mod metrics {
     /// The row above the islands: the logo, the panel toggles, the workspace
-    /// name, the run and search controls. 38 on macOS, where it is also the
-    /// title bar holding the traffic lights (fourteenth pass).
-    pub const TOOLBAR_HEIGHT: f32 = if cfg!(target_os = "macos") { 38. } else { 36. };
+    /// name, the run and search controls. 37 on macOS, where it is also the
+    /// title bar holding the traffic lights: Fleet's islands start at 37.0
+    /// (fifteenth pass, the first driven one; the fourteenth's 38 was read off
+    /// a hand-taken shot).
+    pub const TOOLBAR_HEIGHT: f32 = if cfg!(target_os = "macos") { 37. } else { 36. };
     pub const TOOLBAR_BUTTON: f32 = 28.;
     pub const TOOLBAR_GAP: f32 = 4.;
     /// Window edge to the logo's 24 px box (Windows probe: logo centred at 16.7).
@@ -55,10 +57,10 @@ pub mod metrics {
     /// The margin between the window edge and an island, and between two islands;
     /// the gap is also the splitter's hit zone (batch 2).
     pub const ISLAND_MARGIN: f32 = 8.;
-    /// The window's right margin is 6, not 8: the islands and the scrollbar end
-    /// at 1274 in a 1280 window (batches 1 and 3, confirmed by the find and
-    /// wrap scenes: Fleet's find field and ruler sit 2 px right of WEEP's).
-    pub const ISLAND_MARGIN_RIGHT: f32 = 6.;
+    /// The window's right margin: 6 on Windows, where the islands and the
+    /// scrollbar end at 1274 in a 1280 window (batches 1 and 3); 8 on macOS,
+    /// where Fleet's end at 1272 like its left margin (fifteenth pass).
+    pub const ISLAND_MARGIN_RIGHT: f32 = if cfg!(target_os = "macos") { 8. } else { 6. };
     pub const ISLAND_RADIUS: f32 = 8.;
     /// Fleet's Files island in a fresh 1280 × 800 window (Windows probe, batch 1).
     pub const LEFT_PANEL_WIDTH: f32 = 360.;

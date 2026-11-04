@@ -870,6 +870,39 @@ was clicked or typed by the probe.
 | text fields | (macOS conventions) | WEEP's single-line input takes ⌘A/C/X/V, ⌥←/→ by words, ⌘←/→ to the ends and ⌥⌫ on macOS, Ctrl elsewhere |
 | theme | `dark.json` and `light.json` carry the 7-digit `editor.interline.match.background.secondary: #FFFE248`, and Fleet loads them | WEEP still skips the entry, but says so only for a user's theme file, not for its bundled copies |
 
+## Fifteenth pass: macOS, the first driven run (2026-11-04)
+
+Fleet 1.48.261 and WEEP on the same Mac as the fourteenth pass, both driven by
+`tools/fleet-probe/macprobe.py` (CGEvent input and Accessibility window
+placement through `macinput.swift`; a scene's Windows chords sent as Fleet's mac
+ones through the keymap). The M2 scenes `find`, `fold` and `wrap` and M7's
+`smart` ran on both for the first time; values in points.
+
+| what | Fleet | WEEP before → now |
+|---|---|---|
+| islands' top edge | 37 in 4 of 7 launches, 38 in the other 3 (the same scene, no input before the shot: Fleet's own wobble) | 38 → 37 (`TOOLBAR_HEIGHT` on macOS) |
+| window's right margin | 8: the editor island ends at 1272 like the left margin's 8 | 6 (the Windows value) → 8 on macOS (`ISLAND_MARGIN_RIGHT`) |
+| focused find field | dark inside, the 1.33 focus border and the 2 px outline outside it | the outline's colour filled the field: gpui paints a box shadow under the whole box and `inputField.background.default` is clear. The find bar's, the Search tool's and the prompts' focused fields are now filled with the background under them |
+| find bar's previous/next | ↑ and ↓ arrows (as the Windows batch 5 note says) | the expui magnifier icons → WEEP's own 16 px arrows (`weep/arrow-up`, `arrow-down`) |
+| find bar geometry | the field 28 tall, 15 from the island's right edge | the same once the island edge matched |
+| hovered gutter row | the breakpoint hint circle replaces the line number | the circle was drawn over the number → the number left out |
+| folded mark | `...`, three periods across the mark's three cells | `…` (one glyph, small and low) → `...` |
+| `goto/line` | centres the line even when it is already in view (the `smart` jump to 29:5) | centred only a line out of view → always centred |
+| wrap scene | soft wrap, relative numbers and the 80 guide from `fleet_settings`; the guide at the same x as WEEP's | the same |
+| Smart Mode extras | a code-vision row ("4 implementations") above `pub struct Record`, inlay hints (`: f64`, parameter names), a run triangle at `fn main` | none of the three yet (M7's "left for later"); the `fold` scene's Fleet steps aim one 22 px row lower for the code-vision row |
+| find usages (Cmd+U on `Record`) | an inline panel opened under the line in the editor: "Usages 6 in 1 file" (the declaration left out) as a tree on the left, a preview of the file on the right, a close cross | a Goto-framed popup at the top listing 7 rows, the declaration included: still to build |
+
+Not settled by this pass: Fleet's completion popup (Fleet's rust-analyzer
+reported "Failed spawning proc-macro server" for the fixture and no popup opened
+after `index.` within the scene's wait), so the completion and documentation
+measurements of the thirteenth pass stand; Fleet drops the gutter's hover state
+on a keystroke (no chevrons and no hint after the arrows in `folded-caret`)
+where WEEP keeps it until the pointer moves; the replace steps of `find`
+(Tab in Fleet's find field does not reach the replace field); where Fleet
+reads its user settings on macOS (the driver writes both `~/.fleet` and
+`~/Library/Application Support/JetBrains/Fleet` for a run, and `wrap` showed
+one of them is read).
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

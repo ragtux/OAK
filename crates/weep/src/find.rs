@@ -477,7 +477,10 @@ fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
         .bg(theme.input_bg)
         .map(|d| {
             if focused {
-                d.border(px(m.input_focus_border))
+                // gpui paints a shadow under the whole box, so a clear field
+                // would show the outline inside it: fill it as what is under it.
+                d.bg(theme.island_background.blend(theme.input_bg))
+                    .border(px(m.input_focus_border))
                     .border_color(theme.input_focus_border)
                     .shadow(vec![BoxShadow {
                         color: theme.input_focus_outline,
@@ -562,13 +565,13 @@ impl Render for FindBar {
         };
         let up = {
             let entity = entity.clone();
-            ghost_icon("find-prev", "expui/actions/findBackward", &theme, &m)
+            ghost_icon("find-prev", "weep/arrow-up", &theme, &m)
                 .tooltip(Tooltip::text("Previous Occurrence"))
                 .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.step(false, cx)))
         };
         let down = {
             let entity = entity.clone();
-            ghost_icon("find-next", "expui/actions/findForward", &theme, &m)
+            ghost_icon("find-next", "weep/arrow-down", &theme, &m)
                 .tooltip(Tooltip::text("Next Occurrence"))
                 .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.step(true, cx)))
         };
