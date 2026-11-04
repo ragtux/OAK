@@ -13,6 +13,7 @@ use crate::actions::{PopupDown, PopupUp};
 use crate::assets::{file_icon, icon};
 use crate::input::{InputEvent, TextInput};
 use crate::settings::AppSettings;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
@@ -87,6 +88,8 @@ pub struct SearchTool {
     overrides: Overrides,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
+    /// The tui skin's body in whole cells, as last laid out.
+    tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
 }
 
 impl EventEmitter<SearchToolEvent> for SearchTool {}
@@ -133,6 +136,7 @@ impl SearchTool {
             overrides,
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
+            tui_grid: Rc::default(),
         }
     }
 
@@ -419,6 +423,36 @@ impl SearchTool {
         }
     }
 
+    /// The line under the fields: the error, "Searching…", or the count.
+    fn counter(&self, theme: &Theme, cx: &App) -> (SharedString, gpui::Hsla) {
+        let counter: SharedString = if let Some(err) = &self.error {
+            err.clone().into()
+        } else if self.searching {
+            "Searching…".into()
+        } else if self.query_text(cx).is_empty() {
+            "".into()
+        } else {
+            let total = self.total_matches();
+            let files = self.results.len();
+            match (total, self.truncated) {
+                (0, _) => "No matches".into(),
+                (_, true) => format!("First {RESULT_LIMIT} matches in {files} files").into(),
+                (n, false) => format!(
+                    "{n} match{} in {files} file{}",
+                    if n == 1 { "" } else { "es" },
+                    if files == 1 { "" } else { "s" }
+                )
+                .into(),
+            }
+        };
+        let counter_color = if self.error.is_some() {
+            theme.text_dangerous
+        } else {
+            theme.text_secondary
+        };
+        (counter, counter_color)
+    }
+
     fn render_file_row(
         &self,
         f: usize,
@@ -630,6 +664,9 @@ pub fn frame(focused: bool, theme: &Theme, m: &Metrics) -> Div {
 
 impl Render for SearchTool {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let entity = cx.entity();
@@ -665,31 +702,7 @@ impl Render for SearchTool {
                     theme.icon_primary,
                 ))
         };
-        let counter: SharedString = if let Some(err) = &self.error {
-            err.clone().into()
-        } else if self.searching {
-            "Searching…".into()
-        } else if self.query_text(cx).is_empty() {
-            "".into()
-        } else {
-            let total = self.total_matches();
-            let files = self.results.len();
-            match (total, self.truncated) {
-                (0, _) => "No matches".into(),
-                (_, true) => format!("First {RESULT_LIMIT} matches in {files} files").into(),
-                (n, false) => format!(
-                    "{n} match{} in {files} file{}",
-                    if n == 1 { "" } else { "es" },
-                    if files == 1 { "" } else { "s" }
-                )
-                .into(),
-            }
-        };
-        let counter_color = if self.error.is_some() {
-            theme.text_dangerous
-        } else {
-            theme.text_secondary
-        };
+        let (counter, counter_color) = self.counter(&theme, cx);
         let query_row = div()
             .flex()
             .items_center()
@@ -816,5 +829,327 @@ impl Render for SearchTool {
                     d
                 },
             )
+            .into_any_element()
+    }
+}
+
+// ---- the tui skin ------------------------------------------------------------
+
+/// The fields' label column in the tui skin: a chevron cell, a gap, the
+/// label in four cells, a gap.
+const TUI_LABEL: usize = 7;
+
+impl SearchTool {
+    /// The tool in the tui skin: the find, replace and mask fields as rows
+    /// with their labels in a fixed column and the toggles after the query,
+    /// a rule with the count set in, then the results as a tree with the
+    /// Files tool's guides. Everything is whole cells.
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let cols = self.tui_grid.get().0;
+        let entity = cx.entity();
+        let field = |label: &'static str,
+                     chevron: Option<gpui::AnyElement>,
+                     input: Entity<TextInput>,
+                     focused: bool| {
+            div()
+                .h(px(cell.h))
+                .w_full()
+                .flex()
+                .flex_shrink_0()
+                .child(div().w(px(cell.w)).flex_shrink_0().children(chevron))
+                .child(
+                    div()
+                        .w(cell.cols(TUI_LABEL - 1))
+                        .flex_shrink_0()
+                        .text_color(if focused {
+                            theme.text_primary
+                        } else {
+                            theme.text_tertiary
+                        })
+                        .child(SharedString::from(format!(" {label}"))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(cell.h))
+                        .bg(theme.input_bg)
+                        .child(input),
+                )
+        };
+        let toggle = |id: &'static str, label: &'static str, on: bool, which: Toggle| {
+            let entity = entity.clone();
+            skin::toggle(id, label, on, &theme, cell)
+                .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.toggle(which, cx)))
+        };
+        let gap = || div().w(px(cell.w)).flex_shrink_0();
+        let chevron = {
+            let entity = entity.clone();
+            div()
+                .id("search-toggle-replace")
+                .w(px(cell.w))
+                .h(px(cell.h))
+                .cursor_pointer()
+                .text_color(theme.icon_secondary)
+                .hover(|s| s.bg(theme.list_bg_hovered))
+                .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.toggle_replace(cx)))
+                .child(if self.replace_mode { "▾" } else { "▸" })
+                .into_any_element()
+        };
+        let query_row = field(
+            "find",
+            Some(chevron),
+            self.query.clone(),
+            self.query.read(cx).is_focused(window),
+        )
+        .child(gap())
+        .child(toggle(
+            "search-case",
+            "Aa",
+            self.case_sensitive,
+            Toggle::Case,
+        ))
+        .child(gap())
+        .child(toggle("search-word", "W", self.whole_word, Toggle::Word))
+        .child(gap())
+        .child(toggle("search-regex", ".*", self.regex, Toggle::Regex));
+        let replace_row = self.replace_mode.then(|| {
+            let all = entity.clone();
+            field(
+                "repl",
+                None,
+                self.replace.clone(),
+                self.replace.read(cx).is_focused(window),
+            )
+            .child(gap())
+            .child(
+                skin::button("search-replace-all", "Replace All", false, &theme, cell)
+                    .on_click(move |_, _, cx| all.update(cx, |this, cx| this.replace_all(cx))),
+            )
+        });
+        let mask_row = field(
+            "mask",
+            None,
+            self.mask.clone(),
+            self.mask.read(cx).is_focused(window),
+        );
+        let (counter, counter_color) = self.counter(&theme, cx);
+        let heading = skin::section(
+            cell,
+            cols,
+            if counter.is_empty() {
+                Vec::new()
+            } else {
+                vec![skin::title(counter, counter_color)]
+            },
+            theme.border,
+            theme.island_background,
+            m,
+        );
+        let digits = self
+            .results
+            .iter()
+            .flat_map(|f| f.lines.iter().map(|l| l.row + 1))
+            .max()
+            .unwrap_or(1)
+            .to_string()
+            .len()
+            .max(2);
+        let rows: Vec<gpui::AnyElement> = self
+            .rows()
+            .into_iter()
+            .map(|row| match row {
+                Row::File(f) => self.tui_file_row(f, cell, &theme, cx),
+                Row::Line(f, l) => self.tui_line_row(f, l, digits, cell, &theme, &m, cx),
+            })
+            .collect();
+        div()
+            .key_context("SearchTool")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::up))
+            .on_action(cx.listener(Self::down))
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .child(skin::measure(cell, &self.tui_grid))
+            .child(query_row)
+            .children(replace_row)
+            .child(mask_row)
+            .child(heading)
+            .child(
+                div()
+                    .id("search-results")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .flex()
+                    .flex_col()
+                    .children(rows),
+            )
+            .into_any_element()
+    }
+
+    /// A file's row: `▾ ◆ name  dir` and its count at the right end.
+    fn tui_file_row(
+        &self,
+        f: usize,
+        cell: Cell,
+        theme: &Theme,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let file = &self.results[f];
+        let (name, dir) = self.rel(&file.path);
+        let (glyph, glyph_color) = skin::file_glyph(&name, theme);
+        let collapsed = self.collapsed.contains(&file.path);
+        let selected = self.selected == Some(Row::File(f));
+        let entity = cx.entity();
+        let path = file.path.clone();
+        let mark = |text: &'static str, color| {
+            div()
+                .w(px(cell.w))
+                .flex_shrink_0()
+                .text_color(color)
+                .child(text)
+        };
+        div()
+            .id(ElementId::NamedInteger("search-file".into(), f as u64))
+            .h(px(cell.h))
+            .flex_shrink_0()
+            .flex()
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .cursor_pointer()
+            .when(selected, |d| d.bg(theme.list_bg_selected))
+            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+            .on_click(move |_, _, cx| {
+                entity.update(cx, |this, cx| {
+                    this.selected = Some(Row::File(f));
+                    if !this.collapsed.remove(&path) {
+                        this.collapsed.insert(path.clone());
+                    }
+                    cx.notify();
+                })
+            })
+            .child(mark(
+                if collapsed { "▸" } else { "▾" },
+                theme.icon_secondary,
+            ))
+            .child(mark(glyph, glyph_color))
+            .child(div().w(px(cell.w)).flex_shrink_0())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme.list_text)
+                    .child(SharedString::from(name)),
+            )
+            .children(dir.map(|d| {
+                div()
+                    .ml(cell.cols(2))
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_color(theme.text_tertiary)
+                    .child(SharedString::from(d))
+            }))
+            .child(div().flex_1().min_w(px(cell.w)))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme.text_tertiary)
+                    .child(SharedString::from(file.count().to_string())),
+            )
+            .into_any_element()
+    }
+
+    /// A match's row: the guide, the line number right-aligned in `digits`
+    /// cells, a `│` joining the rows, and the line with its matches filled.
+    #[allow(clippy::too_many_arguments)]
+    fn tui_line_row(
+        &self,
+        f: usize,
+        l: usize,
+        digits: usize,
+        cell: Cell,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let file = &self.results[f];
+        let line = &file.lines[l];
+        let last = l + 1 == file.lines.len();
+        let selected = self.selected == Some(Row::Line(f, l));
+        let entity = cx.entity();
+        let trimmed_start = line.text.len() - line.text.trim_start().len();
+        let text: String = line.text[trimmed_start..].chars().take(300).collect();
+        let text_len = text.len();
+        let highlights: Vec<(Range<usize>, HighlightStyle)> =
+            line.ranges
+                .iter()
+                .filter_map(|r| {
+                    let start = r.start.checked_sub(trimmed_start)?;
+                    let end = r.end.checked_sub(trimmed_start)?.min(text_len);
+                    (start < end && text.is_char_boundary(start) && text.is_char_boundary(end))
+                        .then(|| {
+                            (
+                                start..end,
+                                HighlightStyle {
+                                    color: Some(theme.search_match_text),
+                                    background_color: Some(theme.search_match_bg),
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                })
+                .collect();
+        let number = format!("{:>digits$}", line.row + 1);
+        div()
+            .id(ElementId::NamedInteger(
+                format!("search-line-{f}").into(),
+                l as u64,
+            ))
+            .h(px(cell.h))
+            .flex_shrink_0()
+            .flex()
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .cursor_pointer()
+            .when(selected, |d| d.bg(theme.list_bg_selected))
+            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+            .on_click(move |event, _, cx| {
+                let shift = event.modifiers().shift;
+                entity.update(cx, |this, cx| {
+                    this.selected = Some(Row::Line(f, l));
+                    this.open_selected(shift, cx);
+                })
+            })
+            .child(skin::guides(
+                cell,
+                Vec::new(),
+                last,
+                theme.text_tertiary,
+                *m,
+            ))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme.line_number)
+                    .child(SharedString::from(number)),
+            )
+            .child(skin::vrule(cell, 1, theme.border, *m))
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_color(theme.list_text)
+                    .child(StyledText::new(text).with_highlights(highlights)),
+            )
+            .into_any_element()
     }
 }

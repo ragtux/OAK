@@ -7,6 +7,7 @@
 
 use crate::assets::icon;
 use crate::settings::AppSettings;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
@@ -36,6 +37,8 @@ pub struct RunView {
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
     _pump: Option<Task<()>>,
+    /// The tui skin's body in whole cells, as last laid out.
+    tui_grid: std::rc::Rc<std::cell::Cell<(usize, usize)>>,
 }
 
 impl EventEmitter<RunViewEvent> for RunView {}
@@ -59,6 +62,7 @@ impl RunView {
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             _pump: None,
+            tui_grid: Default::default(),
         };
         view.start(cx);
         view
@@ -158,6 +162,9 @@ impl RunView {
 
 impl Render for RunView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let (font_size, line_height) = m.terminal_text(&cx.global::<AppSettings>().settings);
@@ -237,5 +244,106 @@ impl Render for RunView {
                     })),
             )
             .child(button)
+            .into_any_element()
+    }
+}
+
+impl RunView {
+    /// The tool in the tui skin: row 1 is the command line in the secondary
+    /// colour with `[ ▶ Rerun ] [ ■ Stop ]` at its right end, a rule with
+    /// the state set in (`running`, `exit 0`), then the output on the grid.
+    fn render_tui(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let cols = self.tui_grid.get().0;
+        let running = self.running();
+        let (state, state_color) = match (running, self.exit, &self.error) {
+            (true, _, _) => ("running".to_string(), theme.text_secondary),
+            (_, _, Some(_)) => ("could not start".to_string(), theme.text_dangerous),
+            (_, Some(Some(0)), _) => ("exit 0".to_string(), theme.text_positive),
+            (_, Some(Some(code)), _) => (format!("exit {code}"), theme.text_dangerous),
+            (_, Some(None), _) => ("killed".to_string(), theme.text_dangerous),
+            (false, None, None) => (String::new(), theme.text_secondary),
+        };
+        let gap = || div().w(px(cell.w)).flex_shrink_0();
+        let rerun = skin::button("run-rerun", "▶ Rerun", false, &theme, cell)
+            .when(running, |d| d.text_color(theme.text_disabled))
+            .on_click(cx.listener(|this, _, _, cx| this.restart(None, cx)));
+        let stop = skin::button("run-stop", "■ Stop", false, &theme, cell)
+            .when(!running, |d| d.text_color(theme.text_disabled))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.stop();
+                cx.notify();
+            }));
+        let command = div()
+            .h(px(cell.h))
+            .flex_shrink_0()
+            .flex()
+            .whitespace_nowrap()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_color(theme.text_secondary)
+                    .child(SharedString::from(self.command.display.clone())),
+            )
+            .child(gap())
+            .child(rerun)
+            .child(gap())
+            .child(stop);
+        let lines = self.lines.clone();
+        div()
+            .id("run-tool")
+            .key_context("RunTool")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .child(skin::measure(cell, &self.tui_grid))
+            .child(command)
+            .child(skin::section(
+                cell,
+                cols,
+                if state.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![skin::title(state, state_color)]
+                },
+                theme.border,
+                theme.island_background,
+                m,
+            ))
+            .child(
+                div()
+                    .id("run-output")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .flex()
+                    .flex_col()
+                    .children(self.error.clone().map(|e| {
+                        div()
+                            .flex_shrink_0()
+                            .text_color(theme.text_dangerous)
+                            .child(format!("Could not start: {e}"))
+                    }))
+                    .children(lines.into_iter().map(|line| {
+                        div()
+                            .h(px(cell.h))
+                            .flex_shrink_0()
+                            .text_color(theme.text_primary)
+                            .whitespace_nowrap()
+                            .child(line)
+                    })),
+            )
+            .into_any_element()
     }
 }

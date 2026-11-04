@@ -11,6 +11,7 @@ use crate::actions::{
 };
 use crate::assets::icon;
 use crate::settings::AppSettings;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use futures::StreamExt;
@@ -530,6 +531,7 @@ impl Render for TerminalView {
             }
         }
         let entity = cx.entity();
+        let tui = (Skin::current(cx) == Skin::Tui).then(|| Cell::current(cx));
         div()
             .id("terminal")
             .key_context("Terminal")
@@ -549,52 +551,83 @@ impl Render for TerminalView {
                     div()
                         .absolute()
                         .inset_0()
-                        .p(px(m.terminal_pad_x))
+                        .when(tui.is_none(), |d| d.p(px(m.terminal_pad_x)))
                         .text_color(theme.text_dangerous)
                         .child(format!("The shell could not start: {error}")),
                 )
             })
-            .when(self.scrolled_back && self.fresh_output, |d| {
-                let size = px(m.scroll_to_bottom_size);
-                let [top, bottom] = theme.scroll_to_bottom;
-                let [top_h, bottom_h] = theme.scroll_to_bottom_hovered;
-                d.child(
-                    div()
-                        .id("scroll-to-bottom")
-                        .absolute()
-                        .right(px(m.scroll_to_bottom_margin))
-                        .bottom(px(m.scroll_to_bottom_margin))
-                        .size(size)
-                        .rounded_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .bg(linear_gradient(
-                            180.,
-                            linear_color_stop(top, 0.),
-                            linear_color_stop(bottom, 1.),
-                        ))
-                        .hover(move |s| {
-                            s.bg(linear_gradient(
-                                180.,
-                                linear_color_stop(top_h, 0.),
-                                linear_color_stop(bottom_h, 1.),
-                            ))
-                        })
-                        .on_click(move |_, window, cx| {
-                            entity.update(cx, |view, cx| {
-                                view.scroll_to_bottom(cx);
-                                window.focus(&view.focus_handle, cx);
+            .when_some(
+                tui.filter(|_| self.scrolled_back && self.fresh_output),
+                |d, cell| {
+                    // The tui skin's button: `[↓]` in whole cells at the
+                    // grid's bottom right, filled.
+                    let entity = entity.clone();
+                    d.child(
+                        div()
+                            .id("scroll-to-bottom")
+                            .absolute()
+                            .right_0()
+                            .bottom_0()
+                            .w(cell.cols(3))
+                            .h(px(cell.h))
+                            .cursor_pointer()
+                            .bg(theme.button_primary_bg)
+                            .text_color(theme.button_primary_text)
+                            .hover(|s| s.bg(theme.button_primary_bg_hovered))
+                            .on_click(move |_, window, cx| {
+                                entity.update(cx, |view, cx| {
+                                    view.scroll_to_bottom(cx);
+                                    window.focus(&view.focus_handle, cx);
+                                })
                             })
-                        })
-                        .child(icon(
-                            "expui/general/chevronDown",
-                            m.icon_size,
-                            theme.icon_primary,
-                        )),
-                )
-            })
+                            .child("[↓]"),
+                    )
+                },
+            )
+            .when(
+                tui.is_none() && self.scrolled_back && self.fresh_output,
+                |d| {
+                    let size = px(m.scroll_to_bottom_size);
+                    let [top, bottom] = theme.scroll_to_bottom;
+                    let [top_h, bottom_h] = theme.scroll_to_bottom_hovered;
+                    d.child(
+                        div()
+                            .id("scroll-to-bottom")
+                            .absolute()
+                            .right(px(m.scroll_to_bottom_margin))
+                            .bottom(px(m.scroll_to_bottom_margin))
+                            .size(size)
+                            .rounded_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(top, 0.),
+                                linear_color_stop(bottom, 1.),
+                            ))
+                            .hover(move |s| {
+                                s.bg(linear_gradient(
+                                    180.,
+                                    linear_color_stop(top_h, 0.),
+                                    linear_color_stop(bottom_h, 1.),
+                                ))
+                            })
+                            .on_click(move |_, window, cx| {
+                                entity.update(cx, |view, cx| {
+                                    view.scroll_to_bottom(cx);
+                                    window.focus(&view.focus_handle, cx);
+                                })
+                            })
+                            .child(icon(
+                                "expui/general/chevronDown",
+                                m.icon_size,
+                                theme.icon_primary,
+                            )),
+                    )
+                },
+            )
     }
 }
 
@@ -617,6 +650,8 @@ pub struct Prepaint {
     origin: Point<Pixels>,
     cell: (Pixels, Pixels),
     focused: bool,
+    /// The tui skin: the terminal sits on the window's grid.
+    tui: bool,
 }
 
 /// Paints the grid: backgrounds, the selection, the text and the caret.
@@ -661,14 +696,18 @@ struct RunStyle {
     strikeout: bool,
 }
 
+/// The terminal's font: `terminal.fontFamily`, else the mono font; the
+/// tui skin always takes the mono font, whose advance is the window's cell.
 fn terminal_font(
     theme: &Theme,
     settings: &weep_settings::Settings,
     bold: bool,
     italic: bool,
+    tui: bool,
 ) -> Font {
     let family: SharedString = settings
         .terminal_font_family()
+        .filter(|_| !tui)
         .map(|f| f.to_string().into())
         .unwrap_or_else(|| theme.mono_font.clone());
     let weight = settings.terminal_font_weight();
@@ -732,10 +771,18 @@ impl Element for TerminalElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let settings = cx.global::<AppSettings>().settings.clone();
-        let (font_size, line_height) = m.terminal_text(&settings);
+        // The tui skin puts the terminal on the window's grid: the cell is
+        // `skin::Cell` (the terminal's own size and spacing give way), with
+        // no inset, as the panel's frame already sits a cell outside it.
+        let grid = (Skin::current(cx) == Skin::Tui).then(|| Cell::current(cx));
+        let tui = grid.is_some();
+        let (font_size, line_height) = match grid {
+            Some(cell) => (cell.font_size, cell.h),
+            None => m.terminal_text(&settings),
+        };
         let font_size = px(font_size);
         let line_height = px(line_height);
-        let plain = terminal_font(&theme, &settings, false, false);
+        let plain = terminal_font(&theme, &settings, false, false, tui);
         let cell_width = window
             .text_system()
             .shape_line(
@@ -753,12 +800,15 @@ impl Element for TerminalElement {
             )
             .width
             .max(px(1.));
-        let origin = point(
-            bounds.origin.x + px(m.terminal_pad_x),
-            bounds.origin.y + px(m.terminal_pad_top),
-        );
-        let inner_w = f32::from(bounds.size.width) - 2. * m.terminal_pad_x;
-        let inner_h = f32::from(bounds.size.height) - m.terminal_pad_top - m.terminal_pad_bottom;
+        let cell_width = grid.map_or(cell_width, |cell| px(cell.w));
+        let (pad_x, pad_top, pad_bottom) = if tui {
+            (0., 0., 0.)
+        } else {
+            (m.terminal_pad_x, m.terminal_pad_top, m.terminal_pad_bottom)
+        };
+        let origin = point(bounds.origin.x + px(pad_x), bounds.origin.y + px(pad_top));
+        let inner_w = f32::from(bounds.size.width) - 2. * pad_x;
+        let inner_h = f32::from(bounds.size.height) - pad_top - pad_bottom;
         let cols = (inner_w / f32::from(cell_width)).floor().max(2.) as usize;
         let rows = (inner_h / f32::from(line_height)).floor().max(1.) as usize;
         let focused = self.view.read(cx).focus_handle.is_focused(window);
@@ -773,6 +823,7 @@ impl Element for TerminalElement {
                 origin,
                 cell: (cell_width, line_height),
                 focused,
+                tui,
             };
         };
         self.view.update(cx, |view, cx| {
@@ -843,7 +894,8 @@ impl Element for TerminalElement {
                 };
                 if style != Some(cell_style) || cell.flags.wide || glyph.is_none() {
                     shape_run(
-                        &mut runs, &mut text, style, run_col, &theme, &settings, font_size, window,
+                        &mut runs, &mut text, style, run_col, &theme, &settings, font_size, tui,
+                        window,
                     );
                     style = Some(cell_style);
                     run_col = col;
@@ -854,20 +906,21 @@ impl Element for TerminalElement {
                         // The run ends here; the next glyph starts a new one.
                         shape_run(
                             &mut runs, &mut text, style, run_col, &theme, &settings, font_size,
-                            window,
+                            tui, window,
                         );
                         style = None;
                     }
                 }
                 if cell.flags.wide {
                     shape_run(
-                        &mut runs, &mut text, style, run_col, &theme, &settings, font_size, window,
+                        &mut runs, &mut text, style, run_col, &theme, &settings, font_size, tui,
+                        window,
                     );
                     style = None;
                 }
             }
             shape_run(
-                &mut runs, &mut text, style, run_col, &theme, &settings, font_size, window,
+                &mut runs, &mut text, style, run_col, &theme, &settings, font_size, tui, window,
             );
             if let Some((start, colour)) = bg_run {
                 backgrounds.push((start..snapshot.cols.min(cols), colour));
@@ -892,8 +945,13 @@ impl Element for TerminalElement {
                     .cell(c.row, c.col)
                     .filter(|cell| c.shape == CursorShape::Block && focused && cell.c != ' ')
                     .map(|cell| {
-                        let font =
-                            terminal_font(&theme, &settings, cell.flags.bold, cell.flags.italic);
+                        let font = terminal_font(
+                            &theme,
+                            &settings,
+                            cell.flags.bold,
+                            cell.flags.italic,
+                            tui,
+                        );
                         let s = cell.c.to_string();
                         window.text_system().shape_line(
                             SharedString::from(s.clone()),
@@ -919,6 +977,7 @@ impl Element for TerminalElement {
             origin,
             cell: (cell_width, line_height),
             focused,
+            tui,
         }
     }
 
@@ -958,14 +1017,27 @@ impl Element for TerminalElement {
             }
             if let Some((cell_bounds, shape, _)) = &prepaint.cursor {
                 let caret = theme.editor_caret;
-                let thin = px(m.caret_width.max(1.));
+                // The tui skin draws the editor's caret on cells: a bar
+                // twice the grid's line, an underline a fifth of the cell.
+                let line = px(skin::stroke(window, &m));
+                let thin = if prepaint.tui {
+                    line * 2.
+                } else {
+                    px(m.caret_width.max(1.))
+                };
+                let under = if prepaint.tui {
+                    cell_bounds.size.height / 5.
+                } else {
+                    thin
+                };
+                let hollow = if prepaint.tui { line } else { px(1.) };
                 if !prepaint.focused {
                     // An unfocused terminal shows a hollow caret (estimate).
-                    outline(window, *cell_bounds, caret, px(1.));
+                    outline(window, *cell_bounds, caret, hollow);
                 } else {
                     match shape {
                         CursorShape::Block => window.paint_quad(fill(*cell_bounds, caret)),
-                        CursorShape::HollowBlock => outline(window, *cell_bounds, caret, px(1.)),
+                        CursorShape::HollowBlock => outline(window, *cell_bounds, caret, hollow),
                         CursorShape::Beam => window.paint_quad(fill(
                             Bounds::new(cell_bounds.origin, size(thin, cell_bounds.size.height)),
                             caret,
@@ -974,9 +1046,9 @@ impl Element for TerminalElement {
                             Bounds::new(
                                 point(
                                     cell_bounds.origin.x,
-                                    cell_bounds.origin.y + cell_bounds.size.height - thin,
+                                    cell_bounds.origin.y + cell_bounds.size.height - under,
                                 ),
-                                size(cell_bounds.size.width, thin),
+                                size(cell_bounds.size.width, under),
                             ),
                             caret,
                         )),
@@ -1051,6 +1123,7 @@ fn shape_run(
     theme: &Theme,
     settings: &weep_settings::Settings,
     font_size: Pixels,
+    tui: bool,
     window: &mut Window,
 ) {
     let Some(s) = style else {
@@ -1062,7 +1135,7 @@ fn shape_run(
         return;
     }
     let shaped: String = std::mem::take(text);
-    let font = terminal_font(theme, settings, s.bold, s.italic);
+    let font = terminal_font(theme, settings, s.bold, s.italic, tui);
     let line = window.text_system().shape_line(
         SharedString::from(shaped.clone()),
         font_size,

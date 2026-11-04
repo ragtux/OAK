@@ -12,6 +12,7 @@
 use crate::assets::{file_icon, icon};
 use crate::editor::{styled_line, TextMetrics};
 use crate::git_tool::{checkbox, status_text_color, CheckState};
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{metrics::DIFF_CONTEXT_LINES, Metrics, Theme};
 use gpui::{
     canvas, div, point, prelude::*, px, App, Context, ElementId, EventEmitter, FocusHandle,
@@ -20,6 +21,7 @@ use gpui::{
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use weep_git::{diff_lines, ops_from_hunks, LineOp, Repo, Status, StatusEntry};
 use weep_syntax::{Highlighter, Language, Span};
 
@@ -83,8 +85,8 @@ enum DiffRow {
         new: Option<Side>,
         changed: bool,
     },
-    /// An unchanged run folded away.
-    Collapsed,
+    /// An unchanged run of this many lines folded away.
+    Collapsed(usize),
 }
 
 /// A changed file's two texts and git's hunks for it, read on the
@@ -136,6 +138,8 @@ pub struct DiffView {
     highlighter: Highlighter,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
+    /// The tui skin's body in whole cells, as last laid out.
+    tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
 }
 
 impl EventEmitter<DiffViewEvent> for DiffView {}
@@ -163,6 +167,7 @@ impl DiffView {
             highlighter: Highlighter::new(),
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
+            tui_grid: Rc::default(),
         };
         view.refresh(cx);
         view
@@ -184,6 +189,7 @@ impl DiffView {
             highlighter: Highlighter::new(),
             focus_handle: cx.focus_handle(),
             scroll: ScrollHandle::new(),
+            tui_grid: Rc::default(),
         };
         view.rebuild(cx);
         view
@@ -585,8 +591,9 @@ fn build_rows(
             });
             i += 1;
         } else {
-            if !matches!(rows.last(), Some(DiffRow::Collapsed)) {
-                rows.push(DiffRow::Collapsed);
+            match rows.last_mut() {
+                Some(DiffRow::Collapsed(n)) => *n += 1,
+                _ => rows.push(DiffRow::Collapsed(1)),
             }
             i += 1;
         }
@@ -596,6 +603,9 @@ fn build_rows(
 
 impl Render for DiffView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let font_size = TextMetrics::current(cx).font_size;
@@ -676,6 +686,7 @@ impl Render for DiffView {
                     .gap(px(m.diff_card_gap))
                     .children(cards),
             )
+            .into_any_element()
     }
 }
 
@@ -884,7 +895,7 @@ impl DiffView {
     ) -> gpui::AnyElement {
         let id = ElementId::NamedInteger(format!("diff-row-{card}").into(), r as u64);
         match row {
-            DiffRow::Collapsed => {
+            DiffRow::Collapsed(_) => {
                 let color = theme.separator;
                 div()
                     .id(id)
@@ -1065,4 +1076,434 @@ fn paint_wave(bounds: gpui::Bounds<Pixels>, color: Hsla, window: &mut Window) {
         path.line_to(point(p.x, p.y + thickness));
     }
     window.paint_path(path, color);
+}
+
+// ---- the tui skin ------------------------------------------------------------
+
+impl DiffView {
+    /// The tab in the tui skin: a header row (`[x] 2/4 files`), then one
+    /// box per file with its name and stats set into the top edge and the
+    /// buttons at its right end; an open box holds the two sides split by a
+    /// vertical rule that joins the frame, each with its numbers in cells.
+    fn render_tui(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let cols = self.tui_grid.get().0;
+        let entity = cx.entity();
+        let entries: Vec<&StatusEntry> = self
+            .sources
+            .iter()
+            .filter_map(|s| s.entry.as_ref())
+            .collect();
+        let staged = entries.iter().filter(|e| e.staged).count();
+        let mark = match staged {
+            0 => "[ ]",
+            n if n == entries.len() => "[x]",
+            _ => "[-]",
+        };
+        let count: SharedString = if self.is_changed_files() {
+            format!("{staged}/{} files staged", entries.len()).into()
+        } else {
+            format!(
+                "{} file{}",
+                self.sources.len(),
+                if self.sources.len() == 1 { "" } else { "s" }
+            )
+            .into()
+        };
+        let all = entity.clone();
+        let header = div()
+            .h(px(cell.h))
+            .flex_shrink_0()
+            .flex()
+            .whitespace_nowrap()
+            .when(self.is_changed_files(), |d| {
+                d.child(
+                    div()
+                        .id("tui-diff-check-all")
+                        .ml(px(cell.w))
+                        .flex_shrink_0()
+                        .cursor_pointer()
+                        .text_color(theme.text_secondary)
+                        .hover(|s| s.bg(theme.list_bg_hovered))
+                        .on_click(move |_, _, cx| {
+                            all.update(cx, |this, cx| this.stage_toggle_all(cx))
+                        })
+                        .child(mark),
+                )
+            })
+            .child(
+                div()
+                    .ml(px(cell.w))
+                    .text_color(theme.text_secondary)
+                    .child(count),
+            );
+        let mut boxes: Vec<gpui::AnyElement> = Vec::new();
+        if cols >= 12 {
+            for (ix, source) in self.sources.iter().enumerate() {
+                let open = self.expanded.contains(&source.key);
+                let rows = self.rows.get(&source.key);
+                boxes.push(div().h(px(cell.h)).flex_shrink_0().into_any_element());
+                boxes.push(self.tui_box(ix, source, open, rows, cols, cell, &theme, &m, cx));
+            }
+        }
+        div()
+            .key_context("DiffView")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .font_family(theme.mono_font.clone())
+            .text_size(px(cell.font_size))
+            .line_height(px(cell.h))
+            .child(skin::measure(cell, &self.tui_grid))
+            .child(header)
+            .child(
+                div()
+                    .id("diff-cards")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .flex()
+                    .flex_col()
+                    .children(boxes),
+            )
+            .into_any_element()
+    }
+
+    /// One file's box, `cols` cells wide: two rows when closed.
+    #[allow(clippy::too_many_arguments)]
+    fn tui_box(
+        &self,
+        ix: usize,
+        source: &DiffSource,
+        open: bool,
+        rows: Option<&Vec<DiffRow>>,
+        cols: usize,
+        cell: Cell,
+        theme: &Theme,
+        m: &Metrics,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let entity = cx.entity();
+        let bg = theme.island_background;
+        let name_color = source
+            .entry
+            .as_ref()
+            .map(|e| status_text_color(e.status, theme))
+            .unwrap_or(theme.text_primary);
+        let (glyph, glyph_color) = skin::file_glyph(&source.title, theme);
+        let (adds, dels) = rows.map_or((0, 0), |rows| {
+            rows.iter().fold((0, 0), |(a, d), row| match row {
+                DiffRow::Pair {
+                    old,
+                    new,
+                    changed: true,
+                } => (
+                    a + usize::from(new.is_some()),
+                    d + usize::from(old.is_some()),
+                ),
+                _ => (a, d),
+            })
+        });
+        let old_name: Option<String> = source
+            .entry
+            .as_ref()
+            .and_then(|e| e.old_path.as_ref())
+            .and_then(|p| p.file_name())
+            .map(|n| format!("({})", n.to_string_lossy()));
+        let span = |text: String, color| {
+            div()
+                .flex_shrink_0()
+                .text_color(color)
+                .child(SharedString::from(text))
+        };
+        let key = source.key.clone();
+        let toggle = entity.clone();
+        let title = div()
+            .id(ElementId::NamedInteger("tui-diff-title".into(), ix as u64))
+            .flex()
+            .flex_shrink_0()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.list_bg_hovered))
+            .on_click(move |_, _, cx| {
+                let key = key.clone();
+                toggle.update(cx, |this, cx| this.toggle_expanded(key, cx));
+            })
+            .child(span(
+                format!(" {} ", if open { "▾" } else { "▸" }),
+                theme.icon_secondary,
+            ))
+            .child(span(format!("{glyph} "), glyph_color))
+            .child(span(source.title.clone(), name_color))
+            .children(old_name.map(|o| span(format!(" {o}"), theme.text_secondary).line_through()))
+            .children(
+                source
+                    .folder
+                    .clone()
+                    .map(|f| span(format!("  {f}"), theme.text_tertiary)),
+            )
+            .when(rows.is_some(), |d| {
+                d.child(span(format!("  +{adds}"), theme.git_added_text))
+                    .child(span(format!(" -{dels}"), theme.git_deleted_text))
+            })
+            .child(span(" ".into(), theme.text_primary));
+
+        // The buttons at the top edge's right end.
+        let gap = || div().w(px(cell.w)).flex_shrink_0();
+        let mut buttons = div()
+            .absolute()
+            .top_0()
+            .right(cell.cols(2))
+            .h(px(cell.h))
+            .flex()
+            .bg(bg);
+        if let Some(path) = source.path.clone() {
+            let open_entity = entity.clone();
+            buttons = buttons.child(gap()).child(
+                skin::button(
+                    ElementId::NamedInteger("tui-diff-open".into(), ix as u64),
+                    "Open",
+                    false,
+                    theme,
+                    cell,
+                )
+                .on_click(move |_, _, cx| {
+                    let path = path.clone();
+                    open_entity.update(cx, |_, cx| cx.emit(DiffViewEvent::Open(path)));
+                }),
+            );
+        }
+        if let Some(entry) = source.entry.clone() {
+            let stage = entity.clone();
+            let revert = entity.clone();
+            let revert_entry = entry.clone();
+            buttons = buttons
+                .child(gap())
+                .child(
+                    skin::button(
+                        ElementId::NamedInteger("tui-diff-stage".into(), ix as u64),
+                        if entry.staged { "Unstage" } else { "Stage" },
+                        false,
+                        theme,
+                        cell,
+                    )
+                    .on_click(move |_, _, cx| {
+                        let entry = entry.clone();
+                        stage.update(cx, |this, cx| this.stage_toggle(entry, cx));
+                    }),
+                )
+                .child(gap())
+                .child(
+                    skin::button(
+                        ElementId::NamedInteger("tui-diff-revert".into(), ix as u64),
+                        "Revert",
+                        false,
+                        theme,
+                        cell,
+                    )
+                    .on_click(move |_, _, cx| {
+                        let entry = revert_entry.clone();
+                        revert.update(cx, |_, cx| cx.emit(DiffViewEvent::Revert(entry)));
+                    }),
+                );
+        }
+        buttons = buttons.child(gap());
+
+        let inner = cols.saturating_sub(2);
+        // The two sides and the rule between them, in body columns.
+        let left = inner.saturating_sub(1) / 2;
+        let right = inner.saturating_sub(left + 1);
+        let digits = rows
+            .into_iter()
+            .flatten()
+            .filter_map(|row| match row {
+                DiffRow::Pair { old, new, .. } => Some(
+                    old.as_ref()
+                        .map_or(0, |s| s.number)
+                        .max(new.as_ref().map_or(0, |s| s.number)),
+                ),
+                DiffRow::Collapsed(_) => None,
+            })
+            .max()
+            .unwrap_or(1)
+            .to_string()
+            .len()
+            .max(3);
+        let (body, body_rows, split): (gpui::AnyElement, usize, bool) = match (open, rows) {
+            (false, _) => (div().into_any_element(), 0, false),
+            (true, None) => (
+                div()
+                    .text_color(theme.text_tertiary)
+                    .child("Loading…")
+                    .into_any_element(),
+                1,
+                false,
+            ),
+            (true, Some(rows)) => (
+                div()
+                    .flex()
+                    .flex_col()
+                    .children(rows.iter().enumerate().map(|(r, row)| {
+                        self.tui_row(ix, r, row, left, right, digits, cell, theme, cx)
+                    }))
+                    .into_any_element(),
+                rows.len().max(1),
+                true,
+            ),
+        };
+        let box_rows = body_rows + 2;
+        let color = theme.border;
+        let m = *m;
+        skin::boxed(
+            cell,
+            cols,
+            box_rows,
+            vec![title.into_any_element()],
+            Vec::new(),
+            body,
+            bg,
+            color,
+            theme,
+            m,
+        )
+        .when(split, |d| {
+            d.child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds: gpui::Bounds<Pixels>, _, window, _| {
+                        let x = f32::from(bounds.origin.x) + (1 + left) as f32 * cell.w;
+                        let top = f32::from(bounds.origin.y);
+                        skin::paint_vline(
+                            window,
+                            x,
+                            top + cell.h / 2.,
+                            top + (box_rows - 1) as f32 * cell.h + cell.h / 2.,
+                            cell,
+                            color,
+                            &m,
+                        );
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+        })
+        .child(buttons)
+        .into_any_element()
+    }
+
+    /// One row of an open box: the old side in `left` cells, a cell for
+    /// the rule, the new side in `right` cells; or the fold between hunks.
+    #[allow(clippy::too_many_arguments)]
+    fn tui_row(
+        &self,
+        card: usize,
+        r: usize,
+        row: &DiffRow,
+        left: usize,
+        right: usize,
+        digits: usize,
+        cell: Cell,
+        theme: &Theme,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let id = ElementId::NamedInteger(format!("tui-diff-row-{card}").into(), r as u64);
+        let half = |w: usize, content: Option<gpui::AnyElement>, wash: Option<Hsla>| {
+            div()
+                .w(cell.cols(w))
+                .h(px(cell.h))
+                .flex_shrink_0()
+                .flex()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .when_some(wash, |d, w| d.bg(w))
+                .children(content)
+        };
+        let rule_gap = || div().w(px(cell.w)).flex_shrink_0();
+        match row {
+            DiffRow::Collapsed(n) => {
+                let label = format!("⋯ {n} line{} ⋯", if *n == 1 { "" } else { "s" });
+                let fold = |w: usize| {
+                    half(
+                        w,
+                        Some(
+                            div()
+                                .w_full()
+                                .flex()
+                                .justify_center()
+                                .text_color(theme.text_tertiary)
+                                .child(SharedString::from(label.clone()))
+                                .into_any_element(),
+                        ),
+                        None,
+                    )
+                };
+                div()
+                    .id(id)
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .flex()
+                    .child(fold(left))
+                    .child(rule_gap())
+                    .child(fold(right))
+                    .into_any_element()
+            }
+            DiffRow::Pair { old, new, changed } => {
+                let wash: Option<Hsla> = if !changed {
+                    None
+                } else if new.is_some() && old.is_some() {
+                    Some(theme.diff_modified_bg)
+                } else if new.is_some() {
+                    Some(theme.diff_added_bg)
+                } else {
+                    Some(theme.diff_deleted_bg)
+                };
+                let side =
+                    |side: &Side| {
+                        div()
+                            .flex()
+                            .child(
+                                div()
+                                    .w(cell.cols(digits))
+                                    .flex_shrink_0()
+                                    .text_color(theme.line_number)
+                                    .child(SharedString::from(format!("{:>digits$}", side.number))),
+                            )
+                            .child(div().w(px(cell.w)).flex_shrink_0())
+                            .child(div().text_color(theme.editor_text).child(
+                                StyledText::new(side.text.clone()).with_runs(side.runs.clone()),
+                            ))
+                            .into_any_element()
+                    };
+                let text_of = new
+                    .as_ref()
+                    .or(old.as_ref())
+                    .map(|s| s.text.to_string())
+                    .unwrap_or_default();
+                let menu = cx.entity();
+                div()
+                    .id(id)
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .flex()
+                    .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+                        let position = event.position;
+                        let text = text_of.clone();
+                        menu.update(cx, |_, cx| {
+                            cx.emit(DiffViewEvent::ContextMenu { position, text })
+                        });
+                    })
+                    .child(half(left, old.as_ref().map(side), wash))
+                    .child(rule_gap())
+                    .child(half(right, new.as_ref().map(side), wash))
+                    .into_any_element()
+            }
+        }
+    }
 }
