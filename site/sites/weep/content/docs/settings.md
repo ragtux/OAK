@@ -12,23 +12,21 @@ WEEP reads `settings.json` with Fleet's keys. There are two files, read in order
 2. **Fleet's**, `~/.config/JetBrains/Fleet/settings.json` (`%APPDATA%\JetBrains\Fleet`
    on Windows), if you have Fleet installed.
 
-A key in WEEP's file wins; a key only Fleet's file has still applies; anything in neither
-takes Fleet's default. WEEP never writes Fleet's file. Changes to either file are picked up
-while WEEP runs.
+WEEP's file wins; a key only Fleet has still applies; anything in neither takes Fleet's
+default. WEEP never writes Fleet's file, and picks up changes to either while running.
 
-`WEEP_CONFIG_DIR` relocates WEEP's whole folder — settings, keymap, themes and
-`layout.json` — which is useful for trying WEEP with a fresh layout.
+`WEEP_CONFIG_DIR` relocates WEEP's whole folder.
 
 ## The Settings tab
 
 `open-settings` shows Fleet's Settings pages as an editor tab. Each control is bound to its
-key, shows Fleet's default, marks a changed value, and writes the change to WEEP's
-`settings.json`. The Plugins and AI pages and the workspace scope are not built.
+key, shows Fleet's default, marks a change and writes it to WEEP's `settings.json`. The
+Plugins and AI pages and the workspace scope are not built.
 
 ## Zoom
 
-`zoomLevel` scales every size in the interface by one factor; `zoom-in`, `zoom-out` and
-`reset-zoom` change it, and `--zoom` sets it from the command line.
+`zoomLevel` scales every size by one factor. `zoom-in`, `zoom-out`, `reset-zoom` and
+`--zoom` change it.
 
 ## What else lives in the folder
 

@@ -5,51 +5,47 @@ description: WEEP is a native Rust/GPUI code editor that clones JetBrains Fleet'
 
 # What WEEP is
 
-WEEP is a code editor written in Rust on [GPUI](https://gpui.rs), the GPU-accelerated
-interface toolkit from the Zed editor. Its goal is a faithful clone of JetBrains Fleet 1.48:
-the same islands layout, the same tools, the same sizes and colours, and the same file
-formats, in a single native binary.
+A code editor in Rust on [GPUI](https://gpui.rs), Zed's GPU-accelerated toolkit. The goal
+is a faithful clone of JetBrains Fleet 1.48 — the same islands, tools, sizes, colors and
+file formats — in one native binary.
 
 ## Fleet, without the parts that need a backend first
 
-WEEP's first goal is Fleet as it behaves **without Smart Mode**: the shell, the editor,
-Files, Search, Goto, Git, Terminal, Run, Settings, themes and keymaps. Smart Mode —
-completion, navigation, refactorings, debugging — comes after, fed by
-[LSP](https://microsoft.github.io/language-server-protocol/) and DAP servers instead of
-Fleet's IntelliJ backend. Fleet's own Rust Smart Mode turned out to run rust-analyzer as
-well, so for Rust the two editors answer from the same server.
+First goal: Fleet **without Smart Mode** — the shell, the editor, Files, Search, Goto, Git,
+Terminal, Run, Settings, themes and keymaps. Smart Mode comes after, over
+[LSP](https://microsoft.github.io/language-server-protocol/) and DAP instead of Fleet's
+IntelliJ backend. Fleet's Rust Smart Mode runs rust-analyzer too, so for Rust both editors
+answer from the same server.
 
 ## What carries over from Fleet
 
-- **Themes.** A Fleet theme JSON loads unchanged; the three bundled themes are value tables
-  in Fleet's format carrying the colours Fleet 1.48 renders with.
-- **Keymaps.** Fleet's keymap format and action ids, with Fleet's defaults; a Fleet preset or
-  your own overrides load as they are.
-- **Settings.** WEEP reads Fleet's keys, and falls back to Fleet's own `settings.json`, so a
-  Fleet setup carries over without copying anything.
+- **Themes.** A Fleet theme JSON loads unchanged; the three bundled ones carry Fleet 1.48's
+  colors.
+- **Keymaps.** Fleet's format, action ids and defaults; Fleet presets and your overrides load
+  as they are.
+- **Settings.** Fleet's keys, falling back to Fleet's own `settings.json`, so a Fleet setup
+  carries over.
 - **Run configurations.** `.fleet/run.json`, with Fleet's field names.
 
 ## Deliberate departures
 
-Kept short on purpose; everything not listed here follows Fleet.
+Everything not listed here follows Fleet.
 
 | Fleet | WEEP | Why |
 |---|---|---|
-| TextMate grammars | tree-sitter | Same colours through Fleet's `textAttributes` keys, plus expand/shrink selection, folding and bracket matching without a backend |
-| IntelliJ backend | LSP and DAP | Smart Mode becomes "a language server is attached"; the lightning, its states and colours stay Fleet's |
+| TextMate grammars | tree-sitter | Same colors through Fleet's `textAttributes` keys, plus expand/shrink selection, folding and bracket matching without a backend |
+| IntelliJ backend | LSP and DAP | Smart Mode becomes "a language server is attached"; the lightning, its states and colors stay Fleet's |
 | Chromium (JCEF) Markdown preview | Painted natively | No embedded browser |
 | JVM, account, telemetry | None | Nothing phones home and nothing needs a login |
 
 ## What WEEP is not
 
-Collaboration, remote workspaces, the JetBrains account, Toolbox and AI are out of scope.
-Vim mode, Docker, SSH and WSL workspaces, the spellchecker and plugin management are "later
-or never".
+Out of scope: collaboration, remote workspaces, the JetBrains account, Toolbox, AI. Later
+or never: Vim mode, Docker, SSH and WSL workspaces, the spellchecker, plugin management.
 
 ## Clean room
 
-Nothing is taken from the Fleet distribution except what is openly licensed: the fonts
-(Inter and JetBrains Mono, both under the SIL Open Font License). Icons are JetBrains'
-Apache-licensed IntelliJ Platform `expui` set or WEEP's own drawings. Sizes and colours are
-measured from screenshots of a running Fleet and read from Fleet's theme files —
-see [how WEEP is measured](/docs/measured/).
+Nothing comes from the Fleet distribution but the openly licensed fonts (Inter and
+JetBrains Mono, SIL OFL). Icons are JetBrains' Apache-licensed `expui` set or WEEP's own.
+Sizes and colors come from screenshots of a running Fleet and from Fleet's theme files — see
+[how WEEP is measured](/docs/measured/).

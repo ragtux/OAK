@@ -1,151 +1,100 @@
 ---
 title: WEEP
 layout: page
-description: WEEP is a native code editor written in Rust on GPUI, in the shape of JetBrains Fleet — Fleet's islands, its theme and keymap files, its sizes and colours, read off a running copy rather than guessed at. Free software under the MIT license, not affiliated with JetBrains.
+description: WEEP is a native code editor in Rust on GPUI, in the shape of JetBrains Fleet — Fleet's islands, its theme and keymap files, its sizes and colors measured off a running copy. MIT, not affiliated with JetBrains.
 ---
 <section class="hero">
   <img class="mark" src="/assets/logo.svg" alt="WEEP" width="168" height="66">
   <span class="badge pre">Pre-release · v0.1.0 · build from source</span>
   <h1>Fleet's shape, native.</h1>
   <p class="lede">
-    WEEP is a code editor written in Rust on <a href="https://gpui.rs">GPUI</a>, built to
-    look and behave like <a href="https://www.jetbrains.com/fleet/">JetBrains Fleet</a>:
-    the islands layout, the Files, Search, Git, Terminal and Run tools, Fleet's own theme
-    and keymap files loaded unchanged, and every size and colour measured off a running
-    copy. No JVM, no account, no telemetry. It is an independent project, not affiliated
-    with JetBrains.
+    A code editor in Rust on <a href="https://gpui.rs">GPUI</a>, shaped like
+    <a href="https://www.jetbrains.com/fleet/">JetBrains Fleet</a>: its islands, its tools,
+    its theme and keymap files, its measured sizes. No JVM, no account, no telemetry.
   </p>
   <div class="btn-row">
     <a class="btn primary" href="/docs/install/">Build and run it</a>
-    <a class="btn" href="/docs/">Read the manual</a>
-    <a class="btn" href="https://github.com/ragtux/WEEP">Source on GitHub</a>
+    <a class="btn" href="/docs/">Manual</a>
+    <a class="btn" href="https://github.com/ragtux/WEEP">GitHub</a>
   </div>
   <p class="dim small" style="margin-top:22px">
-    Version 0.1.0, free software under the MIT license. There are no release builds yet:
-    WEEP is built with <code>cargo</code> on Linux, Windows and macOS —
-    see <a href="#where-it-is">where it is</a>.
+    MIT. No release builds yet — <code>cargo</code> on Linux, Windows and macOS.
+    An independent project, not affiliated with JetBrains.
   </p>
   <figure class="shot">
     <img src="/assets/img/app/workspace.png" width="1600" height="1148" loading="lazy" decoding="async"
          alt="The WEEP window on its own repository: the Files tool on the left, a Rust file in the editor with syntax highlighting, the Git tool below it with a commit field and changed files, and Text Search results on the right.">
-    <figcaption>
-      WEEP on its own source: the Files tree with git status, a Rust file in the editor, the
-      Git tool docked below with its commit field and changed files, and find-in-files
-      results on the right — Fleet's islands, at Fleet's sizes, in Fleet Dark's colours.
-    </figcaption>
+    <figcaption>WEEP on its own source, in Fleet Dark.</figcaption>
   </figure>
 </section>
 
 <section class="band">
   <h2>Fleet is the reference</h2>
   <p class="lede">
-    "Looks like Fleet" is measured, not felt. Fleet is run beside WEEP, the same scene is
-    played into both, and the screenshots are compared edge by edge. A milestone is not
-    finished until its scenes agree to within one logical pixel and every colour is the
-    theme's exact value.
+    "Looks like Fleet" is measured. The same scene is played into both, and the screenshots
+    are compared edge by edge.
   </p>
   <div class="grid">
     <div class="card">
       <span class="k">Measured</span>
       <h3>Every constant has a source</h3>
-      <p>Island gaps, tab heights, row pitches and type sizes live in one table in the code,
-      and each value is recorded with where it came from — a probe screenshot, one of
-      Fleet's own files — or marked as still an estimate.</p>
+      <p>Sizes live in one table, each recorded with the probe or Fleet file it came from —
+      or marked an estimate.</p>
+      <p style="margin-top:.8em"><a href="/docs/measured/">How it's measured →</a></p>
     </div>
     <div class="card">
       <span class="k">Same files</span>
       <h3>Fleet's formats are WEEP's</h3>
-      <p>Themes, keymaps and <code>settings.json</code> use Fleet's keys and action ids
-      verbatim, so a Fleet theme or keymap loads unchanged, and WEEP falls back to Fleet's
-      own settings file so an existing setup carries over.</p>
+      <p>Themes, keymaps and <code>settings.json</code> use Fleet's keys verbatim, and WEEP
+      falls back to Fleet's own settings file.</p>
       <p style="margin-top:.8em"><a href="/docs/themes-and-keymaps/">Themes and keymaps →</a></p>
     </div>
     <div class="card">
       <span class="k">Clean room</span>
       <h3>Nothing from the binary</h3>
-      <p>No code and no assets come out of the Fleet distribution beyond the openly licensed
-      fonts. Icons are JetBrains' Apache-licensed expui set or WEEP's own drawings.</p>
-      <p style="margin-top:.8em"><a href="/docs/measured/">How WEEP is measured →</a></p>
+      <p>Only the openly licensed fonts. Icons are JetBrains' Apache-licensed expui set or
+      WEEP's own.</p>
     </div>
   </div>
   <div class="stats">
     <div class="stat"><b>145/203</b><span>of Fleet's default-bound action ids</span></div>
     <div class="stat"><b>104</b><span>Fleet <code>settings.json</code> keys read</span></div>
-    <div class="stat"><b>199</b><span>theme colour keys painted</span></div>
+    <div class="stat"><b>199</b><span>theme color keys painted</span></div>
     <div class="stat"><b>12</b><span>probe batches run against Fleet 1.48</span></div>
   </div>
 </section>
 
 <section class="band">
   <h2>What is in it today</h2>
-  <p class="lede">
-    WEEP clones Fleet as it behaves without Smart Mode first, then adds Smart Mode through
-    language servers instead of Fleet's IntelliJ backend. Milestones M0 to M6 are built;
-    M7, Smart Mode over LSP, has its first pass in.
-  </p>
+  <p class="lede">Milestones M0 to M6 are built. M7, Smart Mode over LSP, has its first pass in.</p>
   <div class="grid">
     <div class="card">
       <span class="k">Editor <span class="tag now">Built</span></span>
       <h3>Everything Fleet does to text</h3>
-      <p>Multiple carets, find and replace, folding and sticky lines, expand and shrink
-      selection, soft wrap, the indenter and auto-pairs, <code>.editorconfig</code>, autosave,
-      and one document shared by every tab and split that shows it. Highlighting is
-      tree-sitter, mapped onto Fleet's <code>textAttributes</code> keys.</p>
+      <p>Multiple carets, find and replace, folding, soft wrap, the indenter, auto-pairs,
+      <code>.editorconfig</code>, autosave, one document per file across tabs and splits.
+      Highlighting is tree-sitter on Fleet's <code>textAttributes</code> keys.</p>
     </div>
     <div class="card">
       <span class="k">Workbench <span class="tag now">Built</span></span>
       <h3>Goto, Search, Files, Settings</h3>
-      <p>The Goto popup with its preview, Text Search and replace across the workspace, a Files
-      tree with multi-select and drag and drop, Fleet's menus, dialogs and notifications, and
-      the Settings pages as an editor tab that writes your <code>settings.json</code>.</p>
+      <p>The Goto popup with its preview, find and replace across the workspace, the Files
+      tree, Fleet's menus and dialogs, and the Settings pages as a tab.</p>
       <p style="margin-top:.8em"><a href="/docs/tools/">The tools →</a></p>
     </div>
     <div class="card">
       <span class="k">Git · Terminal · Run <span class="tag now">Built</span></span>
       <h3>The tools around the code</h3>
-      <p>Status in the tree and the gutter, staging and commit, history, blame, a side-by-side
-      Changed Files tab, push and pull; a terminal on a real PTY with Fleet's profiles; and
-      <code>.fleet/run.json</code> configurations with their output and problems.</p>
+      <p>Status, staging, commit, history, blame, side-by-side Changed Files, push and pull;
+      a terminal on a real PTY; <code>.fleet/run.json</code> configurations.</p>
     </div>
     <div class="card">
       <span class="k">Smart Mode <span class="tag soon">In progress</span></span>
       <h3>Language servers, Fleet's surface</h3>
-      <p>The lightning, diagnostics, semantic highlighting, completion, parameter info,
-      documentation, go to declaration, find usages, rename, quick fixes and reformat —
-      through rust-analyzer, which is what Fleet's Rust Smart Mode runs too. The debugger
-      over DAP comes next.</p>
+      <p>Diagnostics, completion, navigation, usages, rename, quick fixes and reformat
+      through rust-analyzer — the server Fleet's Rust Smart Mode runs too. The debugger over
+      DAP comes next.</p>
       <p style="margin-top:.8em"><a href="/docs/roadmap/">The roadmap →</a></p>
-    </div>
-  </div>
-</section>
-
-<section class="band">
-  <h2>Native, and nothing else</h2>
-  <p class="lede">
-    WEEP is a single Rust binary drawing with the GPU through GPUI, the toolkit from Zed. The
-    text model, the highlighter, git, search, the terminal and the language-server client
-    are separate crates that know nothing of the interface, and each is tested on its own.
-  </p>
-  <div class="grid">
-    <div class="card">
-      <span class="k">Local</span>
-      <h3>No account, no network of its own</h3>
-      <p>There is nothing to sign in to and nothing phones home: no telemetry, no update
-      check, no license call. The only processes WEEP talks to are the ones you run — git,
-      your shell, your language server.</p>
-    </div>
-    <div class="card">
-      <span class="k">Departures</span>
-      <h3>Kept short on purpose</h3>
-      <p>tree-sitter instead of TextMate grammars, LSP and DAP instead of the IntelliJ
-      backend, a natively painted Markdown preview instead of an embedded Chromium. Everything
-      not on that list follows Fleet.</p>
-    </div>
-    <div class="card">
-      <span class="k">Out of scope</span>
-      <h3>What WEEP will not be</h3>
-      <p>Collaboration, remote workspaces, the JetBrains account and AI are not planned. Vim
-      mode, Docker, SSH and WSL workspaces are "later or never".</p>
     </div>
   </div>
 </section>
@@ -153,29 +102,26 @@ description: WEEP is a native code editor written in Rust on GPUI, in the shape 
 <section class="band" id="where-it-is">
   <h2>Where it is, plainly</h2>
   <p class="notice">
-    <strong>WEEP is v0.1.0 and has no release builds yet.</strong> It edits real files in
-    place and saves them, autosave included; keep your work in version control while you try
-    it. Many sizes on the newest surfaces are still estimates until their probe scenes run
-    against Fleet.
+    <strong>v0.1.0, no release builds yet.</strong> It saves files in place, autosave
+    included — keep your work in version control. Sizes on the newest surfaces are still
+    estimates.
   </p>
   <div class="grid">
     <div class="card">
       <span class="k">Platforms</span>
       <h3>Linux, Windows, macOS</h3>
-      <p>WEEP builds and runs on all three with a stable Rust toolchain. On Windows it draws
-      Fleet's own caption; elsewhere it keeps the desktop's title bar, as Fleet does.</p>
+      <p>All three, on stable Rust.</p>
     </div>
     <div class="card">
       <span class="k">Languages</span>
       <h3>Rust, JSON, TOML, Markdown</h3>
-      <p>Those four have tree-sitter grammars today, and Smart Mode attaches rust-analyzer.
-      Other files open as plain text with the full editor around them.</p>
+      <p>Those four have grammars; Rust gets rust-analyzer. Anything else opens as text.</p>
     </div>
     <div class="card">
       <span class="k">Not yet</span>
       <h3>Known gaps</h3>
-      <p>No debugger, no inlay hints or code vision, no inline rename, no snippets, and no
-      language servers beyond rust-analyzer.</p>
+      <p>No debugger, inlay hints, code vision, inline rename or snippets, and no server but
+      rust-analyzer.</p>
     </div>
   </div>
   <div class="btn-row" style="margin-top:26px">

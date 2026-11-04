@@ -190,7 +190,7 @@ html[data-layout="doc"] main { padding-top:38px; }
 
 /* ---------- hero ---------- */
 .hero { padding:104px 0 88px; }
-/* The repository's own mark, which carries its colours whatever the theme —
+/* The repository's own mark, which carries its colors whatever the theme —
    the point of a brand mark. The shared sheet frames .prose img for
    screenshots; a logo is not one, and it needs its own line. */
 .hero .mark {
@@ -209,7 +209,7 @@ html[data-layout="doc"] main { padding-top:38px; }
   font-size:10.5px; letter-spacing:.13em; border-radius:var(--r);
   border-color:var(--border); color:var(--dim); padding:4px 9px; margin-bottom:26px;
 }
-/* An alpha says so in the warning colour: the shared .badge is green, which
+/* An alpha says so in the warning color: the shared .badge is green, which
    reads as "ready". */
 .hero .badge.pre { color:var(--pop); border-color:color-mix(in srgb, var(--pop) 40%, transparent); }
 

@@ -7,33 +7,31 @@ description: WEEP's bundled themes, loading any Fleet-format theme, and Fleet-fo
 
 ## Themes
 
-WEEP bundles three themes, in Fleet's theme format, carrying the colours Fleet 1.48 renders
-with: `dark`, `dark_purple` and `light`.
+Three bundled themes in Fleet's format, carrying the colors Fleet 1.48 renders with:
+`dark`, `dark_purple` and `light`.
 
 ```
 weep --theme dark_purple .
 weep --theme ~/.config/JetBrains/Fleet/themes/my-theme.json .
 ```
 
-Without `--theme`, the `theme` setting picks one — WEEP's, or Fleet's when WEEP's file does
-not set it. Themes in `~/.config/weep/themes` and in Fleet's own
-`~/.config/JetBrains/Fleet/themes` are found by name, and switching themes applies at once.
+Without `--theme`, the `theme` setting picks one — WEEP's, else Fleet's. Themes in
+`~/.config/weep/themes` and in Fleet's own folder are found by name, and switching applies
+at once.
 
-A Fleet theme is a palette plus two tables: `colors` (the interface, by component —
-`tab.*`, `button.*`, `editor.*`) and `textAttributes` (the syntax colours). WEEP resolves
-the palette and cascades attribute lookups the way Fleet does, and reads keys only by the
-strings Fleet uses, so a theme written for Fleet needs no changes.
+A Fleet theme is a palette plus two tables: `colors` (the interface — `tab.*`, `button.*`,
+`editor.*`) and `textAttributes` (syntax). WEEP resolves the palette and cascades lookups as
+Fleet does, reading keys only by Fleet's strings, so a Fleet theme needs no changes.
 
 ## Keymaps
 
-Key bindings use Fleet's keymap format and Fleet's action ids. The defaults are Fleet's own
-chords, per platform. Two ways to change them:
+Fleet's keymap format and action ids, defaulting to Fleet's chords per platform. Two ways
+to change them:
 
-- **Overrides.** `~/.config/weep/keymap.json`, in the same format, is merged over the
+- **Overrides.** `~/.config/weep/keymap.json`, merged over the defaults.
+- **Presets.** The `keymap` setting names a file in `~/.config/weep/keymaps/` — Fleet ships
+  `intellij`, `vscode`, `sublimeText`, `eclipse`, `emacs` and others — merged over Fleet's
   defaults.
-- **Presets.** The `keymap` setting names a preset file in `~/.config/weep/keymaps/` —
-  Fleet ships `intellij`, `vscode`, `sublimeText`, `eclipse`, `emacs` and others in this
-  format — merged over Fleet's defaults.
 
-An action WEEP does not implement is simply not bound; it is never renamed or mapped to
-something else. `goto/action` lists every action WEEP has, with its chord.
+An action WEEP lacks is simply not bound, never renamed. `goto/action` lists every action it
+has, with its chord.

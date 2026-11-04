@@ -5,18 +5,14 @@ description: The WEEP manual — what it is, building and running it, the window
 
 # The WEEP manual
 
-WEEP is a native code editor in the shape of [JetBrains Fleet](https://www.jetbrains.com/fleet/).
-It opens a folder or a file, lays it out in Fleet's islands, and reads Fleet's own theme,
-keymap and settings files.
+A native code editor in the shape of [JetBrains Fleet](https://www.jetbrains.com/fleet/).
+This manual covers what is built today; anything missing says so in place.
 
-This manual covers what WEEP does today. Where something is not built yet it says so in
-place, rather than describing Fleet and leaving you to find out.
+> **Note** An independent project, not affiliated with JetBrains. Fleet is a trademark of
+> JetBrains s.r.o.
 
-> **Note** WEEP is an independent project and is not affiliated with JetBrains. Fleet is a
-> trademark of JetBrains s.r.o.
-
-> **Warning** This is version 0.1.0, with no release builds yet. WEEP saves files in place
-> and autosaves by default, as Fleet does; keep your work in version control while you try it.
+> **Warning** v0.1.0, no release builds yet. WEEP saves in place and autosaves; keep your
+> work in version control.
 
 ## Getting started
 

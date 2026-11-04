@@ -5,8 +5,8 @@ description: Building WEEP from source with cargo on Linux, NixOS, Windows and m
 
 # Build and run
 
-There are no release builds yet. WEEP builds from source with a stable Rust toolchain
-(1.85 or newer); the repository's `rust-toolchain.toml` picks stable with rustfmt and clippy.
+No release builds yet. WEEP builds with stable Rust (1.85 or newer); `rust-toolchain.toml`
+picks it, with rustfmt and clippy.
 
 ```
 git clone https://github.com/ragtux/WEEP
@@ -14,8 +14,7 @@ cd WEEP
 cargo run --release -p weep -- <folder-or-file>
 ```
 
-The first build pulls GPUI, a git dependency pinned to a Zed release commit, and takes a
-while.
+The first build pulls GPUI and takes a while.
 
 ## Per platform
 
@@ -26,9 +25,7 @@ while.
 | Windows | The MSVC Build Tools |
 | macOS | Xcode or its command line tools |
 
-> **Tip** When the repository sits on a network share or a network volume (`/Volumes/...`
-> on macOS), point `CARGO_TARGET_DIR` at a local disk, for example
-> `CARGO_TARGET_DIR=~/Library/Caches/weep-target`.
+> **Tip** On a network share or volume, point `CARGO_TARGET_DIR` at a local disk.
 
 ## The command line
 
@@ -44,8 +41,7 @@ weep [path ...] [--theme dark|dark_purple|light|<file.json>] [--zoom 0.7..2.0] [
 | `--size` | The window's size in logical pixels, e.g. `1400x900` |
 | `--scratch` | Open a new scratch file |
 
-With no `--theme`, WEEP uses the theme named in its settings, or in Fleet's own
-`settings.json` when there is one.
+Without `--theme`, the theme comes from WEEP's settings, or Fleet's.
 
 ## Running the tests
 
@@ -55,4 +51,4 @@ cargo check -p weep                        # the app
 ```
 
 The terminal, run and git crates are tested against a real shell, real processes and real
-git; the language-server crate against a real rust-analyzer.
+git; the LSP crate against a real rust-analyzer.

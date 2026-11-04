@@ -7,9 +7,9 @@ description: WEEP is free software under the MIT license, from RAGTUX LLC. The l
 # Legal
 
 WEEP is free software published by RAGTUX LLC, a Minnesota limited liability company. This
-page says what that means in ordinary words. The words that actually bind are in
-[LICENSE](https://github.com/ragtux/WEEP/blob/main/LICENSE) in the repository; where this
-page and that file differ, the file governs.
+page is in ordinary words; the binding text is
+[LICENSE](https://github.com/ragtux/WEEP/blob/main/LICENSE), which governs where the two
+differ.
 
 ## The license
 
@@ -20,21 +20,21 @@ WEEP is under the **MIT license**. In plain words:
 - You must keep the copyright notice and the license text with any copy you pass on.
 - It comes with **no warranty of any kind**.
 
-> **Warning** WEEP edits and saves files in place, autosave included, and it is version
-> 0.1.0. Keep your work in version control while you use it.
+> **Warning** v0.1.0, saving files in place with autosave on. Keep your work in version
+> control.
 
 ## Trademarks
 
 **JetBrains** and **Fleet** are trademarks of JetBrains s.r.o. WEEP is an independent,
-clean-room project that reads Fleet's file formats and follows its interface; it is **not
-affiliated with, endorsed by, or sponsored by** JetBrains. The names are used here only to
-say truthfully what WEEP is modelled on and compatible with.
+clean-room project that reads Fleet's formats and follows its interface; it is **not
+affiliated with, endorsed by, or sponsored by** JetBrains. The names say only what WEEP is
+modeled on and compatible with.
 
-WEEP contains no code from Fleet. The only material from the Fleet distribution it ships is
+WEEP contains no Fleet code. The only material it ships from the Fleet distribution is
 openly licensed: the Inter and JetBrains Mono fonts.
 
-**WEEP** and **RAGTUX** are names used by RAGTUX LLC. The MIT license covers the code, not
-the names: a fork is welcome, and should carry its own name.
+**WEEP** and **RAGTUX** are names of RAGTUX LLC. The MIT license covers the code, not the
+names: a fork is welcome under its own name.
 
 ## Third-party components
 
@@ -50,12 +50,11 @@ Every Rust dependency keeps its own license, listed in `Cargo.toml` and `Cargo.l
 ## Privacy
 
 WEEP makes **no network connection of its own**: no telemetry, no analytics, no update
-check, no crash reporting. It has no account. The processes it starts — git, your shell,
-your language server, your run configurations — do what they do on their own.
+check, no crash reporting, no account. The processes it starts — git, your shell, your
+language server, your run configurations — do what they do on their own.
 
-This website is static files. It sets no cookies, runs no analytics and loads no
-third-party content. The server keeps ordinary web-server logs, used to see that the site
-works and not shared. The company's full statement is at
+This site is static files: no cookies, no analytics, no third-party content. The server
+keeps ordinary logs, unshared. Full statement:
 [ragtux.com/privacy](https://ragtux.com/privacy/).
 
 ## Reaching us
