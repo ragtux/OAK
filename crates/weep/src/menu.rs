@@ -12,13 +12,14 @@
 
 use crate::actions::{PopupCancel, PopupConfirm, PopupDown, PopupLeft, PopupRight, PopupUp};
 use crate::assets::icon;
+use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use std::rc::Rc;
 
 use gpui::{
-    deferred, div, point, prelude::*, px, Action, App, Bounds, BoxShadow, Context, ElementId,
-    Entity, EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight,
-    Pixels, Point, SharedString, Size, Subscription, TextRun, Window,
+    deferred, div, point, prelude::*, px, Action, AnyElement, App, Bounds, BoxShadow, Context,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle,
+    FontWeight, Pixels, Point, SharedString, Size, Subscription, TextRun, Window,
 };
 
 /// What a data row runs when chosen.
@@ -293,11 +294,21 @@ impl ContextMenu {
         };
         let entries: Vec<MenuEntry> = entries.iter().map(MenuEntry::clone_entry).collect();
         let m = *cx.global::<Metrics>();
-        let row_top = self.laid.origin.y + px(m.popup_pad) + self.offset_of(ix, &m);
-        let position = point(
-            self.laid.origin.x + self.laid.size.width - px(m.popup_pad),
-            row_top - px(m.popup_pad),
-        );
+        let position = if Skin::current(cx) == Skin::Tui {
+            // The submenu's first row beside this row, its frame on this
+            // menu's right frame column.
+            let cell = Cell::current(cx);
+            point(
+                self.laid.origin.x + self.laid.size.width - px(cell.w),
+                self.laid.origin.y + cell.rows(ix),
+            )
+        } else {
+            let row_top = self.laid.origin.y + px(m.popup_pad) + self.offset_of(ix, &m);
+            point(
+                self.laid.origin.x + self.laid.size.width - px(m.popup_pad),
+                row_top - px(m.popup_pad),
+            )
+        };
         let return_focus = self.return_focus.clone();
         let child = cx.new(|cx| {
             let mut menu = ContextMenu::new(entries, position, return_focus, cx);
@@ -388,6 +399,9 @@ impl ContextMenu {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if Skin::current(cx) == Skin::Tui {
+            return self.render_tui(window, cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let entity = cx.entity();
@@ -541,5 +555,197 @@ impl Render for ContextMenu {
                 .children(rows)
                 .children(child),
         )
+        .into_any_element()
+    }
+}
+
+impl ContextMenu {
+    /// The menu in the tui skin: a box of whole cells on the window's grid,
+    /// a row per entry (`  Label      ⌘C `), separators as rules joining the
+    /// frame, `▸` closing a submenu row, the selected row filled.
+    fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let entity = cx.entity();
+        let focused = self.focus_handle.is_focused(window);
+        let inner = self
+            .entries
+            .iter()
+            .map(|e| match e {
+                MenuEntry::Item(i) => {
+                    2 + Cell::text_cols(&i.label)
+                        + i.shortcut
+                            .as_ref()
+                            .map(|s| 3 + Cell::text_cols(s))
+                            .unwrap_or(0)
+                }
+                MenuEntry::Submenu { label, .. } => 2 + Cell::text_cols(label) + 3,
+                MenuEntry::Separator => 0,
+            })
+            .max()
+            .unwrap_or(0)
+            .max(12);
+        let viewport = window.viewport_size();
+        let max_cols = Cell::fit(viewport.width, cell.w).max(4);
+        let max_rows = Cell::fit(viewport.height, cell.h).max(3);
+        let cols = (inner + 2).min(max_cols);
+        let rows = (self.entries.len() + 2).min(max_rows);
+        let (width, height) = (cell.cols(cols), cell.rows(rows));
+        let left = skin::floor_to(
+            self.position.x.min(viewport.width - width).max(px(0.)),
+            cell.w,
+        );
+        let top = skin::floor_to(
+            self.position.y.min(viewport.height - height).max(px(0.)),
+            cell.h,
+        );
+        self.laid = Bounds {
+            origin: point(left, top),
+            size: Size { width, height },
+        };
+        let rules: Vec<usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e, MenuEntry::Separator))
+            .map(|(ix, _)| ix + 1)
+            .collect();
+        let rows_el: Vec<AnyElement> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(ix, entry)| {
+                let (label, shortcut, enabled, submenu) = match entry {
+                    MenuEntry::Separator => {
+                        return div().h(px(cell.h)).flex_shrink_0().into_any_element();
+                    }
+                    MenuEntry::Item(i) => (i.label.clone(), i.shortcut.clone(), i.enabled, false),
+                    MenuEntry::Submenu { label, .. } => (label.clone(), None, true, true),
+                };
+                let selected = self.selected == Some(ix);
+                let entity = entity.clone();
+                div()
+                    .id(ElementId::NamedInteger("menu-row".into(), ix as u64))
+                    .h(px(cell.h))
+                    .w_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .px(px(cell.w))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_color(if enabled {
+                        theme.list_text
+                    } else {
+                        theme.text_disabled
+                    })
+                    .when(enabled, |d| {
+                        d.cursor_pointer()
+                            .when(selected && focused, |d| {
+                                d.bg(theme.list_bg_focused)
+                                    .text_color(theme.list_text_focused)
+                            })
+                            .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
+                            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                            .on_mouse_move({
+                                let entity = entity.clone();
+                                move |_, _, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        if this.selected != Some(ix) {
+                                            this.selected = Some(ix);
+                                            cx.notify();
+                                        }
+                                        if submenu {
+                                            this.open_child(ix, cx);
+                                        } else {
+                                            this.close_child(cx);
+                                        }
+                                    })
+                                }
+                            })
+                            .on_click(move |_, window, cx| {
+                                entity.update(cx, |this, cx| this.activate(ix, window, cx))
+                            })
+                    })
+                    .child(div().flex_1().overflow_hidden().child(label))
+                    .children(shortcut.map(|s| {
+                        div()
+                            .flex_shrink_0()
+                            .pl(cell.cols(2))
+                            .text_color(if enabled {
+                                theme.text_tertiary
+                            } else {
+                                theme.text_disabled
+                            })
+                            .child(s)
+                    }))
+                    .when(submenu, |d| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .pl(cell.cols(2))
+                                .text_color(theme.text_secondary)
+                                .child("▸"),
+                        )
+                    })
+                    .into_any_element()
+            })
+            .collect();
+        let body = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .children(rows_el)
+            .into_any_element();
+        let close = entity.clone();
+        let child = self.child.as_ref().map(|(_, c, _)| c.clone());
+        let frame = skin::boxed(
+            cell,
+            cols,
+            rows,
+            Vec::new(),
+            rules,
+            body,
+            theme.popup_bg,
+            if focused {
+                theme.border_focused
+            } else {
+                theme.border
+            },
+            &theme,
+            m,
+        )
+        .id("context-menu")
+        .key_context("Popup")
+        .track_focus(&self.focus_handle)
+        .on_action(cx.listener(Self::up))
+        .on_action(cx.listener(Self::down))
+        .on_action(cx.listener(Self::confirm))
+        .on_action(cx.listener(Self::cancel))
+        .on_action(cx.listener(Self::left))
+        .on_action(cx.listener(Self::right))
+        .on_mouse_down_out(move |event, window, cx| {
+            close.update(cx, |this, cx| {
+                if !this.contains(event.position, cx) {
+                    this.dismiss(window, cx);
+                }
+            });
+        })
+        .occlude()
+        .absolute()
+        .left(left)
+        .top(top)
+        .text_color(theme.popup_text);
+        // The box in window coordinates, and an open submenu beside it.
+        deferred(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_0()
+                .child(frame)
+                .children(child),
+        )
+        .into_any_element()
     }
 }

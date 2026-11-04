@@ -4,6 +4,7 @@
 //! (`inputField.border.*`, the focus ring) around it, since in the find bar
 //! the frame spans the buttons too.
 
+use crate::skin::{Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     actions, div, fill, point, prelude::*, px, size, App, Bounds, ClipboardItem, Context,
@@ -14,6 +15,7 @@ use gpui::{
     TextRun, UTF16Selection, Window,
 };
 use std::ops::Range;
+use weep_settings::CaretShape;
 
 actions!(
     input,
@@ -128,6 +130,9 @@ pub struct TextInput {
     is_selecting: bool,
     /// Paint with the editor's monospace face (the find field) or the UI face.
     pub mono: bool,
+    /// The tui skin: keep the cell before the text for the `›` shown while
+    /// focused (true by default; a field with its own prompt turns it off).
+    pub tui_prompt: bool,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -155,6 +160,7 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
             mono: false,
+            tui_prompt: true,
         }
     }
 
@@ -678,6 +684,20 @@ struct InputPrepaint {
     selection: Option<Range<Pixels>>,
     hitbox: Hitbox,
     placeholder: bool,
+    /// The tui skin's drawing, when it is on.
+    tui: Option<TuiPaint>,
+}
+
+/// What the tui skin paints besides the text: the field on whole cells.
+struct TuiPaint {
+    cell: Cell,
+    focused: bool,
+    prompt: bool,
+    shape: CaretShape,
+    /// The char under a block caret, shaped in the field's background.
+    under_caret: Option<ShapedLine>,
+    /// `›`, shaped in `input_focus_border`.
+    mark: Option<ShapedLine>,
 }
 
 impl IntoElement for InputElement {
@@ -730,8 +750,10 @@ impl Element for InputElement {
         } else {
             input.content.clone().into()
         };
+        let tui = (Skin::current(cx) == Skin::Tui).then(|| Cell::current(cx));
+        let font_size = tui.map(|c| c.font_size).unwrap_or(m.ui_font_size);
         let font = Font {
-            family: if input.mono {
+            family: if input.mono || tui.is_some() {
                 theme.mono_font.clone()
             } else {
                 theme.ui_font.clone()
@@ -748,7 +770,7 @@ impl Element for InputElement {
         };
         let run = TextRun {
             len: text.len(),
-            font,
+            font: font.clone(),
             color,
             background_color: None,
             underline: input.marked_range.as_ref().map(|_| gpui::UnderlineStyle {
@@ -760,9 +782,9 @@ impl Element for InputElement {
         };
         let line = window
             .text_system()
-            .shape_line(text, px(m.ui_font_size), &[run], None);
+            .shape_line(text, px(font_size), &[run], None);
         let focused = input.focus_handle.is_focused(window);
-        let (caret, selection) = if placeholder {
+        let (mut caret, mut selection) = if placeholder {
             (focused.then_some(px(0.)), None)
         } else {
             let range = input.selected_range.clone();
@@ -771,6 +793,44 @@ impl Element for InputElement {
                 .then(|| line.x_for_index(range.start)..line.x_for_index(range.end));
             (focused.then(|| line.x_for_index(head)), sel)
         };
+        let tui = tui.map(|cell| {
+            // Whole cells: the caret on a cell's edge, the selection in cells.
+            let on_grid = |x: Pixels| px((f32::from(x) / cell.w).round() * cell.w);
+            caret = caret.map(on_grid);
+            selection = selection.take().map(|r| on_grid(r.start)..on_grid(r.end));
+            let shape = cx
+                .global::<crate::settings::AppSettings>()
+                .settings
+                .editor_caret_shape();
+            let shape_one = |text: String, color: gpui::Hsla, window: &mut Window| {
+                let run = TextRun {
+                    len: text.len(),
+                    font: font.clone(),
+                    color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                window
+                    .text_system()
+                    .shape_line(text.into(), px(cell.font_size), &[run], None)
+            };
+            let under_caret = (focused && shape == CaretShape::Block && !placeholder)
+                .then(|| input.content[input.cursor_offset()..].chars().next())
+                .flatten()
+                .map(|c| shape_one(c.to_string(), theme.input_bg, window));
+            let prompt = input.tui_prompt;
+            let mark = (focused && prompt)
+                .then(|| shape_one("›".to_string(), theme.input_focus_border, window));
+            TuiPaint {
+                cell,
+                focused,
+                prompt,
+                shape,
+                under_caret,
+                mark,
+            }
+        });
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         InputPrepaint {
             line,
@@ -778,6 +838,7 @@ impl Element for InputElement {
             selection,
             hitbox,
             placeholder,
+            tui,
         }
     }
 
@@ -794,6 +855,10 @@ impl Element for InputElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let focus_handle = self.input.read(cx).focus_handle.clone();
+        if let Some(tui) = &prepaint.tui {
+            self.paint_tui(bounds, prepaint, tui, &theme, &focus_handle, window, cx);
+            return;
+        }
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
@@ -833,6 +898,91 @@ impl Element for InputElement {
         self.input.update(cx, |input, _| {
             input.last_layout = (!placeholder).then_some(line);
             input.last_bounds = Some(bounds);
+        });
+    }
+}
+
+impl InputElement {
+    /// The field in the tui skin: a row of cells on `input_bg`, the `›`
+    /// cell, the text at the grid's size, the selection in whole cells and
+    /// the caret drawn as the editor's (`editor.caretShape`) on a cell.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_tui(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        prepaint: &InputPrepaint,
+        tui: &TuiPaint,
+        theme: &Theme,
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let m = *cx.global::<Metrics>();
+        let cell = tui.cell;
+        window.paint_quad(fill(bounds, theme.input_bg));
+        let lead = if tui.prompt { px(cell.w) } else { px(0.) };
+        let text_bounds = Bounds::new(
+            point(bounds.origin.x + lead, bounds.origin.y),
+            size((bounds.size.width - lead).max(px(0.)), bounds.size.height),
+        );
+        window.handle_input(
+            focus_handle,
+            ElementInputHandler::new(text_bounds, self.input.clone()),
+            cx,
+        );
+        window.set_cursor_style(CursorStyle::IBeam, &prepaint.hitbox);
+        let h = px(cell.h);
+        let y = bounds.origin.y + ((bounds.size.height - h) / 2.).floor();
+        let x0 = text_bounds.origin.x;
+        if let Some(mark) = &tui.mark {
+            let _ = mark.paint(
+                point(bounds.origin.x, y),
+                h,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        }
+        if let Some(sel) = &prepaint.selection {
+            window.paint_quad(fill(
+                Bounds::new(point(x0 + sel.start, y), size(sel.end - sel.start, h)),
+                theme.input_selection,
+            ));
+        }
+        let _ = prepaint
+            .line
+            .paint(point(x0, y), h, TextAlign::Left, None, window, cx);
+        if let (Some(x), true) = (prepaint.caret, tui.focused) {
+            let at = point(x0 + x, y);
+            match tui.shape {
+                CaretShape::Line => {
+                    let w = 2. * crate::skin::stroke(window, &m);
+                    window.paint_quad(fill(Bounds::new(at, size(px(w), h)), theme.input_caret));
+                }
+                CaretShape::Block => {
+                    window.paint_quad(fill(
+                        Bounds::new(at, size(px(cell.w), h)),
+                        theme.input_caret,
+                    ));
+                    if let Some(under) = &tui.under_caret {
+                        let _ = under.paint(at, h, TextAlign::Left, None, window, cx);
+                    }
+                }
+                CaretShape::Underline => {
+                    let uh = (cell.h / 5.).round().max(1.);
+                    window.paint_quad(fill(
+                        Bounds::new(point(at.x, y + h - px(uh)), size(px(cell.w), px(uh))),
+                        theme.input_caret,
+                    ));
+                }
+            }
+        }
+        let line = prepaint.line.clone();
+        let placeholder = prepaint.placeholder;
+        self.input.update(cx, |input, _| {
+            input.last_layout = (!placeholder).then_some(line);
+            input.last_bounds = Some(text_bounds);
         });
     }
 }

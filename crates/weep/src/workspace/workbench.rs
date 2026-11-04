@@ -444,32 +444,70 @@ impl Workspace {
 
     fn render_shortcut_overlay(&self, theme: &Theme, m: &Metrics) -> Option<AnyElement> {
         let text = self.shortcut_hint.clone()?;
+        let tui_theme = theme.clone();
+        let tui_text = text.clone();
+        let fleet = Self::shortcut_overlay_fleet(text, theme, m);
         Some(
-            deferred(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom(px(m.shortcut_overlay_bottom))
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .h(px(m.shortcut_overlay_height))
-                            .px(px(m.shortcut_overlay_pad_x))
-                            .flex()
-                            .items_center()
-                            .rounded(px(m.shortcut_overlay_radius))
-                            .bg(theme.shortcut_overlay_bg)
-                            .font_family(theme.ui_font.clone())
-                            .text_size(px(m.shortcut_overlay_font))
-                            .text_color(theme.shortcut_overlay_text)
-                            .child(text),
-                    ),
-            )
-            .with_priority(100)
+            crate::skin::with_window(move |window, cx| {
+                if crate::skin::Skin::current(cx) != crate::skin::Skin::Tui {
+                    return fleet;
+                }
+                // A row of cells on the overlay's colour, a cell of margin each
+                // side, centred on the grid a few rows above the status bar.
+                let theme = tui_theme;
+                let cell = crate::skin::Cell::current(cx);
+                let viewport = window.viewport_size();
+                let win_cols = crate::skin::Cell::fit(viewport.width, cell.w);
+                let win_rows = crate::skin::Cell::fit(viewport.height, cell.h);
+                let cols = crate::skin::Cell::text_cols(&tui_text) + 2;
+                deferred(
+                    div()
+                        .absolute()
+                        .left(cell.cols(win_cols.saturating_sub(cols) / 2))
+                        .top(cell.rows(win_rows.saturating_sub(5)))
+                        .w(cell.cols(cols))
+                        .h(px(cell.h))
+                        .px(px(cell.w))
+                        .whitespace_nowrap()
+                        .bg(theme.shortcut_overlay_bg)
+                        .font_family(theme.mono_font.clone())
+                        .text_size(px(cell.font_size))
+                        .line_height(px(cell.h))
+                        .text_color(theme.shortcut_overlay_text)
+                        .child(tui_text),
+                )
+                .with_priority(100)
+                .into_any_element()
+            })
             .into_any_element(),
         )
+    }
+
+    fn shortcut_overlay_fleet(text: SharedString, theme: &Theme, m: &Metrics) -> AnyElement {
+        deferred(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom(px(m.shortcut_overlay_bottom))
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .h(px(m.shortcut_overlay_height))
+                        .px(px(m.shortcut_overlay_pad_x))
+                        .flex()
+                        .items_center()
+                        .rounded(px(m.shortcut_overlay_radius))
+                        .bg(theme.shortcut_overlay_bg)
+                        .font_family(theme.ui_font.clone())
+                        .text_size(px(m.shortcut_overlay_font))
+                        .text_color(theme.shortcut_overlay_text)
+                        .child(text),
+                ),
+        )
+        .with_priority(100)
+        .into_any_element()
     }
 
     /// Reads the branch and every file's git status again: on open, after
@@ -1134,6 +1172,91 @@ impl Workspace {
         theme: &Theme,
         m: &Metrics,
     ) -> impl IntoElement {
+        let theme = theme.clone();
+        let m = *m;
+        crate::skin::with_window(move |_, cx| {
+            if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+                Self::banner_tui(editor, &theme, &m, crate::skin::Cell::current(cx))
+            } else {
+                Self::banner_fleet(editor, &theme, &m).into_any_element()
+            }
+        })
+    }
+
+    fn banner_save(editor: &Entity<EditorView>, cx: &mut App) {
+        editor.update(cx, |e, cx| {
+            if let Err(err) = e.save(cx) {
+                eprintln!("weep: cannot save: {err:#}");
+            }
+        });
+    }
+
+    fn banner_reload(editor: &Entity<EditorView>, cx: &mut App) {
+        editor.update(cx, |e, cx| {
+            e.document.update(cx, |d, cx| {
+                if let Err(err) = d.reload_from_disk(cx) {
+                    eprintln!("weep: cannot reload: {err:#}");
+                }
+            });
+        });
+    }
+
+    /// The banner in the tui skin: a box of three rows a row under the
+    /// island's top edge, the message and two buttons on whole cells.
+    fn banner_tui(
+        editor: Entity<EditorView>,
+        theme: &Theme,
+        m: &Metrics,
+        cell: crate::skin::Cell,
+    ) -> AnyElement {
+        const TEXT: &str = "File has been changed on disk";
+        let overwrite = editor.clone();
+        let reload = editor;
+        let cols = 2 + 1 + TEXT.len() + 2 + "[ Overwrite ]".len() + 1 + "[ Reload ]".len() + 1;
+        let body = div()
+            .size_full()
+            .px(px(cell.w))
+            .flex()
+            .whitespace_nowrap()
+            .text_color(theme.text_primary)
+            .child(div().flex_1().child(TEXT))
+            .child(
+                crate::skin::button("banner-overwrite", "Overwrite", true, theme, cell)
+                    .on_click(move |_, _, cx| Self::banner_save(&overwrite, cx)),
+            )
+            .child(div().w(px(cell.w)))
+            .child(
+                crate::skin::button("banner-reload", "Reload", true, theme, cell)
+                    .on_click(move |_, _, cx| Self::banner_reload(&reload, cx)),
+            )
+            .into_any_element();
+        div()
+            .absolute()
+            .top(px(cell.h))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(
+                crate::skin::boxed(
+                    cell,
+                    cols,
+                    3,
+                    Vec::new(),
+                    Vec::new(),
+                    body,
+                    theme.popup_bg,
+                    theme.warning,
+                    theme,
+                    *m,
+                )
+                .occlude(),
+            )
+            .into_any_element()
+    }
+
+    /// Fleet's banner (the reference).
+    fn banner_fleet(editor: Entity<EditorView>, theme: &Theme, m: &Metrics) -> impl IntoElement {
         let overwrite = editor.clone();
         let reload = editor;
         let button = |id: &'static str, label: &'static str| {
@@ -1932,10 +2055,21 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let m = *cx.global::<Metrics>();
-        let position = point(
-            px(m.toolbar_pad_x + m.toolbar_button + m.toolbar_gap),
-            px(m.toolbar_height + m.popup_offset_y),
-        );
+        let position = if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            // Under the bar, from the first column the bar's marks use.
+            let cell = crate::skin::Cell::current(cx);
+            let lead = if cfg!(target_os = "macos") && !window.is_fullscreen() {
+                (crate::theme::metrics::TRAFFIC_LIGHTS_WIDTH / cell.w).ceil() as usize
+            } else {
+                1
+            };
+            point(cell.cols(lead), crate::toolbar::tui_height(window, cx))
+        } else {
+            point(
+                px(m.toolbar_pad_x + m.toolbar_button + m.toolbar_gap),
+                px(m.toolbar_height + m.popup_offset_y),
+            )
+        };
         let focus = window.focused(cx);
         let entries = Self::main_menu(cx);
         self.open_menu(entries, position, focus, cx);
@@ -1989,6 +2123,9 @@ impl Workspace {
     /// The Notifications popup: a 32 px header (title, two icon buttons), a
     /// separator, then the rows or the empty state.
     fn render_notifications_popup(&self, theme: &Theme, m: &Metrics, cx: &App) -> AnyElement {
+        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            return self.render_notifications_popup_tui(theme, m);
+        }
         let empty = self.notifications.read(cx).is_empty();
         let icon_button =
             |id: &'static str, path: &'static str, action: fn() -> Box<dyn Action>| {
@@ -2075,6 +2212,48 @@ impl Workspace {
         )
         .into_any_element()
     }
+    /// The Notifications popup in the tui skin: a box under the toolbar's
+    /// mark, its right frame a cell in from the window's right edge.
+    fn render_notifications_popup_tui(&self, theme: &Theme, m: &Metrics) -> AnyElement {
+        let notifications = self.notifications.clone();
+        let theme = theme.clone();
+        let m = *m;
+        crate::skin::with_window(move |window, cx| {
+            let cell = crate::skin::Cell::current(cx);
+            let viewport = window.viewport_size();
+            let win_cols = crate::skin::Cell::fit(viewport.width, cell.w);
+            let win_rows = crate::skin::Cell::fit(viewport.height, cell.h);
+            let top = crate::toolbar::tui_height(window, cx);
+            let top_rows = crate::skin::Cell::fit(top, cell.h) + 1;
+            let cols = ((m.notifications_width / cell.w).round() as usize)
+                .max(30)
+                .min(win_cols.saturating_sub(2));
+            let max_rows = win_rows.saturating_sub(top_rows + 2).max(5);
+            let popup = notifications.read(cx).render_popup_tui(
+                cell,
+                cols,
+                max_rows,
+                &notifications,
+                &theme,
+                &m,
+            );
+            deferred(
+                popup
+                    .id("notifications-popup")
+                    .occlude()
+                    .absolute()
+                    .left(cell.cols(win_cols.saturating_sub(cols + 2)))
+                    .top(cell.rows(top_rows))
+                    .text_color(theme.popup_text)
+                    .on_mouse_down_out(|_, window, cx| {
+                        window.dispatch_action(Box::new(ToggleNotifications), cx)
+                    }),
+            )
+            .into_any_element()
+        })
+        .into_any_element()
+    }
+
     pub(super) fn clear_notifications(
         &mut self,
         _: &ClearNotifications,
@@ -2283,6 +2462,7 @@ impl Workspace {
             out.push(self.render_notifications_popup(theme, m, cx));
         }
         out.extend(self.render_shortcut_overlay(theme, m));
+        out.extend(debug_tooltips());
         out
     }
 
@@ -2290,4 +2470,35 @@ impl Workspace {
     pub(super) fn notifications_view(&self) -> Entity<Notifications> {
         self.notifications.clone()
     }
+}
+
+/// Debug builds: `WEEP_DEBUG_TOOLTIPS=1` pins a one-line and a two-line
+/// tooltip over the window, for screenshots of a state only a hover reaches.
+#[cfg(debug_assertions)]
+fn debug_tooltips() -> Option<AnyElement> {
+    std::env::var_os("WEEP_DEBUG_TOOLTIPS")?;
+    Some(
+        crate::skin::with_window(|window, cx| {
+            let one = crate::tooltip::Tooltip::with_shortcut("Open Problems", "⌘E")(window, cx);
+            let two = crate::tooltip::Tooltip::with_detail("Toggle Left Panel", "⌘B")(window, cx);
+            deferred(
+                div()
+                    .absolute()
+                    .left(px(300.))
+                    .top(px(300.))
+                    .flex()
+                    .gap(px(80.))
+                    .child(one)
+                    .child(two),
+            )
+            .with_priority(200)
+            .into_any_element()
+        })
+        .into_any_element(),
+    )
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_tooltips() -> Option<AnyElement> {
+    None
 }

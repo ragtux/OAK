@@ -66,8 +66,93 @@ impl Tooltip {
     }
 }
 
+impl Tooltip {
+    /// The tooltip in the tui skin, a cell below the pointer: one line is a
+    /// row of cells on `tooltip.background` with a cell of margin each side;
+    /// two lines are a box.
+    fn render_tui(&self, cx: &App) -> gpui::AnyElement {
+        use crate::skin::{self, Cell};
+        let theme = cx.global::<Theme>().clone();
+        let m = *cx.global::<Metrics>();
+        let cell = Cell::current(cx);
+        let line = |title: SharedString, shortcut: Option<SharedString>| {
+            div()
+                .h(px(cell.h))
+                .flex()
+                .whitespace_nowrap()
+                .text_color(theme.tooltip_text)
+                .child(title)
+                .children(shortcut.map(|s| {
+                    div()
+                        .pl(cell.cols(2))
+                        .text_color(theme.tooltip_text_secondary)
+                        .child(s)
+                }))
+        };
+        let spacer = div().h(px(cell.h));
+        let Some(detail) = self.detail.clone() else {
+            return div()
+                .flex()
+                .flex_col()
+                .child(spacer)
+                .child(
+                    div().flex().child(
+                        line(self.title.clone(), self.shortcut.clone())
+                            .px(px(cell.w))
+                            .bg(theme.tooltip_bg)
+                            .font_family(theme.mono_font.clone())
+                            .text_size(px(cell.font_size))
+                            .line_height(px(cell.h)),
+                    ),
+                )
+                .into_any_element();
+        };
+        let first = Cell::text_cols(&self.title)
+            + self
+                .shortcut
+                .as_ref()
+                .map(|s| 2 + Cell::text_cols(s))
+                .unwrap_or(0);
+        let cols = first.max(Cell::text_cols(&detail)) + 4;
+        let body = div()
+            .size_full()
+            .px(px(cell.w))
+            .flex()
+            .flex_col()
+            .child(line(self.title.clone(), self.shortcut.clone()))
+            .child(
+                div()
+                    .h(px(cell.h))
+                    .whitespace_nowrap()
+                    .text_color(theme.tooltip_text_secondary)
+                    .child(detail),
+            )
+            .into_any_element();
+        div()
+            .flex()
+            .flex_col()
+            .child(spacer)
+            .child(skin::boxed(
+                cell,
+                cols,
+                4,
+                Vec::new(),
+                Vec::new(),
+                body,
+                theme.tooltip_bg,
+                theme.tooltip_text_secondary,
+                &theme,
+                m,
+            ))
+            .into_any_element()
+    }
+}
+
 impl Render for Tooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
+            return self.render_tui(cx);
+        }
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         // gpui places the view's top-left at the pointer; Fleet's box starts 16 px
@@ -116,5 +201,6 @@ impl Render for Tooltip {
                             .child(d)
                     })),
             )
+            .into_any_element()
     }
 }
