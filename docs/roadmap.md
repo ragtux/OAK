@@ -114,10 +114,11 @@ Everything Fleet's editor does to a plain text file. Built in one pass on
 2026-11-02 against the batch 5 measurements (`docs/fleet-probe.md`, fourth
 and fifth passes). What batch 5 did not measure is marked "estimate" in
 `theme.rs::metrics` and in the probe record; the scenes `find`, `fold` and
-`wrap` ran on both editors on the Mac (`docs/fleet-probe.md`, fifteenth and
-sixteenth passes) and corrected the find bar, the replace row, the fold mark's
-click, rendered spaces and the wrap rule. Still open from them: Tab in the find
-field (Fleet goes to the ↑ button), the toggles' and the query's fonts, one
+`wrap` ran on both editors on the Mac (`docs/fleet-probe.md`, fifteenth to
+seventeenth passes) and corrected the find bar, the replace row, the fold mark's
+click, rendered spaces, the wrap rule, the find bar's Tab order and focus
+ring and its current match on reopening. Still open from them: the text
+pushed down under the replace row, the toggles' and the query's fonts, one
 wrap column more than Fleet, the Outline and VerticalThin carets, and the
 sticky lines (the fixture has no Rust file longer than the window). Left for later: the smooth caret (`editor.caretSmoothAnimation`
 is read, not animated), an "in selection" button on the find bar (the mode
@@ -508,7 +509,8 @@ Mode on (the fixture now has a `Cargo.toml` so both sides can load it).
   headed "Implementations", or goes straight to the only one; rust-analyzer
   is told WEEP handles `rust-analyzer.showReferences` so it sends them, and
   its runnables are left to the gutter's run icon; asked again on
-  `workspace/codeLens/refresh` and after a "content modified" answer),
+  `workspace/codeLens/refresh` and after a "content modified" answer, an
+  older answer never replacing a newer one),
   `back` and `forward` over the positions jumped from, `rename` (the name
   in a prompt, preselected per `rename.selectOnRename`, the server's edit
   applied across open documents and files on disk), `quick-fixes` (a menu

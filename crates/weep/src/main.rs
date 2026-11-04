@@ -352,6 +352,7 @@ fn main() {
             editor::bind_keys(cx);
             file_tree::bind_keys(cx);
             input::bind_keys(cx);
+            find::bind_keys(cx);
             let preset = cx
                 .global::<settings::AppSettings>()
                 .settings

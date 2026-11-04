@@ -15,9 +15,34 @@ use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
-    div, point, prelude::*, px, App, BoxShadow, Context, Div, ElementId, Entity, EventEmitter,
-    Focusable, SharedString, Stateful, Subscription, Window,
+    actions, div, point, prelude::*, px, App, BoxShadow, Context, Div, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString, Stateful, Subscription, Window,
 };
+
+actions!(
+    find_bar,
+    [
+        FindBarTab,
+        FindBarBackTab,
+        FindBarPress,
+        FindBarEnter,
+        FindBarCancel
+    ]
+);
+
+/// The keys of a bar button holding the focus (the `find-tab` scene): Tab and
+/// Shift+Tab walk the bar, Space presses the button, Enter does nothing and
+/// Escape closes the bar.
+pub fn bind_keys(cx: &mut App) {
+    let ctx = Some("FindBarButton");
+    cx.bind_keys([
+        KeyBinding::new("tab", FindBarTab, ctx),
+        KeyBinding::new("shift-tab", FindBarBackTab, ctx),
+        KeyBinding::new("space", FindBarPress, ctx),
+        KeyBinding::new("enter", FindBarEnter, ctx),
+        KeyBinding::new("escape", FindBarCancel, ctx),
+    ]);
+}
 use std::ops::Range;
 use weep_text::search::{Query, SearchOptions};
 
@@ -48,6 +73,10 @@ pub struct FindBar {
     error: Option<String>,
     /// The caret when the bar opened: the first match at or after it is current.
     origin: usize,
+    /// Held while one of the bar's buttons has the keyboard focus; `button`
+    /// says which one.
+    focus_handle: FocusHandle,
+    button: Stop,
 }
 
 impl EventEmitter<FindBarEvent> for FindBar {}
@@ -91,6 +120,8 @@ impl FindBar {
             current: None,
             error: None,
             origin: 0,
+            focus_handle: cx.focus_handle(),
+            button: Stop::Prev,
         }
     }
 
@@ -131,14 +162,23 @@ impl FindBar {
         let Some(editor) = self.editor.clone() else {
             return;
         };
-        let (selected, caret, multiline) = editor.update(cx, |e, cx| {
+        // The selection's start, not the caret: a match selected by the bar
+        // stays current when it opens again (the `find-tab` scene: Fleet
+        // shows 1/8 on each reopen).
+        let (selected, origin, multiline) = editor.update(cx, |e, cx| {
             let text = e.selected_text(cx);
-            (text.clone(), e.caret(cx), text.contains('\n'))
+            (
+                text.clone(),
+                e.selection_range(cx).start,
+                text.contains('\n'),
+            )
         });
+        // Fleet's find opens without the replace row even after replace
+        // was used; an open bar keeps it.
+        self.replace_shown = with_replace || (self.open && self.replace_shown);
         self.open = true;
         cx.emit(FindBarEvent::Changed);
-        self.replace_shown = self.replace_shown || with_replace;
-        self.origin = caret;
+        self.origin = origin;
         let use_selection = cx
             .global::<AppSettings>()
             .settings
@@ -226,17 +266,19 @@ impl FindBar {
         self.current = if self.matches.is_empty() {
             None
         } else {
-            let anchor = if reseat {
-                self.origin
+            // On opening (or a new query) the first match touching or after
+            // the caret is current: Fleet keeps the match the caret sits at
+            // the end of (the `find-tab` scene, 1/8 after Escape put the
+            // caret after the selected match). Otherwise the current match
+            // stays where it was.
+            let at = if reseat {
+                let origin = self.origin;
+                self.matches.iter().position(|m| m.end >= origin)
             } else {
-                previous_start.unwrap_or(self.origin)
+                let anchor = previous_start.unwrap_or(self.origin);
+                self.matches.iter().position(|m| m.start >= anchor)
             };
-            Some(
-                self.matches
-                    .iter()
-                    .position(|m| m.start >= anchor)
-                    .unwrap_or(0),
-            )
+            Some(at.unwrap_or(0))
         };
         self.push_to_editor(reseat || previous_start.is_none(), cx);
         cx.notify();
@@ -370,11 +412,7 @@ impl FindBar {
             }
             InputEvent::Submit { shift } => self.step(!shift, cx),
             InputEvent::Cancel => self.close(cx),
-            InputEvent::Tab { shift: false } if self.replace_shown => {
-                let replace = self.replace.clone();
-                cx.defer_in_window_focus(replace);
-            }
-            InputEvent::Tab { .. } => {}
+            InputEvent::Tab { shift } => cx.defer_move_focus(!shift),
         }
     }
 
@@ -389,12 +427,114 @@ impl FindBar {
             InputEvent::Submit { shift: false } => self.replace_one(cx),
             InputEvent::Submit { shift: true } => self.replace_all(cx),
             InputEvent::Cancel => self.close(cx),
-            InputEvent::Tab { shift: true } => {
-                let find = self.find.clone();
-                cx.defer_in_window_focus(find);
-            }
-            InputEvent::Tab { .. } => {}
+            InputEvent::Tab { shift } => cx.defer_move_focus(!shift),
         }
+    }
+
+    /// The bar's Tab stops in Fleet's order (the `find-tab` scene): the find
+    /// field, the replace field when shown, ↑, ↓, the three toggles, the
+    /// close box and the chevron, round and round; Replace and Replace All
+    /// are not stops. The tui skin's bar keeps Tab between its fields.
+    fn stops(&self, cx: &App) -> Vec<Stop> {
+        let mut stops = vec![Stop::Find];
+        if self.replace_shown {
+            stops.push(Stop::Replace);
+        }
+        if Skin::current(cx) != Skin::Tui {
+            stops.extend([
+                Stop::Prev,
+                Stop::Next,
+                Stop::Case,
+                Stop::Word,
+                Stop::Regex,
+                Stop::Close,
+                Stop::Chevron,
+            ]);
+        }
+        stops
+    }
+
+    fn focused_stop(&self, window: &Window, cx: &App) -> Option<Stop> {
+        if self.find.read(cx).is_focused(window) {
+            Some(Stop::Find)
+        } else if self.replace.read(cx).is_focused(window) {
+            Some(Stop::Replace)
+        } else if self.focus_handle.is_focused(window) {
+            Some(self.button)
+        } else {
+            None
+        }
+    }
+
+    /// The button drawing the focus ring, if one holds the focus.
+    fn focused_button(&self, window: &Window) -> Option<Stop> {
+        self.focus_handle.is_focused(window).then_some(self.button)
+    }
+
+    fn move_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let stops = self.stops(cx);
+        let n = stops.len();
+        let at = self
+            .focused_stop(window, cx)
+            .and_then(|s| stops.iter().position(|t| *t == s));
+        let next = match at {
+            Some(i) if forward => (i + 1) % n,
+            Some(i) => (i + n - 1) % n,
+            None => 0,
+        };
+        match stops[next] {
+            Stop::Find => self.find.read(cx).focus_handle(cx).focus(window, cx),
+            Stop::Replace => self.replace.read(cx).focus_handle(cx).focus(window, cx),
+            button => {
+                self.button = button;
+                self.focus_handle.focus(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn on_tab(&mut self, _: &FindBarTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_focus(true, window, cx);
+    }
+
+    fn on_back_tab(&mut self, _: &FindBarBackTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_focus(false, window, cx);
+    }
+
+    /// Space on a focused button: what a click does.
+    fn on_press(&mut self, _: &FindBarPress, window: &mut Window, cx: &mut Context<Self>) {
+        match self.button {
+            Stop::Prev => self.step(false, cx),
+            Stop::Next => self.step(true, cx),
+            Stop::Case => self.toggle(Toggle::Case, cx),
+            Stop::Word => self.toggle(Toggle::Word, cx),
+            Stop::Regex => self.toggle(Toggle::Regex, cx),
+            Stop::Close => self.close(cx),
+            Stop::Chevron => self.toggle_replace(window, cx),
+            Stop::Find | Stop::Replace => {}
+        }
+    }
+
+    /// Fleet's Enter on a focused button neither presses it nor reaches the
+    /// editor.
+    fn on_enter(&mut self, _: &FindBarEnter, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn on_cancel(&mut self, _: &FindBarCancel, _: &mut Window, cx: &mut Context<Self>) {
+        self.close(cx);
+    }
+
+    /// The node holding the focus for the buttons, with their keys. It is
+    /// not an ancestor of the fields, so Space still types in them.
+    fn focus_node(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .absolute()
+            .track_focus(&self.focus_handle)
+            .key_context("FindBarButton")
+            .on_action(cx.listener(Self::on_tab))
+            .on_action(cx.listener(Self::on_back_tab))
+            .on_action(cx.listener(Self::on_press))
+            .on_action(cx.listener(Self::on_enter))
+            .on_action(cx.listener(Self::on_cancel))
     }
 
     pub fn counter_text(&self) -> Option<SharedString> {
@@ -416,34 +556,52 @@ enum Toggle {
     Regex,
 }
 
-/// Focus helpers: a focus change inside an event handler runs after the
-/// handler, through the window.
+/// A Tab stop of the bar: its two fields and its buttons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stop {
+    Find,
+    Replace,
+    Prev,
+    Next,
+    Case,
+    Word,
+    Regex,
+    Close,
+    Chevron,
+}
+
+/// A Tab in a field moves the focus once the field's event is handled; the
+/// window is the active one, where the key was pressed.
 trait DeferFocus {
-    fn defer_in_window_focus(&mut self, input: Entity<TextInput>);
+    fn defer_move_focus(&mut self, forward: bool);
 }
 
 impl DeferFocus for Context<'_, FindBar> {
-    fn defer_in_window_focus(&mut self, input: Entity<TextInput>) {
+    fn defer_move_focus(&mut self, forward: bool) {
+        let bar = self.entity();
         self.defer(move |cx| {
-            if let Some(window) = cx.windows().first().copied() {
+            if let Some(window) = cx.active_window() {
                 let _ = window.update(cx, |_, window, cx| {
-                    let handle = input.read(cx).focus_handle(cx);
-                    handle.focus(window, cx);
+                    bar.update(cx, |bar, cx| bar.move_focus(forward, window, cx))
                 });
             }
         });
     }
 }
 
-/// A 16 px ghost icon button inside the field.
+/// A 16 px ghost icon button inside the field; `focused` draws the focus
+/// ring 2 outside it (`FIND_BAR_FOCUS_RING`).
 fn ghost_icon(
     id: impl Into<ElementId>,
     path: &'static str,
+    focused: bool,
     theme: &Theme,
     m: &Metrics,
 ) -> Stateful<Div> {
+    let inset = (m.find_bar_focus_ring - m.icon_size) / 2.;
     div()
         .id(id)
+        .relative()
         .size(px(m.icon_size))
         .flex_shrink_0()
         .flex()
@@ -454,6 +612,18 @@ fn ghost_icon(
         .hover(|s| s.bg(theme.ghost_hovered))
         .active(|s| s.bg(theme.ghost_pressed))
         .child(icon(path, m.icon_size, theme.icon_primary))
+        .when(focused, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .top(px(-inset))
+                    .left(px(-inset))
+                    .size(px(m.find_bar_focus_ring))
+                    .rounded(px(m.button_radius))
+                    .border_1()
+                    .border_color(theme.ghost_focus_border),
+            )
+        })
 }
 
 fn separator(theme: &Theme, m: &Metrics) -> Div {
@@ -507,45 +677,58 @@ impl Render for FindBar {
         let entity = cx.entity();
         let find_focused = self.find.read(cx).is_focused(window);
         let replace_focused = self.replace.read(cx).is_focused(window);
+        let ring = self.focused_button(window);
+        // Fleet keeps the find field's focus border while a button inside it
+        // holds the focus; the chevron sits outside the field.
+        let find_frame_focused = find_focused || ring.is_some_and(|b| b != Stop::Chevron);
         let counter = self.counter_text();
         let counter_color = if self.error.is_some() {
             theme.text_dangerous
         } else {
             theme.text_secondary
         };
-        let toggle = |id: &'static str, label: &'static str, on: bool, which: Toggle| {
-            let entity = entity.clone();
-            div()
-                .id(id)
-                .w(px(m.find_bar_toggle))
-                .h(px(m.find_bar_toggle))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(m.button_radius))
-                .cursor_pointer()
-                .border_1()
-                .map(|d| {
-                    if on {
-                        d.bg(theme.toggle_on_bg)
-                            .border_color(theme.toggle_on_border)
-                            .text_color(theme.toggle_on_text)
-                            .hover(|s| s.bg(theme.toggle_on_bg_hovered))
-                    } else {
-                        d.bg(theme.toggle_off_bg)
-                            .border_color(gpui::transparent_black())
-                            .text_color(theme.toggle_off_text)
-                            .hover(|s| {
-                                s.bg(theme.toggle_off_bg_hovered)
-                                    .text_color(theme.toggle_off_text_hovered)
-                            })
-                            .active(|s| s.bg(theme.toggle_off_bg_pressed))
-                    }
-                })
-                .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.toggle(which, cx)))
-                .child(label)
-        };
+        let toggle =
+            |id: &'static str, label: &'static str, on: bool, which: Toggle, stop: Stop| {
+                let entity = entity.clone();
+                let focused = ring == Some(stop);
+                div()
+                    .id(id)
+                    .w(px(m.find_bar_toggle))
+                    .h(px(m.find_bar_toggle))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(m.button_radius))
+                    .cursor_pointer()
+                    .border_1()
+                    .map(|d| {
+                        if on {
+                            d.bg(theme.toggle_on_bg)
+                                .border_color(theme.toggle_on_border)
+                                .text_color(theme.toggle_on_text)
+                                .hover(|s| s.bg(theme.toggle_on_bg_hovered))
+                        } else {
+                            d.bg(theme.toggle_off_bg)
+                                .border_color(gpui::transparent_black())
+                                .text_color(theme.toggle_off_text)
+                                .hover(|s| {
+                                    s.bg(theme.toggle_off_bg_hovered)
+                                        .text_color(theme.toggle_off_text_hovered)
+                                })
+                                .active(|s| s.bg(theme.toggle_off_bg_pressed))
+                        }
+                    })
+                    .when(focused, |d| {
+                        d.border_color(if on {
+                            theme.toggle_on_focus_border
+                        } else {
+                            theme.toggle_off_focus_border
+                        })
+                    })
+                    .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.toggle(which, cx)))
+                    .child(label)
+            };
         let chevron = {
             let entity = entity.clone();
             ghost_icon(
@@ -555,6 +738,7 @@ impl Render for FindBar {
                 } else {
                     "expui/general/chevronRight"
                 },
+                ring == Some(Stop::Chevron),
                 &theme,
                 &m,
             )
@@ -565,23 +749,41 @@ impl Render for FindBar {
         };
         let up = {
             let entity = entity.clone();
-            ghost_icon("find-prev", "weep/arrow-up", &theme, &m)
-                .tooltip(Tooltip::text("Previous Occurrence"))
-                .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.step(false, cx)))
+            ghost_icon(
+                "find-prev",
+                "weep/arrow-up",
+                ring == Some(Stop::Prev),
+                &theme,
+                &m,
+            )
+            .tooltip(Tooltip::text("Previous Occurrence"))
+            .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.step(false, cx)))
         };
         let down = {
             let entity = entity.clone();
-            ghost_icon("find-next", "weep/arrow-down", &theme, &m)
-                .tooltip(Tooltip::text("Next Occurrence"))
-                .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.step(true, cx)))
+            ghost_icon(
+                "find-next",
+                "weep/arrow-down",
+                ring == Some(Stop::Next),
+                &theme,
+                &m,
+            )
+            .tooltip(Tooltip::text("Next Occurrence"))
+            .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.step(true, cx)))
         };
         let close = {
             let entity = entity.clone();
-            ghost_icon("find-close", "expui/general/close", &theme, &m)
-                .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.close(cx)))
+            ghost_icon(
+                "find-close",
+                "expui/general/close",
+                ring == Some(Stop::Close),
+                &theme,
+                &m,
+            )
+            .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.close(cx)))
         };
         let find_row = div().flex().items_center().child(chevron).child(
-            frame(find_focused, &theme, &m)
+            frame(find_frame_focused, &theme, &m)
                 .pl(px(m.find_bar_pad_left))
                 .pr(px(m.find_bar_pad_right))
                 .child(div().flex_1().min_w_0().h_full().child(self.find.clone()))
@@ -599,11 +801,29 @@ impl Render for FindBar {
                 .child(div().w(px(m.find_bar_close_gap)).flex_shrink_0())
                 .child(separator(&theme, &m))
                 .child(div().w(px(m.find_bar_separator_gap_right)).flex_shrink_0())
-                .child(toggle("find-case", "Aa", self.case_sensitive, Toggle::Case))
+                .child(toggle(
+                    "find-case",
+                    "Aa",
+                    self.case_sensitive,
+                    Toggle::Case,
+                    Stop::Case,
+                ))
                 .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                .child(toggle("find-word", "W", self.whole_word, Toggle::Word))
+                .child(toggle(
+                    "find-word",
+                    "W",
+                    self.whole_word,
+                    Toggle::Word,
+                    Stop::Word,
+                ))
                 .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                .child(toggle("find-regex", ".*", self.regex, Toggle::Regex))
+                .child(toggle(
+                    "find-regex",
+                    ".*",
+                    self.regex,
+                    Toggle::Regex,
+                    Stop::Regex,
+                ))
                 .child(div().w(px(m.find_bar_separator_gap_left)).flex_shrink_0())
                 .child(separator(&theme, &m))
                 .child(div().w(px(m.find_bar_close_gap)).flex_shrink_0())
@@ -674,6 +894,7 @@ impl Render for FindBar {
             .text_color(theme.text_primary)
             // The bar sits over the text; clicks on it must not reach the editor.
             .occlude()
+            .child(self.focus_node(cx))
             .child(find_row)
             .children(replace_row)
             .into_any_element()
@@ -838,6 +1059,7 @@ impl FindBar {
             .text_color(theme.text_primary)
             // The bar sits over the text; clicks on it must not reach the editor.
             .occlude()
+            .child(self.focus_node(cx))
             .child(rule)
             .child(find_row)
             .children(replace_row)

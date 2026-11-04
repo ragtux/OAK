@@ -87,6 +87,11 @@ pub(super) struct SmartMode {
     tokens_epoch: HashMap<PathBuf, u64>,
     /// The same for the code lenses (the code vision rows).
     lens_epoch: HashMap<PathBuf, u64>,
+    /// Per file, the number of the last code lens answer asked for and of
+    /// the newest one shown: an answer's lenses resolve one by one, so an
+    /// older answer (from before the server's workspace had loaded) can end
+    /// after a newer one and must not replace it.
+    lens_order: HashMap<PathBuf, (u64, u64)>,
     /// The code actions behind the quick-fix menu and the problem card's rows.
     fix_actions: Vec<(usize, lsp::CodeActionOrCommand)>,
     /// The last completion answer's items (`completionItem/resolve` needs them).
@@ -112,6 +117,7 @@ impl SmartMode {
             history_ix: 0,
             tokens_epoch: HashMap::new(),
             lens_epoch: HashMap::new(),
+            lens_order: HashMap::new(),
             fix_actions: Vec::new(),
             completion_items: Vec::new(),
             completion_server: None,
@@ -803,6 +809,7 @@ impl Workspace {
         }
         self.smart.tokens_epoch.remove(path);
         self.smart.lens_epoch.remove(path);
+        self.smart.lens_order.remove(path);
     }
 
     /// A new view: told whether its document has a server.
@@ -1032,6 +1039,9 @@ impl Workspace {
         };
         let buffer_version = synced.buffer_version;
         let path = path.to_path_buf();
+        let order = self.smart.lens_order.entry(path.clone()).or_default();
+        order.0 += 1;
+        let seq = order.0;
         self.request::<CodeLensRequest>(
             ix,
             lsp::CodeLensParams {
@@ -1090,7 +1100,7 @@ impl Workspace {
                                 let mut s = slots.borrow_mut();
                                 (std::mem::take(&mut s.lenses), s.retry)
                             };
-                            this.set_code_vision(&path, buffer_version, all, cx);
+                            this.set_code_vision(&path, buffer_version, seq, all, cx);
                             if retry {
                                 this.request_code_vision(&path, cx);
                             }
@@ -1099,18 +1109,20 @@ impl Workspace {
                 }
                 if unresolved == 0 {
                     let all = std::mem::take(&mut slots.borrow_mut().lenses);
-                    this.set_code_vision(&path, buffer_version, all, cx);
+                    this.set_code_vision(&path, buffer_version, seq, all, cx);
                 }
             },
         );
     }
 
     /// The resolved lenses as the document's code vision, when the text is
-    /// still the one they were asked about (else the next answer will do).
+    /// still the one they were asked about (else the next answer will do)
+    /// and no newer answer (`seq`) is shown already.
     fn set_code_vision(
         &mut self,
         path: &Path,
         buffer_version: u64,
+        seq: u64,
         lenses: Vec<Option<lsp::CodeLens>>,
         cx: &mut Context<Self>,
     ) {
@@ -1129,6 +1141,11 @@ impl Workspace {
         if synced.buffer_version != buffer_version {
             return;
         }
+        let order = self.smart.lens_order.entry(path.to_path_buf()).or_default();
+        if seq < order.1 {
+            return;
+        }
+        order.1 = seq;
         let index = LineIndex::new(&synced.text);
         let lenses: Vec<Lens> = lenses
             .into_iter()

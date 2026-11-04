@@ -509,6 +509,10 @@ pub mod metrics {
     /// 11.5 apart and the last one's 8 from the field's border fit buttons
     /// padded 5 a side, so the field keeps 7 - 5 = 2 on its right.
     pub const FIND_BAR_REPLACE_BUTTON_PAD_X: f32 = 5.;
+    /// A bar button holding the keyboard focus (the `find-tab` scene): a 1 px
+    /// ring in its `focusBorder` colour on a 20 px box centred on it, the
+    /// toggle's own box and 2 outside the 16 px icon boxes; no outline.
+    pub const FIND_BAR_FOCUS_RING: f32 = 20.;
     /// Estimates: the field's corner radius and its separators' height, and a
     /// text button's horizontal padding ("Replace", "Replace All").
     pub const INPUT_RADIUS: f32 = 4.;
@@ -1078,6 +1082,7 @@ scaled_metrics!(
     find_bar_counter_gap = FIND_BAR_COUNTER_GAP,
     find_bar_chevron_gap = FIND_BAR_CHEVRON_GAP,
     find_bar_replace_button_pad_x = FIND_BAR_REPLACE_BUTTON_PAD_X,
+    find_bar_focus_ring = FIND_BAR_FOCUS_RING,
     input_radius = INPUT_RADIUS,
     input_focus_border = INPUT_FOCUS_BORDER,
     find_bar_separator_height = FIND_BAR_SEPARATOR_HEIGHT,
@@ -1355,6 +1360,8 @@ pub struct Theme {
     // ghostButton.off.background.* (the toolbar's icon buttons)
     pub ghost_hovered: Hsla,
     pub ghost_pressed: Hsla,
+    // ghostButton.off.focusBorder
+    pub ghost_focus_border: Hsla,
     // tab.*
     pub tab_bg_hovered: Hsla,
     pub tab_bg_selected: Hsla,
@@ -1543,6 +1550,8 @@ pub struct Theme {
     pub toggle_on_bg_hovered: Hsla,
     pub toggle_on_border: Hsla,
     pub toggle_on_text: Hsla,
+    // toggleButton.on.focusBorder
+    pub toggle_on_focus_border: Hsla,
     // toggleButton.off.*
     pub toggle_off_bg: Hsla,
     pub toggle_off_bg_hovered: Hsla,
@@ -1550,6 +1559,8 @@ pub struct Theme {
     pub toggle_off_border: Hsla,
     pub toggle_off_text: Hsla,
     pub toggle_off_text_hovered: Hsla,
+    // toggleButton.off.focusBorder
+    pub toggle_off_focus_border: Hsla,
     // ghostButton.off.text.*
     pub ghost_text: Hsla,
     pub ghost_text_hovered: Hsla,
@@ -1752,6 +1763,7 @@ impl Theme {
                 "ghostButton.off.background.pressed",
                 text_primary.with_alpha(0x21),
             ),
+            ghost_focus_border: c("ghostButton.off.focusBorder", Color::rgb(0x2A, 0x7D, 0xEB)),
             tab_bg_hovered: c("tab.background.hovered", text_primary.with_alpha(0x14)),
             tab_bg_selected: c("tab.background.selected", text_primary.with_alpha(0x14)),
             tab_bg_selected_focused: c(
@@ -2079,6 +2091,7 @@ impl Theme {
             ),
             toggle_on_border: c("toggleButton.on.border.default", transparent),
             toggle_on_text: c("toggleButton.on.text.default", Color::rgb(0xFF, 0xFF, 0xFF)),
+            toggle_on_focus_border: c("toggleButton.on.focusBorder", Color::rgb(0x18, 0x19, 0x1B)),
             toggle_off_bg: c("toggleButton.off.background.default", transparent),
             toggle_off_bg_hovered: c(
                 "toggleButton.off.background.hovered",
@@ -2094,6 +2107,10 @@ impl Theme {
             ),
             toggle_off_text: c("toggleButton.off.text.default", text_primary),
             toggle_off_text_hovered: c("toggleButton.off.text.hovered", text_primary),
+            toggle_off_focus_border: c(
+                "toggleButton.off.focusBorder",
+                Color::rgb(0x2A, 0x7D, 0xEB),
+            ),
             ghost_text: c("ghostButton.off.text.default", text_primary),
             ghost_text_hovered: c("ghostButton.off.text.hovered", text_primary),
             input_bg: c("inputField.background.default", transparent),

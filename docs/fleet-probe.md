@@ -925,12 +925,12 @@ names the file; `~/.fleet` is not read), now the only one the driver writes.
 | find field's right end | from the border inward: 7, the 16 px close box with a 9 px cross (ink 11, `expui/general/close`), 8, a separator, 6, the three 20 px toggles 2 apart, 6, a separator, 8, ↓ and ↑ 6 apart, 8, the counter | 8 pad, `closeSmall` (ink 8), 7 right of the first separator: everything left of the cross 2.5 to the left → 7, `close`, 6 (`FIND_BAR_PAD_RIGHT`, `FIND_BAR_SEPARATOR_GAP_RIGHT`); within 1 of Fleet after the run |
 | replace row | "Replace" ink 1119.5-1168, "Replace All" 1179.5-1247: 11.5 between them and 8 from the border, so buttons padded 5 a side in a field padded 2 | `TEXT_BUTTON_PAD_X` (8, an estimate) and 4: the ink 18 apart and 13.5 from the border → `FIND_BAR_REPLACE_BUTTON_PAD_X` 5, the field's pad 7 - 5; "Replace" starts at 1119.5 like Fleet's |
 | find and replace fields | 28 tall, the replace field 6 below the find field (89-117 and 123-151 at x 1000) | the same |
-| Tab in the find field | moves focus to the ↑ button (a focus ring on it), not to the replace field: the scene's "Row" went nowhere | Tab goes to the replace field (open; the scene's `replace-typed` shots differ for that) |
+| Tab in the replace field (Ctrl+H focuses it when the query is not empty, so the scene's "Record" was typed there) | moves focus to the ↑ button (a focus ring on it); the scene's "Row" went nowhere | Tab did nothing → Fleet's whole order, seventeenth pass |
 | toggles' glyphs | "Aa" 16 wide, "W" 14, ".*" with an 8 × 8 asterisk | Inter text at the UI size: 15.5, 12.5 and 6 × 6 (open: Fleet's toggles may be icons or a larger size) |
 | query text | Inter (the UI font) | the editor's mono font (open) |
 | click on the folded `{...}` | unfolds and puts the caret just inside the bracket (7:20 on `pub struct Record {`), both brackets matched | unfolded and left the caret where it was → the caret at the fold's inner start |
 | fold scene's aim | `pub struct Record` at y 241 below the code-vision row | WEEP draws the code-vision row too now: both editors' steps aim at 241; the unfold click moved from x 560 (on "Record") to 597, on the mark (585-608) |
-| code vision 6 s after launch | "4 implementations" | "0 implementations" (rust-analyzer answers before its indexing ends and WEEP does not ask again when it finishes; open) |
+| code vision 6 s after launch | "4 implementations" | "0 implementations" (not reproduced in the seventeenth pass) |
 | `editor.renderWhitespace` | Settings shows a dropdown, All or None, and writes `"All"`; `true` draws nothing | the scene wrote `true` → `"All"` on both sides (WEEP reads any value but none/off) |
 | rendered space | a 1.5 dot centred in the space's cell (480-481.5 × 87-88.5 between "short" and "line"), `#4B4B4D` (`editor.whitespaceIndicator`) | the `·` glyph, 3 × 2.5 → a 1.5 dot centred in the cell (`WHITESPACE_DOT`): the same pixels |
 | `editor.caretShape` | a dropdown of Block, Outline, Underline, Vertical (the default) and VerticalThin, written as shown | Settings wrote `"Line"` for Vertical → `"Vertical"`; Outline and VerticalThin are not drawn (open) |
@@ -941,6 +941,33 @@ names the file; `~/.fleet` is not read), now the only one the driver writes.
 Not settled by this pass: sticky lines (`main.rs` is 37 lines, shorter than
 the window, so `fn main` never leaves the top; the scene needs a longer Rust
 file in the fixture); the rest of the open rows above.
+
+## Seventeenth pass: macOS, the find bar's Tab order (2026-11-04)
+
+The scene `find-tab` (Fleet 1.48.261, the same Mac) presses Tab and
+Shift+Tab around the find bar with and without the replace row, then Enter
+and Space on a focused button; one shot after each key.
+
+| what | Fleet | WEEP before → now |
+|---|---|---|
+| Tab order | the find field, the replace field (when shown), ↑, ↓, Aa, W, .*, the close box, the chevron, and round to the find field; Shift+Tab the other way (from the find field to the chevron, then to the close box). Replace and Replace All are not stops | Tab went from the find field to the replace field and back with Shift+Tab, nowhere else → Fleet's order (`FindBar::stops`); the tui skin's bar keeps Tab between its two fields |
+| a focused button | a 1 px ring in `ghostButton.off.focusBorder` / `toggleButton.*.focusBorder` (`#2A7DEB`, shot as `#456DE4`) on a 20 × 20 box: ↑ 1098-1118, Aa 1153-1173 (the toggle's own box), × 1230-1250, the chevron 816-836, all at y 93-113; no outer outline. The find field keeps its focus border while a button inside it is focused, not while the chevron is | none → the ring 2 outside the 16 px icon boxes and on the toggle's border (`FIND_BAR_FOCUS_RING` 20); the field's border as Fleet's. The ring's x is centred on WEEP's boxes, 1-2 right of Fleet's (open) |
+| Space on a focused ↑ | steps to the previous match (1/8 → 8/8) | the same (clicks' actions for every button) |
+| Enter on a focused ↑ | nothing (the counter stays 1/8) | consumed, nothing |
+| Escape on the focused chevron | closes the bar | the same |
+| Ctrl+F after the bar closed with the replace row | the bar opens without the replace row | the row stayed → shown only by Ctrl+H, or while the bar is open (Ctrl+F on an open bar with the row is unprobed) |
+| the current match on reopening | stays on the selected match, also after Escape in the editor put the caret after it: 1/8 in every shot | one further on each reopen (2/8, 3/8, 4/8, the 2/8 against 3/8 of the sixteenth pass) → the first match ending at or after the caret, from the selection's start: 1/8 in every shot |
+| the replace row over the text | the text pushed down under both rows | pushed for the find row only, the replace row drawn over the text with a transparent field (open) |
+| Ctrl+F on a word | the query is the word at the caret ("record") | not compared |
+
+Code vision: the "0 implementations" WEEP showed 6 s after launch in the
+sixteenth pass did not come back. WEEP launched on the fixture showed "4
+implementations" from 2 s on, and rust-analyzer alone (opened, asked at once,
+asked again on each `workspace/codeLens/refresh`) answered 4 within 1.7 s,
+so the cause stays unknown. One way the 0 could stick was fixed: an answer's
+lenses resolve one by one, so an answer from before the workspace loaded
+could finish after a newer one and replace it; now an older answer is dropped
+(`lens_order` in `workspace/smart.rs`).
 
 ## What the shots showed
 

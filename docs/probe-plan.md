@@ -107,7 +107,7 @@ order; A–D unblock M1, E and F are an afternoon each and pay off at once.
 Status (2026-11-02): A, B, D and H exist for Windows (`make-fixture.py`,
 `winprobe.py`, `compare.py`, with scenes `editor`, `light`, `panels`,
 `splitters`, `tabs`, `settings-live`, `splits`, `surface`, `surface2`, and
-the M2 scenes `find`, `fold` and `wrap` (compared on the Mac, fifteenth and sixteenth passes), the M5 scenes `terminal` and `terminal2` (compared, eleventh pass), the M6 scene `run` (compared, twelfth pass), the M7 scene `smart` (WEEP's side only, thirteenth pass) and the M3 scenes `goto` and `popups`
+the M2 scenes `find`, `find-tab`, `fold` and `wrap` (compared on the Mac, fifteenth to seventeenth passes), the M5 scenes `terminal` and `terminal2` (compared, eleventh pass), the M6 scene `run` (compared, twelfth pass), the M7 scene `smart` (WEEP's side only, thirteenth pass) and the M3 scenes `goto` and `popups`
 shot on both editors on 2026-11-02, their `compare.py` pass still to run); C's in-app probe
 mode, E, F's lint and the KDE launchers are still to do. B's settings override is the scene's
 `fleet_settings` object (written to Fleet's `settings.json` for the run and
