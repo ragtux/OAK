@@ -834,9 +834,16 @@ impl Render for FindBar {
                 .pr(px(m.find_bar_pad_right))
                 .child(div().flex_1().min_w_0().h_full().child(self.find.clone()))
                 .children(counter.map(|c| {
+                    // Tabular figures, as Fleet's: its "1/8" has Inter's
+                    // `one.tf` (6.5 of ink against the default 4; seventeenth
+                    // pass), and the counter keeps its width as it counts.
                     div()
                         .flex_shrink_0()
                         .whitespace_nowrap()
+                        .font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
+                            "tnum".into(),
+                            1,
+                        )])))
                         .text_color(counter_color)
                         .child(c)
                 }))
