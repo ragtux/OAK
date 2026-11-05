@@ -11,7 +11,7 @@ This manual covers what is built today; anything missing says so in place.
 > **Note** An independent project, not affiliated with JetBrains. Fleet is a trademark of
 > JetBrains s.r.o.
 
-> **Warning** v0.1.0, a first pre-release. WEEP saves in place and autosaves; keep your
+> **Warning** v0.2.0, a pre-release. WEEP saves in place and autosaves; keep your
 > work in version control.
 
 ## Getting started

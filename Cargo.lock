@@ -6372,7 +6372,7 @@ dependencies = [
 
 [[package]]
 name = "weep"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "embed-resource",
@@ -6397,7 +6397,7 @@ dependencies = [
 
 [[package]]
 name = "weep-dap"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6406,7 +6406,7 @@ dependencies = [
 
 [[package]]
 name = "weep-git"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "tempfile",
@@ -6415,7 +6415,7 @@ dependencies = [
 
 [[package]]
 name = "weep-keymap"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -6424,7 +6424,7 @@ dependencies = [
 
 [[package]]
 name = "weep-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "lsp-types",
  "serde",
@@ -6434,7 +6434,7 @@ dependencies = [
 
 [[package]]
 name = "weep-run"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6443,7 +6443,7 @@ dependencies = [
 
 [[package]]
 name = "weep-search"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ignore",
  "regex",
@@ -6452,7 +6452,7 @@ dependencies = [
 
 [[package]]
 name = "weep-settings"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -6461,7 +6461,7 @@ dependencies = [
 
 [[package]]
 name = "weep-syntax"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tree-sitter",
  "tree-sitter-highlight",
@@ -6473,7 +6473,7 @@ dependencies = [
 
 [[package]]
 name = "weep-terminal"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -6484,7 +6484,7 @@ dependencies = [
 
 [[package]]
 name = "weep-text"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "regex",
  "ropey",
@@ -6492,7 +6492,7 @@ dependencies = [
 
 [[package]]
 name = "weep-theme"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "indexmap",

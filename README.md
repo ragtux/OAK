@@ -10,7 +10,7 @@
   <img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-2A7DEB?style=flat-square&logo=rust&logoColor=white">
   <img alt="Linux, Windows, macOS" src="https://img.shields.io/badge/Linux%20%7C%20Windows%20%7C%20macOS-2b2b2b?style=flat-square">
   <img alt="MIT licensed" src="https://img.shields.io/badge/license-MIT-2b2b2b?style=flat-square">
-  <img alt="Pre-release, v0.1.0" src="https://img.shields.io/badge/status-pre--release%20·%20v0.1.0-EC5D6F?style=flat-square">
+  <img alt="Pre-release, v0.2.0" src="https://img.shields.io/badge/status-pre--release%20·%20v0.2.0-EC5D6F?style=flat-square">
 </p>
 
 <p align="center">
@@ -40,7 +40,7 @@ right — Fleet's islands at Fleet's sizes, in Fleet Dark's colors, on macOS.*
 
 ## Status
 
-Milestones M0 to M6 built, M7 in progress. WEEP clones Fleet 1.48 as it behaves without
+Milestones M0 to M6 built, M7's first pass and M8 built. WEEP clones Fleet 1.48 as it behaves without
 Smart Mode first — the shell, the editor, Files, Goto, Search, Git, Terminal, Run, Settings,
 themes and keymaps — and then adds Smart Mode through language servers in place of Fleet's
 IntelliJ backend. The first Smart Mode pass is in, through rust-analyzer, which is also
@@ -48,7 +48,7 @@ what Fleet's own Rust Smart Mode runs. Against the tables Fleet 1.48.261 ships, 
 145 of its 203 default-chord action ids, reads 104 of its 430 `settings.json` keys and
 paints 199 of its 684 theme color keys.
 
-> **Keep your work in version control.** WEEP is v0.1.0, a first pre-release. It saves
+> **Keep your work in version control.** WEEP is v0.2.0, a pre-release. It saves
 > files in place and autosaves by default, as Fleet does; many sizes on the newest surfaces
 > are still estimates until their probe scenes run against Fleet.
 
@@ -97,8 +97,9 @@ The lightning in the toolbar attaches a language server — rust-analyzer today,
 semantic highlighting over tree-sitter's, completion with additional edits and snippets,
 parameter info, documentation on hover, go to declaration and type declaration, find
 usages, back and forward, rename across files, optimize imports, reformat and format on
-save. Inlay hints, code vision, the inline rename and other languages' servers are still
-ahead; the debugger over DAP is M8.
+save, code vision. Inlay hints, the inline rename and other languages' servers are still
+ahead. The debugger runs over DAP through lldb-dap: breakpoints in the gutter, the Debug,
+Breakpoints and Debugger Console tools, stepping, watches and the floating debug panel.
 
 ## Measured against Fleet
 
@@ -200,7 +201,7 @@ against the real binaries, and `weep-lsp` against a real rust-analyzer.
 | M5 Terminal | PTY tabs, Fleet's profiles | Built |
 | M6 Run and problems | `.fleet/run.json`, the Run tool, the problems widget | Built |
 | M7 Smart Mode via LSP | Diagnostics, completion, navigation, rename, quick fixes, formatting | First pass built |
-| M8 Debugger via DAP | Breakpoints, the debug tools | Not started |
+| M8 Debugger via DAP | Breakpoints, the debug tools | Built; batch 13 run on Fleet |
 
 The milestones, what each covers and what is left in each live in `docs/roadmap.md`; how Fleet
 is probed is `docs/probe-plan.md`. The manual is published at [weep.cc](https://weep.cc),
