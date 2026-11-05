@@ -1020,6 +1020,40 @@ line binds two locations; the debuggee's output arrives as `stdout` with CRLF
 (a pty); the `repl` context answers in LLDB's format (`(int) $0 = 42`); Rust's
 pretty printers load from the toolchain's `lldb_lookup.py`.
 
+## Twentieth pass: macOS, batch 13 against Fleet (2026-11-04)
+
+Scene `debug` played into Fleet 1.48.261 and WEEP on the fixture's
+`misc/debuggee.rs` (breakpoint on line 6, the `debug fixture` cargo row).
+Fleet debugs Rust with its own `codelldb` (`~/Library/Caches/JetBrains/Fleet/
+debug_server/rust-debugger/adapter`), which raises macOS's Developer Tools
+Access prompt unless `DevToolsSecurity -enable` was run; Xcode's lldb-dap does
+not. Fleet's half of the scene was valid up to `floating-panel-hover`; from
+`variables-expanded` on, the guessed coordinates hit nothing in Fleet's layout
+(the Debug tool opens in the right panel) and Add Watch's Cmd+N made an
+Untitled file, so those shots settle nothing yet. Two runs were spoiled first:
+"toggle enabled breakpoint" finds nothing in Fleet's Go to Action, and Fleet's
+console step typed into its editor and autosaved, so the fixture must be
+regenerated between the Fleet and the WEEP run.
+
+| what | Fleet | WEEP now |
+|---|---|---|
+| breakpoint | a filled red dot in place of the line number; the hover hint a faint dot in the same place | the same (B's estimate held) |
+| breakpoint's right click | a menu: "Remove Breakpoint" (⌫), "Disable Breakpoint", a separator, "View All Breakpoints" | the editor's context menu, under a "Line breakpoint" tooltip |
+| action titles | Go to Action for "breakpoint": Disable Breakpoint, Remove Breakpoint (⌫), Toggle Breakpoint (⌘9 shown), Jump to Breakpoints Tool, New Breakpoints Tool | Enable/Disable Breakpoint, Toggle Line Breakpoint, Remove Breakpoint, New Breakpoints Tool, plus the tool row "Breakpoints" |
+| run popup | a cargo row's buttons "Run ↩" and "Debug ⌥↩": Debug is Alt+Enter | a Debug button (not on the selected command row) and Shift+Enter |
+| where a session shows | the build's output in a bottom-panel tab named after the configuration (the `cargo build` line, then the adapter's command), and the Debug tool in the **right** panel | everything in the Debug tool in the bottom panel; the build output in the Debugger Console |
+| Debug tool | three sections: "Processes" (a row of Resume, Pause, Restart, Stop, Step Over, Step Into, Step Out and a layout toggle, then the session "debug fixture"), "Threads & Frames" (a tree: `1: tid=N "main"` expanded, its frames as names only), "Variables" with an "Add Watch" button, the scopes Local, Static, Global, Registers collapsed (Local selected) | frames left, variables right, Locals expanded, no Processes or toolbar |
+| stopped line | the row washed (61, 40, 44) on (23, 24, 25) from the gutter's edge, 18 rows tall (189-207 here) like WEEP's; the breakpoint dot stays, no arrow | (51, 36, 54) with the caret on the row (the current line's wash under it, to check), an arrow over the dot |
+| floating panel | top right of the editor island, 8 buttons as the Processes row, no grip; a tooltip "Step Into ⌘;" style | top centre, 5 buttons and a grip |
+| attach dialog | "Attach to Process", the field's placeholder "Enter host:port or search process", a group header "LLDB", rows "pid name" (no command line), no count | name, command line, the pid right-aligned, the count at the title's right |
+| type hints | rust-analyzer's inlay hints (`: Vec<Point>`, `: String`, `: i32`, `&Point`) | none (M7 left them for later) |
+
+What WEEP's run also showed: lldb-dap cannot evaluate Rust expressions
+("Expression evaluation in Rust not supported. Falling back to default
+language" on `total * 2`; a plain variable works), and the hover value popup
+fires on words in comments (`debugger` in line 1's comment). Fleet's Rust
+evaluation is unprobed (its watch step missed).
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

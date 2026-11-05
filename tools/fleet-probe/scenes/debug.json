@@ -1,6 +1,6 @@
 {
   "name": "debug",
-  "about": "Batch 13: the debugger. misc/debuggee.rs with Smart Mode up; the gutter's breakpoint hint, a breakpoint set by a click on line 6 (hovered and not), disabled and hovered (`debug/toggle-enabled-breakpoint` through Go to Action), enabled again; the Run & Debug popup with the fixture's `debug fixture` cargo row, which debug-in-context (Alt+Shift+R) on its line in .fleet/run.json starts; stopped on line 6: the execution line, the Debug tool's frames and variables (`points` expanded), the floating debug panel (`editor.showFloatingDebugPanel` on for the run) and a button's tooltip, a watch (`total * 2`), quick evaluate (Ctrl+Alt+F8) on `points`, the value on hover over `total`, a step over (F10) and the Debugger Console with the program's output and an evaluated `label.len()`, the Breakpoints tool, the attach dialog (`debugger/attach-to-process`) unfiltered and filtered, then Stop (Shift+F5). Not run yet: every coordinate is an estimate to correct after the first `file` and `stopped` shots.",
+  "about": "Batch 13: the debugger. misc/debuggee.rs with Smart Mode up; the gutter's breakpoint hint, a breakpoint set by a click on line 6 (hovered and not), Go to Action's rows for \"breakpoint\" (Fleet's titles: no chord binds `debug/toggle-enabled-breakpoint`, and \"toggle enabled breakpoint\" finds nothing in Fleet 1.48), the breakpoint's right-click menu; the Run & Debug popup with the fixture's `debug fixture` cargo row, which debug-in-context (Alt+Shift+R) on its line in .fleet/run.json starts; stopped on line 6: the execution line, the Debug tool's frames and variables (`points` expanded), the floating debug panel (`editor.showFloatingDebugPanel` on for the run) and a button's tooltip, a watch (`total * 2`), quick evaluate (Ctrl+Alt+F8) on `points`, the value on hover over `total`, a step over (F10) and the Debugger Console with the program's output and an evaluated `label.len()`, the Breakpoints tool, the attach dialog (`debugger/attach-to-process`) unfiltered and filtered, then Stop (Shift+F5). Not run yet: every coordinate is an estimate to correct after the first `file` and `stopped` shots.",
   "size": [
     1280,
     800
@@ -17,7 +17,9 @@
     "Fleet: Smart Mode must be on for the fixture (the Trust dialog accepted, the backend downloaded) and the fixture built once (`cargo build` in it), so the debug run stops within the wait.",
     "Fleet keeps breakpoints with the workspace: regenerate the fixture (make-fixture.py) before a rerun, or the first click removes the breakpoint instead.",
     "The rows' y assume no code vision row over `fn main` (line 6 at y=197); with one, add 18.5 to Y6/Y5. The Variables row (700, 548) and the floating panel (824, 82) are guesses: correct them from the `stopped` shot.",
-    "macOS: macprobe.py sends the scene's chords through WEEP's keymap (`key` -> `mac`); F5, F9 and F10 go as they are. Attaching needs the debugger entitlement; the attach shots only open the dialog."
+    "macOS: macprobe.py sends the scene's chords through WEEP's keymap (`key` -> `mac`); F5, F9 and F10 go as they are. Attaching needs the debugger entitlement; the attach shots only open the dialog.",
+    "2026-11-04 run: the disabled-breakpoint shots were dropped; Fleet's Go to Action knows no \"toggle enabled breakpoint\". Learn the title from `actions-breakpoint`, or the gesture from `breakpoint-menu`, and add the disabled shots back.",
+    "2026-11-04 run: regenerate the fixture between the Fleet and the WEEP run (Fleet's console step typed into its editor and autosaved). Fleet opens the Debug tool in the right panel: its Variables 'Local' row is at about (938, 412) and 'Add Watch' at (1213, 380); focus the tool before Cmd+N (in the editor it makes a new file). Fleet debugs with Alt+Enter on the popup row."
   ],
   "steps": {
     "fleet": [
@@ -129,33 +131,48 @@
       ],
       [
         "type",
-        "toggle enabled breakpoint"
+        "breakpoint"
       ],
       [
         "wait",
         1500
       ],
       [
+        "shot",
+        "actions-breakpoint"
+      ],
+      [
         "key",
-        "enter"
+        "escape"
       ],
       [
         "wait",
-        800
+        600
       ],
       [
-        "shot",
-        "breakpoint-disabled"
-      ],
-      [
-        "hover",
+        "move",
         402,
-        197,
-        1200
+        197
+      ],
+      [
+        "click",
+        "right"
+      ],
+      [
+        "wait",
+        1000
       ],
       [
         "shot",
-        "breakpoint-disabled-hovered"
+        "breakpoint-menu"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        600
       ],
       [
         "move",
@@ -163,28 +180,8 @@
         400
       ],
       [
-        "key",
-        "ctrl+shift+k"
-      ],
-      [
         "wait",
-        1000
-      ],
-      [
-        "type",
-        "toggle enabled breakpoint"
-      ],
-      [
-        "wait",
-        1500
-      ],
-      [
-        "key",
-        "enter"
-      ],
-      [
-        "wait",
-        800
+        400
       ],
       [
         "key",
@@ -628,37 +625,52 @@
       ],
       [
         "wait",
-        800
+        1000
       ],
       [
         "type",
-        "toggle enabled breakpoint"
+        "breakpoint"
       ],
       [
         "wait",
         800
+      ],
+      [
+        "shot",
+        "actions-breakpoint"
       ],
       [
         "key",
-        "enter"
+        "escape"
       ],
       [
         "wait",
-        800
+        600
       ],
       [
-        "shot",
-        "breakpoint-disabled"
-      ],
-      [
-        "hover",
+        "move",
         402,
-        197,
-        1200
+        197
+      ],
+      [
+        "click",
+        "right"
+      ],
+      [
+        "wait",
+        1000
       ],
       [
         "shot",
-        "breakpoint-disabled-hovered"
+        "breakpoint-menu"
+      ],
+      [
+        "key",
+        "escape"
+      ],
+      [
+        "wait",
+        600
       ],
       [
         "move",
@@ -666,28 +678,8 @@
         400
       ],
       [
-        "key",
-        "ctrl+shift+k"
-      ],
-      [
         "wait",
-        800
-      ],
-      [
-        "type",
-        "toggle enabled breakpoint"
-      ],
-      [
-        "wait",
-        800
-      ],
-      [
-        "key",
-        "enter"
-      ],
-      [
-        "wait",
-        800
+        400
       ],
       [
         "key",
