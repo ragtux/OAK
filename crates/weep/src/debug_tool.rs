@@ -713,9 +713,12 @@ pub enum Tint {
     Dim,
 }
 
-/// A row's text, `name = {type} value`, and the byte ranges of its parts.
-/// Estimate: batch 13 shows no expanded scope, so a variable's row keeps
-/// IntelliJ's form.
+/// A row's text and the byte ranges of its parts: a variable's
+/// `name: {type} value`, a watch's `expr = {type} value` (batch 13,
+/// debug-fleet-variables-expanded and -watch: the colon right after the
+/// name, the `=` between spaces, one plain space before the type; the
+/// colon and the `=` in the name's colour, `text.primary`, the type in
+/// `text.secondary`). Both skins print this text.
 pub fn row_text(row: &TreeRow) -> (String, Vec<(Range<usize>, Tint)>) {
     let mut text = String::new();
     let mut runs = Vec::new();
@@ -730,9 +733,10 @@ pub fn row_text(row: &TreeRow) -> (String, Vec<(Range<usize>, Tint)>) {
         NodeKind::WatchInput(_) => {}
         NodeKind::Watch(_) | NodeKind::Variable => {
             push(&mut text, &row.name, Tint::Name);
+            let separator = row_separator(&row.kind);
             match &row.value {
                 Some(value) => {
-                    push(&mut text, " = ", Tint::Punctuation);
+                    push(&mut text, separator, Tint::Punctuation);
                     if let Some(t) = row.type_name.as_deref().filter(|t| !t.is_empty()) {
                         push(&mut text, &format!("{{{t}}} "), Tint::Type);
                     }
@@ -743,11 +747,20 @@ pub fn row_text(row: &TreeRow) -> (String, Vec<(Range<usize>, Tint)>) {
                     );
                 }
                 // Estimate: a watch with no stopped frame to evaluate in.
-                None => push(&mut text, " = not available", Tint::Dim),
+                None => push(&mut text, &format!("{separator}not available"), Tint::Dim),
             }
         }
     }
     (text, runs)
+}
+
+/// What stands between a row's name and its value: a variable's colon
+/// (`total: {i32} 14`), a watch's ` = ` (`total * 2 = {long long} 28`).
+fn row_separator(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Watch(_) => " = ",
+        _ => ": ",
+    }
 }
 
 /// `text` and its runs cut to `cols` cells (the tui skin): an ellipsis ends
@@ -856,7 +869,10 @@ impl DebugTool {
         let follow = Follow::start(|t: &mut DebugTool| &mut t.follow, Self::switched, cx);
         DebugTool {
             follow,
-            part: Part::Threads,
+            // Batch 13 (debug-fleet-stopped): the keyboard starts in Variables,
+            // the first row (`Local`) in `listItem.background.focused` and the
+            // frame row only selected.
+            part: Part::Variables,
             selected: 0,
             thread_cursor: None,
             collapsed: HashSet::new(),
@@ -874,6 +890,8 @@ impl DebugTool {
     }
 
     fn switched(&mut self, _cx: &mut Context<Self>) {
+        // A new session starts in Variables, as the first one does.
+        self.part = Part::Variables;
         self.selected = 0;
         self.thread_cursor = None;
         self.collapsed.clear();
@@ -1349,7 +1367,8 @@ impl DebugTool {
 fn tint_color(tint: Tint, theme: &Theme) -> Hsla {
     match tint {
         Tint::Name => theme.list_text,
-        Tint::Punctuation => theme.list_text_secondary,
+        // Batch 13: the colon and the `=` in the name's colour.
+        Tint::Punctuation => theme.list_text,
         Tint::Type => theme.list_text_secondary,
         Tint::Value => theme.list_text,
         Tint::Error => theme.text_dangerous,
@@ -2535,15 +2554,21 @@ mod tests {
     fn row_text_dims_the_type() {
         let s = fake_session();
         let rows = tree_rows(&TreeSource::of(&s), None);
+        // A variable: the colon right after the name (batch 13).
         let (text, runs) = row_text(&rows[3]);
-        assert_eq!(text, "count = {i32} 3");
-        assert_eq!(runs[2], (8..14, Tint::Type));
+        assert_eq!(text, "count: {i32} 3");
+        assert_eq!(runs[1], (5..7, Tint::Punctuation));
+        assert_eq!(runs[2], (7..13, Tint::Type));
+        // A watch keeps ` = `.
+        let (text, runs) = row_text(&rows[0]);
+        assert!(text.starts_with(&format!("{} = ", rows[0].name)), "{text}");
+        assert_eq!(runs[1].1, Tint::Punctuation);
         let (text, runs) = row_text(&rows[1]);
         assert_eq!(text, "nope = undeclared identifier");
         assert_eq!(runs.last().unwrap().1, Tint::Error);
-        let (clipped, runs) = clip_runs("count = {i32} 3", &row_text(&rows[3]).1, 10);
-        assert_eq!(clipped, "count = {…");
-        assert_eq!(runs.last().unwrap(), &(8..clipped.len(), Tint::Type));
+        let (clipped, runs) = clip_runs("count: {i32} 3", &row_text(&rows[3]).1, 9);
+        assert_eq!(clipped, "count: {…");
+        assert_eq!(runs.last().unwrap(), &(7..clipped.len(), Tint::Type));
     }
 
     #[test]

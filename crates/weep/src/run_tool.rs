@@ -11,6 +11,11 @@
 //! session's `output` (the `cargo build` line, the build's text, the
 //! adapter's command line, the debuggee's output), each command line after
 //! the first opening a block; Stop stops the session, Rerun restarts it.
+//!
+//! Long lines (batch 13, twenty-first pass): output wraps at the body's
+//! width with a hanging indent ([`wrap_hanging`]); a command line does not,
+//! it is cut at the body's right padding (Fleet cut both the `cargo build`
+//! line and the adapter's at 896 on a 904 island edge).
 
 use crate::assets::icon;
 use crate::debugger::{DebugSession, RunLineKind};
@@ -65,6 +70,9 @@ pub struct RunView {
     tui_bars: crate::skin::FrameBars,
     /// The tui skin's first visible output row (rule 6: whole rows).
     tui_scroll: RowScroll,
+    /// The tool's width as last laid out (less the padding, the Fleet
+    /// skin's wrap width); 0 before the first frame.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
 }
 
 impl EventEmitter<RunViewEvent> for RunView {}
@@ -93,6 +101,7 @@ impl RunView {
             tui_grid: Default::default(),
             tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
+            width: Default::default(),
         };
         view.start(cx);
         view
@@ -121,6 +130,7 @@ impl RunView {
             tui_grid: Default::default(),
             tui_bars: Default::default(),
             tui_scroll: RowScroll::default(),
+            width: Default::default(),
         };
         view.set_debug(session, cx);
         view
@@ -301,6 +311,65 @@ impl RunView {
     }
 }
 
+/// An output line in rows of at most `cols` columns, as Fleet's run tool
+/// wraps it (batch 13, debug-fleet-stopped: cargo's `    Finished `dev`
+/// profile [unoptimized + debuginfo] target(s) in 0.08s` on a 65-column body
+/// ends its first row at `in` and puts `0.08s` on the next at column 5).
+/// The break is the editor's soft wrap's (`editor.rs` `wrap_points`): a
+/// blank that crosses the limit starts the next row, else the row ends
+/// after its last blank, else at the limit. Each row after the first starts
+/// with the line's own leading blanks, the hanging indent: the 4 of cargo's
+/// right-aligned verb plus the kept blank put `0.08s` at column 5 (a fixed
+/// indent of 5 would read the same in that one line: an estimate). An
+/// indent past half the row is dropped (estimate) so a row keeps room.
+/// One column per char, a tab included (estimate: the output seen had none).
+pub fn wrap_hanging(text: &str, cols: usize) -> Vec<String> {
+    let cols = cols.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= cols {
+        return vec![text.to_string()];
+    }
+    let blank = |c: char| c == ' ' || c == '\t';
+    let lead = chars.iter().take_while(|c| blank(**c)).count();
+    let indent = if lead * 2 > cols { 0 } else { lead };
+    let mut rows = Vec::new();
+    let mut start = 0;
+    let mut width = cols;
+    loop {
+        let row = |end: usize| -> String {
+            let pad = if start == 0 { 0 } else { indent };
+            std::iter::repeat_n(' ', pad)
+                .chain(chars[start..end].iter().copied())
+                .collect()
+        };
+        if chars.len() - start <= width {
+            rows.push(row(chars.len()));
+            return rows;
+        }
+        let limit = start + width;
+        // The first row's own indent is no place to break.
+        let from = if start == 0 { lead.max(1) } else { start + 1 };
+        let at = if blank(chars[limit]) {
+            limit
+        } else {
+            match (from..limit).rev().find(|&i| blank(chars[i])) {
+                Some(b) => b + 1,
+                None => limit,
+            }
+        };
+        rows.push(row(at));
+        start = at;
+        width = cols - indent;
+    }
+}
+
+/// The columns of `width` px at `advance` px a column, half a pixel of
+/// slack for layout's snapping to device pixels; `None` before the first
+/// layout.
+fn wrap_cols(width: f32, advance: f32) -> Option<usize> {
+    (width > 0. && advance > 0.).then(|| (((width + 0.5) / advance).floor() as usize).max(1))
+}
+
 impl Render for RunView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if Skin::current(cx) == Skin::Tui {
@@ -351,6 +420,33 @@ impl Render for RunView {
                     .on_click(cx.listener(|this, _, _, cx| this.restart(None, cx)))
                     .child(icon("expui/run/rerun", m.icon_size, theme.icon_primary)),
             );
+        // The wrap width: the body inside its padding, in the mono font's
+        // columns (batch 13: 512 px on a 528 island, 65 columns of 7.8).
+        let advance = {
+            let text = cx.text_system();
+            let id = text.resolve_font(&gpui::font(theme.mono_font.clone()));
+            text.advance(id, px(font_size), 'W')
+                .map(|s| f32::from(s.width))
+                .unwrap_or(font_size * 0.6)
+        };
+        let cols = wrap_cols(self.width.get() - 2. * m.run_tool_pad_x, advance);
+        let measure = {
+            let width = self.width.clone();
+            gpui::canvas(
+                move |bounds, window, _| {
+                    let w = f32::from(bounds.size.width);
+                    if (width.get() - w).abs() > 0.01 {
+                        width.set(w);
+                        skin::redraw(window);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
         let mut body: Vec<gpui::AnyElement> = Vec::new();
         let mut after_command = false;
         for (ix, row) in rows.into_iter().enumerate() {
@@ -373,14 +469,26 @@ impl Render for RunView {
                 );
             }
             after_command = command;
-            body.push(
+            let color = Self::row_color(row.kind, &theme);
+            // Each row cut at the body's right padding.
+            let line = |text: SharedString| {
                 div()
                     .flex_shrink_0()
-                    .text_color(Self::row_color(row.kind, &theme))
+                    .w_full()
+                    .overflow_hidden()
+                    .text_color(color)
                     .whitespace_nowrap()
-                    .child(row.text)
-                    .into_any_element(),
-            );
+                    .child(text)
+                    .into_any_element()
+            };
+            match cols.filter(|_| !command) {
+                Some(cols) => body.extend(
+                    wrap_hanging(&row.text, cols)
+                        .into_iter()
+                        .map(|r| line(r.into())),
+                ),
+                None => body.push(line(row.text)),
+            }
         }
         div()
             .id("run-tool")
@@ -392,6 +500,7 @@ impl Render for RunView {
             .font_family(theme.mono_font.clone())
             .text_size(px(font_size))
             .line_height(px(line_height))
+            .child(measure)
             .child(
                 div()
                     .id("run-output")
@@ -486,6 +595,23 @@ impl RunView {
             .child(gap())
             .child(stop);
         // The output in whole rows under the command line and the rule.
+        // Output wrapped on the grid's columns with the hanging indent, as
+        // the Fleet skin wraps it; command lines cut at the frame.
+        let rows_all: Vec<Row> = rows_all
+            .into_iter()
+            .flat_map(|row| {
+                if row.kind == RunLineKind::Command || cols == 0 {
+                    return vec![row];
+                }
+                wrap_hanging(&row.text, cols)
+                    .into_iter()
+                    .map(|text| Row {
+                        kind: row.kind,
+                        text: text.into(),
+                    })
+                    .collect()
+            })
+            .collect();
         let visible = self.tui_grid.get().1.saturating_sub(2);
         let total = rows_all.len();
         self.tui_scroll.top = self.tui_scroll.top.min(total.saturating_sub(visible));
@@ -496,6 +622,7 @@ impl RunView {
                 div()
                     .h(px(cell.h))
                     .flex_shrink_0()
+                    .overflow_hidden()
                     .text_color(Self::row_color(row.kind, &theme))
                     .whitespace_nowrap()
                     .child(row.text)
@@ -544,5 +671,75 @@ impl RunView {
             ))
             .child(output)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Batch 13's line on Fleet's 65-column body: the row ends at `in`, the
+    /// blank that crossed the limit starts the next row after cargo's
+    /// 4-blank indent, so `0.08s` sits at column 5.
+    #[test]
+    fn cargos_finished_line_wraps_as_fleet_wrapped_it() {
+        let line = "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s";
+        let rows = wrap_hanging(line, 65);
+        assert_eq!(
+            rows,
+            vec![
+                "    Finished `dev` profile [unoptimized + debuginfo] target(s) in".to_string(),
+                "     0.08s".to_string(),
+            ]
+        );
+        assert_eq!(rows[1].find('0'), Some(5));
+        // Wide enough: one row, untouched.
+        assert_eq!(wrap_hanging(line, 71), vec![line.to_string()]);
+    }
+
+    #[test]
+    fn rows_break_after_the_last_blank_and_keep_the_indent() {
+        // No indent: the next row starts at column 0.
+        assert_eq!(
+            wrap_hanging("alpha beta gamma delta", 12),
+            vec!["alpha beta ", "gamma delta"]
+        );
+        // Continuation rows are `cols - indent` wide after the indent.
+        let rows = wrap_hanging("  aa bb cc dd ee ff", 8);
+        assert_eq!(rows, vec!["  aa bb ", "  cc dd ", "  ee ff"]);
+        assert!(rows.iter().all(|r| r.chars().count() <= 8));
+        // A blank right at the limit starts the next row.
+        assert_eq!(wrap_hanging("abcd efgh", 4), vec!["abcd", " efg", "h"]);
+    }
+
+    #[test]
+    fn a_word_longer_than_the_row_is_cut_at_the_limit() {
+        assert_eq!(
+            wrap_hanging("0123456789abcdef", 6),
+            vec!["012345", "6789ab", "cdef"]
+        );
+        // The first row's own indent is no place to break.
+        assert_eq!(
+            wrap_hanging("  0123456789", 6),
+            vec!["  0123", "  4567", "  89"]
+        );
+    }
+
+    #[test]
+    fn an_indent_past_half_the_row_is_dropped() {
+        assert_eq!(wrap_hanging("      abc def", 8), vec!["      ab", "c def"]);
+        // One column: one char a row, never an empty one.
+        assert_eq!(wrap_hanging("ab c", 1), vec!["a", "b", " ", "c"]);
+        assert_eq!(wrap_hanging("", 10), vec![String::new()]);
+    }
+
+    #[test]
+    fn the_wrap_width_in_columns() {
+        // Batch 13: 512 px of body at 7.8 a column.
+        assert_eq!(wrap_cols(512., 7.8), Some(65));
+        // Half a pixel short of a column still counts it.
+        assert_eq!(wrap_cols(7.8 * 10. - 0.4, 7.8), Some(10));
+        assert_eq!(wrap_cols(0., 7.8), None);
+        assert_eq!(wrap_cols(-16., 7.8), None);
     }
 }

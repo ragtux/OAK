@@ -354,9 +354,13 @@ pub mod metrics {
     pub const RUN_TOOL_BUTTON_TOP: f32 = 9.67;
     pub const RUN_TOOL_BUTTON_RIGHT: f32 = 16.;
     /// M8 (batch 13): a later command line (a debug session's adapter after
-    /// its build) 54 under the last output row (its ink at 660 after the
-    /// build's last row's at 584).
-    pub const RUN_TOOL_BLOCK_GAP: f32 = 54.;
+    /// its build) 55 under the last output row. Twenty-first pass, by
+    /// baselines (debug-fleet-stopped, 2x): the wrapped build row's at 594
+    /// (`.` of `0.08s`), the adapter line's at 671 (its `L`), the rows 22
+    /// apart (572 to 594); WEEP's 54 drew 76 between baselines. The 54 came
+    /// from ink tops, where the line's `/` rises 1.5 above its capitals.
+    /// The wrap and its indent: `run_tool::wrap_hanging`.
+    pub const RUN_TOOL_BLOCK_GAP: f32 = 55.;
     /// The failed badge on a run tab's icon (batch 13: a 7 px
     /// `icon.background.red` disc with a dark "!", flush with the icon's
     /// bottom right) and, while it runs, a 5 px `icon.background.green` dot
@@ -887,6 +891,26 @@ pub mod metrics {
     pub const CONSOLE_INPUT_HEIGHT: f32 = 100.;
     pub const CONSOLE_PROMPT_X: f32 = 7.75;
     pub const CONSOLE_PROMPT_CENTRE: f32 = 16.75;
+    /// M8 (D): an evaluation's block in the Debugger Console (batch 13,
+    /// debug-fleet-console-evaluated, 2x px, the island 752-1808): a 1 px
+    /// `separator.default` rule across the island (1194-1196), then the input
+    /// on a 34 px band of `background.secondary` (1196-1264) with corners
+    /// rounded 4 (the ramp over 4 device rows; an estimate within a pixel),
+    /// its chevron where the field's is (ink 779-788), the code 27.75 in (the
+    /// mono cells from 807.5); under it 20 px rows in the UI font, the first
+    /// 2 under the band (the result's baseline at 1298), the second ("3ms
+    /// rerun", baseline 1339) cut to 18 so the block ends at 1344; "rerun"
+    /// 9 from the island's right (ink to 1789) and 9 after the time (inks
+    /// 1707 to 1727, less the bearings).
+    pub const CONSOLE_BLOCK_RULE: f32 = 1.;
+    pub const CONSOLE_BLOCK_INPUT: f32 = 34.;
+    pub const CONSOLE_BLOCK_RADIUS: f32 = 4.;
+    pub const CONSOLE_BLOCK_CODE_X: f32 = 27.75;
+    pub const CONSOLE_BLOCK_RESULT_TOP: f32 = 2.;
+    pub const CONSOLE_BLOCK_ROW: f32 = 20.;
+    pub const CONSOLE_BLOCK_META: f32 = 18.;
+    pub const CONSOLE_BLOCK_META_RIGHT: f32 = 9.;
+    pub const CONSOLE_BLOCK_META_GAP: f32 = 9.;
     // M8: the floating debug panel and quick evaluate (`debug_panel.rs`,
     // `editor/debug.rs`). The panel is batch 13's (debug-fleet-stopped and
     // -floating-panel-hover, 2x shots): its box 1336-1784 x 154-210 px on
@@ -1425,6 +1449,15 @@ scaled_metrics!(
     console_input_height = CONSOLE_INPUT_HEIGHT,
     console_prompt_x = CONSOLE_PROMPT_X,
     console_prompt_centre = CONSOLE_PROMPT_CENTRE,
+    console_block_rule = CONSOLE_BLOCK_RULE,
+    console_block_input = CONSOLE_BLOCK_INPUT,
+    console_block_radius = CONSOLE_BLOCK_RADIUS,
+    console_block_code_x = CONSOLE_BLOCK_CODE_X,
+    console_block_result_top = CONSOLE_BLOCK_RESULT_TOP,
+    console_block_row = CONSOLE_BLOCK_ROW,
+    console_block_meta = CONSOLE_BLOCK_META,
+    console_block_meta_right = CONSOLE_BLOCK_META_RIGHT,
+    console_block_meta_gap = CONSOLE_BLOCK_META_GAP,
     // M8: the floating debug panel and quick evaluate.
     debug_panel_top = DEBUG_PANEL_TOP,
     debug_panel_right = DEBUG_PANEL_RIGHT,

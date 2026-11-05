@@ -254,7 +254,9 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 - A tab per run in the panel's top edge (` ▶ name ` running in `text_positive`, ` ■ name ` when
   done; the exit code set into the bottom edge). Row 1: the command line in `text_secondary`,
   then a rule, then the output on the grid (stderr in the terminal's ANSI red);
-  `[ ▶ Rerun ] [ ■ Stop ]` right-aligned on row 1.
+  `[ ▶ Rerun ] [ ■ Stop ]` right-aligned on row 1. A long output line wraps at the grid's
+  columns with Fleet's hanging indent (`run_tool::wrap_hanging`: the line's own leading blanks
+  start each further row); command lines are cut at the frame, as Fleet cuts them.
 - A debug session's tab (M8) is the same tool: row 1 the build's command line, the output its
   build's text, the adapter's command line (`text_secondary`) and the debuggee's output; the
   state in the rule (`running`, `exit 0`, `stopped`, `failed`); Rerun restarts the session.
@@ -298,7 +300,9 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   of the rows under Processes: a thread row `▾ 1: tid=3212558 "main"` (`▸` folded), its frames
   two cells further in as names only, the selected frame filled; the debuggee's state (running,
   exited, failed) as a dim row while not stopped. `── Variables ── [ Add Watch ]`: the watches
-  (`○`) and the scopes, `▸ ▾` chevrons, two cells a level, `name = {type} value`. Each list
+  (`○`) and the scopes, `▸ ▾` chevrons, two cells a level, a variable as `name: {type} value`
+  and a watch as `expr = {type} value` (Fleet's text; the type in `text_secondary`, the scopes
+  named by the adapter: lldb-dap's Locals, Globals, Registers). Each list
   scrolls on its own, its bar on the island's right frame line; the selected row is filled
   in `list_bg_focused` in the section with the keyboard (Tab moves it), `list_bg_selected`
   elsewhere.
@@ -306,8 +310,15 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   right end, then a row per breakpoint ` ● debuggee.rs:7 misc` (the folder in
   `text_secondary`; `○` disabled, `●` in `breakpoint_unverified` when unbound) with its own
   `[x]` at the right.
-- Debugger Console: the lines on the grid, a rule, and the field as the last row (`› expression▏`
-  while focused).
+- Debugger Console: the lines on the grid (first `Console is in 'commands' mode, prefix
+  expressions with '?'.`, a blank row, `Launching: <program>`), each typed line a block as in
+  Fleet's: a `─` rule in `separator` before it (and after it, before plain lines), the input
+  row `› ?total * 2` on `background_secondary` with the chevron in `text_tertiary` and the
+  input in Rust's highlighting on the grid's font, the answer two cells in (`{int} 28`, the
+  type in `text_secondary`; a command's output a row per line, `error:` lines in
+  `text_dangerous`), then `3ms  rerun` ending one cell from the right edge (the time in
+  `text_tertiary`, `rerun` in `link`, a click sending the input again as a new block); then a
+  rule, and the field as the last row (`› expression▏` while focused).
 
 ## Checking it
 

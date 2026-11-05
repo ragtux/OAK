@@ -234,22 +234,20 @@ impl Workspace {
                     s.frames.get(s.current_frame).cloned()
                 };
                 let first = self.debug.stopped_once.insert(session.entity_id());
-                if let Some(path) = frame.as_ref().and_then(|f| f.path.clone()) {
-                    if path.is_file() {
-                        let frame = frame.as_ref().expect("checked");
-                        self.open_path(path, false, cx);
-                        if let Some(editor) = self.active_editor().cloned() {
-                            // Estimate (batch 13, one shot): Fleet's caret at
-                            // the stopped line's first column (6:1), not the
-                            // frame's.
-                            let line = frame.line;
-                            editor.update(cx, |e, cx| e.goto(line, 0, cx));
-                        }
+                if let Some(frame) = frame {
+                    if let Some(path) = frame.path.filter(|p| p.is_file()) {
+                        self.show_stopped_line(path, frame.line, cx);
                     }
                 }
-                // Batch 13: on the first stop the Debug tool's tab is the
-                // focused one; otherwise the focus stays where it was (the
-                // editor unfocused under its wash; estimates from one shot).
+                // Batch 13 (twenty-first pass, measured): on the first stop
+                // the Debug tool's tab is the focused one (`Debug` in
+                // `tab.*.selectedFocused`, as WEEP's); the editor is not (its
+                // tab grey, the stopped line's wash over an unfocused current
+                // line). Inside the tool Fleet's keyboard is in Variables
+                // (`Local` in `listItem.background.focused`, the frame row in
+                // `.selected`): the tool's part, debug_tool.rs. Later stops
+                // leave the focus where it was (estimate: the steps were
+                // pressed in the editor and Fleet's focus stayed there).
                 if let Some((side, ix)) = self.reveal_debug_tool(cx) {
                     if first {
                         self.focus_tool_tab_later(side, ix, cx);
@@ -269,6 +267,36 @@ impl Workspace {
                 cx.notify();
             }
         }
+    }
+
+    /// A stop's file at its line, without the focus: an open tab is made
+    /// the active one where it is, and the Files tree keeps its selection
+    /// (batch 13: Fleet's tree kept `run.json`, the file debugged from, as
+    /// `debuggee.rs` came up; it followed once the editor was clicked). A
+    /// file not open yet opens in a tab of its own in the active split, as
+    /// any opened file (estimate: no shot had the stop in a closed file).
+    /// The caret goes to the line's first column (batch 13: Fleet's status
+    /// bar 6:1 where the frame's column is 5).
+    fn show_stopped_line(&mut self, path: PathBuf, line: usize, cx: &mut Context<Self>) {
+        match self.find_tab(&path, cx) {
+            Some((p, ix)) => {
+                self.active_pane = p;
+                self.panes[p].active = Some(ix);
+                self.panes[p].tabs[ix].preview = false;
+                self.panes[p].scroll.scroll_to_item(ix);
+                self.touch_recent(&path);
+            }
+            // A big file asks first: no editor of it yet, no caret to move.
+            None => self.open_path(path.clone(), false, cx),
+        }
+        let editor = self
+            .active_editor()
+            .filter(|e| e.read(cx).path(cx).as_deref() == Some(path.as_path()))
+            .cloned();
+        if let Some(editor) = editor {
+            editor.update(cx, |e, cx| e.goto(line, 0, cx));
+        }
+        cx.notify();
     }
 
     /// Shows the Debug tool without taking the focus: in the panel holding

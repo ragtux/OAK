@@ -661,6 +661,48 @@ fn rust_expressions_through_lldb() {
     s.terminated();
 }
 
+/// The Debugger Console's "commands" mode: a line is an LLDB command (even
+/// one lldb-dap's `auto` mode would evaluate as an expression), its output
+/// the answer; a mistyped command answers LLDB's error as output.
+#[test]
+fn console_commands_through_lldb() {
+    let Some(adapter) = adapter() else { return };
+    let Some((_dir, source, program)) = build_rust_from(RUST_EVAL_SOURCE) else {
+        return;
+    };
+    let mut s = Session::start(
+        &adapter,
+        launch(&program, &[]),
+        vec![(source.clone(), vec![line(RUST_EVAL_LINE)])],
+    );
+    let (reason, thread) = s.stopped();
+    assert_eq!(reason, "breakpoint");
+    let frame = s.top_frame(thread);
+    let mut command = |line: &str| {
+        let id = s.client.command(line, Some(frame.id));
+        let answer = s.response(id).map(|r| match r {
+            Response::Evaluate {
+                result, type_name, ..
+            } => (result, type_name),
+            other => panic!("{other:?}"),
+        });
+        eprintln!("{line}: {answer:?}");
+        answer
+    };
+    let (out, type_name) = command("frame variable total").unwrap();
+    assert_eq!(out.trim_end(), "(int) total = 14");
+    assert_eq!(type_name, None);
+    let (out, _) = command("p total * 2").unwrap();
+    assert!(out.trim_end().ends_with("28"), "{out}");
+    // In `auto` mode this would be the expression `total`.
+    let (out, _) = command("total").unwrap();
+    assert!(out.contains("not a valid command"), "{out}");
+    let (out, _) = command("bt 1").unwrap();
+    assert!(out.contains("frame #0"), "{out}");
+    s.client.stop();
+    s.terminated();
+}
+
 #[test]
 fn a_launch_that_fails_says_why_and_ends() {
     let Some(adapter) = adapter() else { return };

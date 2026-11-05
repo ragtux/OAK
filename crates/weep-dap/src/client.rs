@@ -23,6 +23,10 @@ use std::process::{Child, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 
+/// lldb-dap's default `commandEscapePrefix`: a `repl` evaluation starting
+/// with it is an LLDB command ([`Client::command`]).
+pub const COMMAND_ESCAPE: &str = "`";
+
 #[cfg(windows)]
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -618,6 +622,31 @@ impl Client {
             expression: expression.to_string(),
             frame_id,
             context,
+            retried: false,
+        };
+        self.request("evaluate", args, Pending::Evaluate(request))
+    }
+
+    /// Runs `command` as an LLDB command line in the frame, answered by
+    /// [`Response::Evaluate`] whose `result` is the command's output as
+    /// LLDB prints it (errors included: "error: 'x' is not a valid
+    /// command.", a successful answer) and no type.
+    ///
+    /// lldb-dap decides per `repl` evaluation whether the text is a command
+    /// or an expression (`--repl-mode`: `variable`, `command` or the default
+    /// `auto`, which takes a first word LLDB knows that is no variable of the
+    /// frame as a command, so `p total` runs and `total * 2` evaluates);
+    /// a text starting with the launch's `commandEscapePrefix` (a backtick
+    /// unless set) is always a command, the prefix taken off. So the
+    /// command goes behind that prefix: Fleet's "commands" mode, whatever
+    /// the adapter's own mode (Xcode's lldb-dap, LLDB 2103).
+    pub fn command(&mut self, command: &str, frame_id: Option<i64>) -> RequestId {
+        let line = format!("{COMMAND_ESCAPE}{}", command.trim());
+        let args = protocol::evaluate_arguments(&line, frame_id, EvalContext::Repl);
+        let request = EvalRequest {
+            expression: line,
+            frame_id,
+            context: EvalContext::Repl,
             retried: false,
         };
         self.request("evaluate", args, Pending::Evaluate(request))

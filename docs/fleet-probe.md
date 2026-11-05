@@ -1087,9 +1087,9 @@ Still different:
 | a variable's row | `name: {type} value` (a colon; watches keep `expr = {type} value`) | `name = {type} value` for both |
 | scope names | Local, Static, Global, Registers (codelldb's) | Locals, Globals, Registers (lldb-dap's) |
 | Debugger Console | "Console is in 'commands' mode, prefix expressions with '?'." then "Launching: <program>"; an evaluation is a block: the input highlighted as code after a `›`, the result `{long long} 28` dimmed under it, "3ms" and a "rerun" link at the block's right, a rule between blocks | lldb-dap's init commands echoed (`(lldb) command script import …`), `> total * 2` then LLDB's `(int) $2 = 28`, no blocks |
-| focus on a stop | the frame row grey (the Debug tool not focused) | blue: WEEP focuses the Debug tool on the first stop |
-| thread label at the first stop | `1: tid=N "main"` | `1: tid=N` until the name arrives (it shows later) |
-| run tab | output wrapped with a hanging indent; the adapter's line further down | not wrapped |
+| focus on a stop | the Debug tool focused (its tab in `tab.*.selectedFocused`) with the keyboard in Variables: `Local` in `listItem.background.focused`, the frame row only `.selected`; the editor unfocused, the tree still on run.json | the Debug tool focused but on Threads & Frames (corrected after this pass: Variables first, the tree no longer follows the stop) |
+| thread label at the first stop | `1: tid=N "main"` | `1: tid=N`: lldb-dap's first `threads` answer of a session says `Thread 1`, every later one `main` (checked against the adapter); WEEP now asks once more at the first stop |
+| run tab | output wrapped at 65 columns (the island less 8 padding a side), the continuation at the line's own indent (`0.08s` at column 5); command lines cut, not wrapped; 22 pitch (not 23: measured on flat-bottomed glyphs); the next command 22 + 55 below the last output row (the old 54 came from `/`'s top) | not wrapped and not clipped at the right padding (corrected after this pass) |
 | quick evaluate | unprobed: the scene's click before Go to Line fell in Fleet's right panel (now (640, 300)) | a popup under the expression: `points = size=2 alloc::vec::Vec<…>`, Add to Watches |
 
 ## What the shots showed

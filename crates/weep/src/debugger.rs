@@ -124,12 +124,88 @@ pub enum ConsoleKind {
     Stderr,
     /// The adapter's own messages.
     Console,
-    /// An expression the user typed.
-    Input,
-    /// An expression's value.
-    Result,
-    /// An expression that failed, or a session error.
+    /// A line typed into the console: its block, by its index in
+    /// [`DebugSession::evaluations`] (the line's text is the input).
+    Evaluation(usize),
+    /// A session error.
     Error,
+}
+
+/// The Debugger Console's first line (batch 13: Fleet's console is in LLDB's
+/// "commands" mode; a blank line, then the launch line, follow it).
+pub const CONSOLE_MODE_LINE: &str = "Console is in 'commands' mode, prefix expressions with '?'.";
+
+/// What a line typed into the Debugger Console is (Fleet's "commands" mode,
+/// batch 13): an LLDB command, or after a leading `?` an expression.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConsoleInput {
+    Command(String),
+    Expression(String),
+}
+
+impl ConsoleInput {
+    /// The line typed, trimmed; `None` for a blank line or a bare `?`.
+    pub fn classify(line: &str) -> Option<ConsoleInput> {
+        let line = line.trim();
+        match line.strip_prefix('?') {
+            Some(expression) => {
+                let expression = expression.trim();
+                (!expression.is_empty()).then(|| ConsoleInput::Expression(expression.into()))
+            }
+            None => (!line.is_empty()).then(|| ConsoleInput::Command(line.into())),
+        }
+    }
+}
+
+/// An evaluation's answer, as its block shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EvalAnswer {
+    /// An expression's value, `{type} value` (the watch context's answer:
+    /// the bare value with its type).
+    Value {
+        type_name: Option<String>,
+        value: String,
+    },
+    /// A command's output as LLDB printed it (its own errors included).
+    Output(String),
+    /// The request failed.
+    Error(String),
+}
+
+/// One line typed into the Debugger Console and its answer: Fleet's block
+/// (the input, the answer under it, the time it took, "rerun").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Evaluation {
+    /// As typed (trimmed), the `?` kept: what the block shows and rerun sends.
+    pub input: String,
+    pub command: bool,
+    pub started: std::time::Instant,
+    /// Set with the answer.
+    pub elapsed: Option<std::time::Duration>,
+    pub answer: Option<EvalAnswer>,
+}
+
+/// The time an evaluation took, as its block prints it (batch 13: "3ms";
+/// estimate: seconds with a decimal from one second on).
+pub fn elapsed_text(elapsed: std::time::Duration) -> String {
+    let ms = elapsed.as_millis();
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.1}s", elapsed.as_secs_f64())
+    }
+}
+
+/// Whether an adapter console line is lldb-dap's echo of the commands WEEP
+/// gave the launch (`Running initCommands:`, then `(lldb) command script
+/// import …` per command): Fleet's console shows none of its own set-up.
+/// Their output (an error a command printed) stays.
+pub fn is_init_echo(line: &str) -> bool {
+    let line = line.trim_end();
+    line.starts_with("(lldb) ")
+        || line
+            .strip_prefix("Running ")
+            .is_some_and(|rest| rest.ends_with("Commands:") && !rest.contains(' '))
 }
 
 /// A watch expression and its value in the selected frame.
@@ -164,8 +240,8 @@ enum Pending {
         expression: String,
         frame_id: Option<i64>,
     },
-    /// A line typed into the Debugger Console.
-    Console(String),
+    /// A line typed into the Debugger Console, by its evaluation's index.
+    Console(usize),
     /// [`DebugSession::evaluate`]'s, answered through its task.
     Eval(String),
     /// resume, pause, a step: named for an error line.
@@ -309,6 +385,8 @@ pub struct DebugSession {
     pub expanded: HashSet<i64>,
     pub watches: Vec<Watch>,
     pub console: Vec<ConsoleLine>,
+    /// The lines typed into the console, in order ([`ConsoleKind::Evaluation`]).
+    pub evaluations: Vec<Evaluation>,
     /// The session's run tab: command lines, the build's and the
     /// debuggee's output.
     pub output: Vec<RunLine>,
@@ -345,6 +423,12 @@ pub struct DebugSession {
     output_partial: [String; 2],
     /// A stop whose frames have not arrived: their arrival is the Stopped event.
     reveal: bool,
+    /// The adapter answered `threads` once. lldb-dap's first answer is the
+    /// list it took at launch, before the debuggee named its threads
+    /// (`Thread 1` where every later answer says `main`, checked against
+    /// lldb-dap from Xcode on macOS): the first answer asks again, so the
+    /// first stop shows the name as Fleet does (batch 13).
+    threads_answered: bool,
     /// [`DebugSession::finish`] ran: later events change nothing.
     ended: bool,
     /// A `cargo` row's build, before the adapter starts.
@@ -385,6 +469,7 @@ impl DebugSession {
             expanded: HashSet::new(),
             watches: Vec::new(),
             console: Vec::new(),
+            evaluations: Vec::new(),
             output: Vec::new(),
             attached: false,
             client: None,
@@ -401,6 +486,7 @@ impl DebugSession {
             partial: Vec::new(),
             output_partial: [String::new(), String::new()],
             reveal: false,
+            threads_answered: false,
             ended: false,
             build: None,
             origin: None,
@@ -454,6 +540,8 @@ impl DebugSession {
             self.origin = Some(Origin::Start(adapter.clone(), start.clone()));
         }
         self.push_output(RunLineKind::Command, adapter_line(adapter));
+        // M8 console: the Debugger Console's first lines.
+        self.console_intro(&start);
         self.attached = matches!(start, Start::Attach { .. });
         self.follow_breakpoints(cx);
         let store = BreakpointStore::global(cx);
@@ -872,6 +960,9 @@ impl DebugSession {
                 };
                 let lines = split_output(partial, &text);
                 for line in lines {
+                    if kind == ConsoleKind::Console && is_init_echo(&line) {
+                        continue;
+                    }
                     self.push_line(kind, line);
                 }
                 Effects::default()
@@ -982,7 +1073,7 @@ impl DebugSession {
                             }
                         }
                     }
-                    Pending::Console(_) => self.push_line(ConsoleKind::Error, message),
+                    Pending::Console(ix) => self.answer(ix, EvalAnswer::Error(message)),
                     Pending::Command(name) => {
                         self.push_line(ConsoleKind::Error, format!("{name}: {message}"))
                     }
@@ -1035,6 +1126,10 @@ impl DebugSession {
                         self.current_thread = Some(t.id);
                         effects.asks.push(Ask::StackTrace(t.id));
                     }
+                }
+                // lldb-dap's first answer predates the threads' names.
+                if !std::mem::replace(&mut self.threads_answered, true) && self.state.is_stopped() {
+                    effects.asks.push(Ask::Threads);
                 }
                 effects
             }
@@ -1097,8 +1192,22 @@ impl DebugSession {
                 }
                 Effects::default()
             }
-            (Pending::Console(_), Response::Evaluate { result, .. }) => {
-                self.push_line(ConsoleKind::Result, result);
+            (
+                Pending::Console(ix),
+                Response::Evaluate {
+                    result, type_name, ..
+                },
+            ) => {
+                let command = self.evaluations.get(ix).is_some_and(|e| e.command);
+                let answer = if command {
+                    EvalAnswer::Output(result)
+                } else {
+                    EvalAnswer::Value {
+                        type_name: type_name.filter(|t| !t.is_empty()),
+                        value: result,
+                    }
+                };
+                self.answer(ix, answer);
                 Effects::default()
             }
             _ => Effects::default(),
@@ -1329,6 +1438,7 @@ impl DebugSession {
             w.value = None;
         }
         self.console.clear();
+        self.evaluations.clear();
         self.output.clear();
         self.pending.clear();
         for (_, tx) in self.evals.drain() {
@@ -1343,6 +1453,7 @@ impl DebugSession {
         self.partial.clear();
         self.output_partial = [String::new(), String::new()];
         self.reveal = false;
+        self.threads_answered = false;
         self.ended = false;
         self.restart_pending = false;
         self._pump = None;
@@ -1465,29 +1576,81 @@ impl DebugSession {
         })
     }
 
-    /// The Debugger Console's input: echoes the line, then its value.
-    pub fn evaluate_in_console(&mut self, expression: String, cx: &mut Context<Self>) {
-        let expression = expression.trim().to_string();
-        if expression.is_empty() {
-            return;
+    /// The Debugger Console's input (Fleet's "commands" mode, batch 13): a
+    /// line is an LLDB command ([`weep_dap::Client::command`]), a line after
+    /// a leading `?` an expression evaluated as a watch (the bare value with
+    /// its type). Each becomes a block, answered in place.
+    pub fn evaluate_in_console(&mut self, line: String, cx: &mut Context<Self>) {
+        self.send_console_line(&line);
+        cx.emit(DebugSessionEvent::Changed);
+        cx.notify();
+    }
+
+    /// The block's "rerun": its input again, as a new block.
+    pub fn rerun_evaluation(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(input) = self.evaluations.get(ix).map(|e| e.input.clone()) {
+            self.evaluate_in_console(input, cx);
         }
-        self.push_line(ConsoleKind::Input, expression.clone());
+    }
+
+    /// [`DebugSession::evaluate_in_console`] without gpui: the block, then
+    /// the request (or the error when no adapter runs).
+    fn send_console_line(&mut self, line: &str) -> Option<usize> {
+        let input = ConsoleInput::classify(line)?;
+        let ix = self.evaluations.len();
+        self.evaluations.push(Evaluation {
+            input: line.trim().to_string(),
+            command: matches!(input, ConsoleInput::Command(_)),
+            started: std::time::Instant::now(),
+            elapsed: None,
+            answer: None,
+        });
+        self.push_line(ConsoleKind::Evaluation(ix), line.trim().to_string());
         let frame_id = self.frame_id();
         let live = !self.state.is_over();
         match self.client.as_mut().filter(|_| live) {
             Some(client) => {
-                let id = client.evaluate(&expression, frame_id, EvalContext::Repl);
-                self.pending.insert(id, Pending::Console(expression));
+                let id = match &input {
+                    ConsoleInput::Command(command) => client.command(command, frame_id),
+                    ConsoleInput::Expression(e) => client.evaluate(e, frame_id, EvalContext::Watch),
+                };
+                self.pending.insert(id, Pending::Console(ix));
             }
             // estimate: Fleet's wording unknown.
-            None => self.push_line(
-                ConsoleKind::Error,
-                "The debug session is not running".into(),
+            None => self.answer(
+                ix,
+                EvalAnswer::Error("The debug session is not running".into()),
             ),
         }
-        cx.emit(DebugSessionEvent::Changed);
-        cx.notify();
+        Some(ix)
     }
+
+    /// An evaluation's answer arrived: it and the time it took.
+    fn answer(&mut self, ix: usize, answer: EvalAnswer) {
+        if let Some(e) = self.evaluations.get_mut(ix) {
+            e.elapsed = Some(e.started.elapsed());
+            e.answer = Some(answer);
+        }
+    }
+
+    /// The console's first lines (batch 13, debug-fleet-console): the mode
+    /// line, a blank line, then "Launching: <program>" for a launch
+    /// (estimate: an attach gets the mode line alone).
+    fn console_intro(&mut self, start: &Start) {
+        for line in intro_lines(start) {
+            self.push_line(ConsoleKind::Console, line);
+        }
+    }
+}
+
+/// [`DebugSession::console_intro`]'s lines.
+fn intro_lines(start: &Start) -> Vec<String> {
+    let mut lines = vec![CONSOLE_MODE_LINE.to_string()];
+    if let Start::Launch(launch) = start {
+        lines.push(String::new());
+        lines.push(format!("Launching: {}", launch.program.display()));
+    }
+    lines
 }
 
 /// An `evaluate` answer as the variable the views show.
@@ -1796,7 +1959,9 @@ mod tests {
                 name: "main".into(),
             }])),
         );
-        assert!(e.asks.is_empty());
+        // The session's first answer asks once more (lldb-dap names the
+        // threads from its second answer on).
+        assert_eq!(e.asks, vec![Ask::Threads]);
         let e = s.on_response(
             Pending::StackTrace(5),
             Ok(Response::StackTrace {
@@ -1903,8 +2068,54 @@ mod tests {
                 },
             ])),
         );
-        assert_eq!(e.asks, vec![Ask::StackTrace(2)]);
+        assert_eq!(e.asks, vec![Ask::StackTrace(2), Ask::Threads]);
         assert_eq!(s.current_thread, Some(2));
+    }
+
+    /// lldb-dap's first `threads` answer is the list it took at launch:
+    /// `Thread 1` where the next answer says `main` (checked against the
+    /// real adapter). The session asks again once, so the first stop shows
+    /// the name; later stops and later answers ask nothing more.
+    #[test]
+    fn the_first_threads_answer_is_asked_again_for_the_names() {
+        let thread = |name: &str| {
+            Ok(Response::Threads(vec![Thread {
+                id: 7,
+                name: name.into(),
+            }]))
+        };
+        let mut s = DebugSession::new("x".into());
+        running(&mut s);
+        let e = s.on_event(stopped(Some(7)));
+        assert_eq!(e.asks, vec![Ask::Threads, Ask::StackTrace(7)]);
+        let e = s.on_response(Pending::Threads, thread("Thread 1"));
+        assert_eq!(e.asks, vec![Ask::Threads]);
+        let e = s.on_response(
+            Pending::StackTrace(7),
+            Ok(Response::StackTrace {
+                thread_id: 7,
+                frames: vec![frame(70, 5)],
+            }),
+        );
+        assert!(e.stopped);
+        let e = s.on_response(Pending::Threads, thread("main"));
+        assert!(e.asks.is_empty());
+        assert_eq!(s.threads[0].name, "main");
+        // The next stop asks once, as before.
+        s.on_event(Event::Continued {
+            thread_id: Some(7),
+            all_threads: true,
+        });
+        let e = s.on_event(stopped(Some(7)));
+        assert_eq!(e.asks, vec![Ask::Threads, Ask::StackTrace(7)]);
+        let e = s.on_response(Pending::Threads, thread("main"));
+        assert!(e.asks.is_empty());
+        // A restart's new adapter starts the count over.
+        s.reset();
+        running(&mut s);
+        s.on_event(stopped(Some(7)));
+        let e = s.on_response(Pending::Threads, thread("Thread 1"));
+        assert_eq!(e.asks, vec![Ask::Threads]);
     }
 
     #[test]
@@ -2001,17 +2212,132 @@ mod tests {
     }
 
     #[test]
+    fn console_input_is_a_command_unless_it_starts_with_a_question_mark() {
+        use ConsoleInput::{Command, Expression};
+        assert_eq!(
+            ConsoleInput::classify(" bt 2 "),
+            Some(Command("bt 2".into()))
+        );
+        assert_eq!(
+            ConsoleInput::classify("total"),
+            Some(Command("total".into()))
+        );
+        assert_eq!(
+            ConsoleInput::classify("?total * 2"),
+            Some(Expression("total * 2".into()))
+        );
+        assert_eq!(
+            ConsoleInput::classify(" ? a.b "),
+            Some(Expression("a.b".into()))
+        );
+        assert_eq!(ConsoleInput::classify("? "), None);
+        assert_eq!(ConsoleInput::classify(""), None);
+    }
+
+    #[test]
+    fn the_console_hides_the_launch_commands_echo() {
+        assert!(is_init_echo("Running initCommands:"));
+        assert!(is_init_echo("Running preRunCommands:"));
+        assert!(is_init_echo(
+            "(lldb) command script import \"/x/lib/rustlib/etc/lldb_lookup.py\""
+        ));
+        assert!(is_init_echo(
+            "(lldb) settings append target.source-map /rustc/abc \"/x\""
+        ));
+        assert!(!is_init_echo(
+            "error: Error reading commands from file lldb_commands - file not found."
+        ));
+        assert!(!is_init_echo("Running the program:"));
+        assert!(!is_init_echo(
+            "Process 9 exited with status = 0 (0x00000000)"
+        ));
+        let mut s = DebugSession::new("x".into());
+        s.on_event(Event::Output {
+            category: OutputCategory::Console,
+            text: "Running initCommands:\n(lldb) command script import \"/a.py\"\n".into(),
+        });
+        s.on_event(Event::Output {
+            category: OutputCategory::Console,
+            text: "error: it failed\n".into(),
+        });
+        let texts: Vec<_> = s.console.iter().map(|l| l.text.to_string()).collect();
+        assert_eq!(texts, vec!["error: it failed"]);
+    }
+
+    #[test]
+    fn the_console_starts_with_the_mode_and_the_program() {
+        let launch = Start::Launch(weep_dap::LaunchRequest {
+            program: PathBuf::from("/w/target/debug/debuggee"),
+            args: Vec::new(),
+            cwd: PathBuf::from("/w"),
+            env: Vec::new(),
+            stop_on_entry: false,
+        });
+        assert_eq!(
+            intro_lines(&launch),
+            vec![
+                CONSOLE_MODE_LINE.to_string(),
+                String::new(),
+                "Launching: /w/target/debug/debuggee".into()
+            ]
+        );
+        assert_eq!(
+            CONSOLE_MODE_LINE,
+            "Console is in 'commands' mode, prefix expressions with '?'."
+        );
+        assert_eq!(elapsed_text(std::time::Duration::from_micros(3400)), "3ms");
+        assert_eq!(elapsed_text(std::time::Duration::from_millis(1250)), "1.2s");
+    }
+
+    #[test]
     fn console_answers_and_errors() {
         let mut s = DebugSession::new("x".into());
+        // No adapter: each line is a block answered with the error at once.
+        assert_eq!(s.send_console_line("  "), None);
+        assert_eq!(s.send_console_line("?"), None);
+        assert_eq!(s.send_console_line("?total * 2 "), Some(0));
+        assert_eq!(s.send_console_line("frame variable"), Some(1));
+        assert_eq!(s.send_console_line("?x"), Some(2));
+        let e = &s.evaluations[0];
+        assert_eq!((e.input.as_str(), e.command), ("?total * 2", false));
+        assert!(e.elapsed.is_some());
+        assert!(matches!(e.answer, Some(EvalAnswer::Error(_))));
+        assert!(s.evaluations[1].command);
+        // The answers, by the block they belong to: an expression's value
+        // with its type, a command's output, a failure.
+        s.evaluations[0].answer = None;
         s.on_response(
-            Pending::Console("a".into()),
+            Pending::Console(0),
             Ok(Response::Evaluate {
-                result: "1".into(),
+                result: "28".into(),
+                type_name: Some("int".into()),
+                variables_reference: 0,
+            }),
+        );
+        s.on_response(
+            Pending::Console(1),
+            Ok(Response::Evaluate {
+                result: "(int) total = 14\n".into(),
                 type_name: None,
                 variables_reference: 0,
             }),
         );
-        s.on_response(Pending::Console("b".into()), Err("no b".into()));
+        s.on_response(Pending::Console(2), Err("no x".into()));
+        assert_eq!(
+            s.evaluations[0].answer,
+            Some(EvalAnswer::Value {
+                type_name: Some("int".into()),
+                value: "28".into()
+            })
+        );
+        assert_eq!(
+            s.evaluations[1].answer,
+            Some(EvalAnswer::Output("(int) total = 14\n".into()))
+        );
+        assert_eq!(
+            s.evaluations[2].answer,
+            Some(EvalAnswer::Error("no x".into()))
+        );
         s.on_event(Event::Error("adapter said\nthings".into()));
         let kinds: Vec<_> = s
             .console
@@ -2021,8 +2347,9 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                (ConsoleKind::Result, "1".into()),
-                (ConsoleKind::Error, "no b".into()),
+                (ConsoleKind::Evaluation(0), "?total * 2".into()),
+                (ConsoleKind::Evaluation(1), "frame variable".into()),
+                (ConsoleKind::Evaluation(2), "?x".into()),
                 (ConsoleKind::Error, "adapter said".into()),
                 (ConsoleKind::Error, "things".into()),
             ]
