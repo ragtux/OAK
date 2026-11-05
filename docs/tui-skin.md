@@ -97,6 +97,12 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   line status (1 cell), fold (1 cell: `▾` open on hover or at a fold head, `▸` folded, always
   shown when folded), then 1 cell of space before the text. Current line number in
   `line_number_current`.
+- **Breakpoints and the execution point (M8):** the first cell holds, by precedence, the
+  execution arrow (`▶` in `execution_point` for the top frame, `▷` in `execution_point_caller`
+  for a caller frame), a breakpoint (`●` in `breakpoint`, `○` disabled, `●` in
+  `breakpoint_unverified` when the session could not bind it), the run icon, the hint. A click
+  on that cell toggles the line's breakpoint. The execution point's line fills its whole row of
+  cells with `debug_current_frame` (half strength for a caller frame).
 - **Line status (git):** in its cell, a bar a third of a cell wide at the cell's left for added
   (`git_added_bg`) and modified lines, and a `▁`-like wedge at the row's bottom edge for deleted
   lines; hover widens it to the full cell, and the status popup is a box.
@@ -257,6 +263,19 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 ### Drag and drop
 - The dragged tab or file is a one-row box following the pointer, snapped to cells; the drop
   target's frame turns `drag_border_highlight`; a split target fills its half in `drag_bg`.
+
+### Floating debug panel, quick evaluate, attach to process (M8)
+- The floating debug panel: a three-row box at the top centre of the active editor, `⋮` (the
+  drag handle, dragged by whole cells) then ` ▶ ` resume (` ‖ ` pause while running) ` ↪ ` step
+  over ` ↧ ` step into ` ↥ ` step out ` ■ ` stop, each three cells, filled on hover; resume in
+  `text_positive`, stop in `text_dangerous`, the disabled ones in `text_disabled`.
+- Quick evaluate (and the value on hover): a box on the row under the expression (above it
+  without room): a row per value, `▸`/`▾` and `name = value` indented two cells a level, the
+  type right-aligned in `text_tertiary`; under a rule `[ Add to Watches ]`; ` ↵ expand  esc
+  close ` in the bottom edge while it has the keyboard (its frame then `border_focused`).
+- Attach to process: a Goto box, ` Attach to Process ` in the top edge and the count at its
+  end, `› query` on row 1, a rule, then ` name  dim/command line  pid` rows; ` ↵ attach  esc
+  close ` in the bottom edge.
 
 ## Checking it
 

@@ -6382,6 +6382,7 @@ dependencies = [
  "serde",
  "serde_json",
  "trash",
+ "weep-dap",
  "weep-git",
  "weep-keymap",
  "weep-lsp",
@@ -6392,6 +6393,15 @@ dependencies = [
  "weep-terminal",
  "weep-text",
  "weep-theme",
+]
+
+[[package]]
+name = "weep-dap"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -22,6 +22,7 @@ weep-git.workspace = true
 weep-terminal.workspace = true
 weep-run.workspace = true
 weep-lsp.workspace = true
+weep-dap.workspace = true
 futures.workspace = true
 trash.workspace = true
 anyhow.workspace = true

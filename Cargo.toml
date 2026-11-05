@@ -12,6 +12,7 @@ members = [
     "crates/weep-terminal",
     "crates/weep-run",
     "crates/weep-lsp",
+    "crates/weep-dap",
 ]
 
 [workspace.package]
@@ -32,6 +33,7 @@ weep-git = { path = "crates/weep-git" }
 weep-terminal = { path = "crates/weep-terminal" }
 weep-run = { path = "crates/weep-run" }
 weep-lsp = { path = "crates/weep-lsp" }
+weep-dap = { path = "crates/weep-dap" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

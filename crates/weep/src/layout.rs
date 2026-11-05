@@ -4,6 +4,10 @@
 //! kept per workspace root in `~/.config/weep/layout.json` (Fleet keeps the
 //! same in its local storage). The roots in the file, by when they were last
 //! opened, are the recent workspaces.
+//!
+//! The workspace's breakpoints (M8) live in the same entry under
+//! `breakpoints`, written on their own ([`Layout::save_breakpoints`]) and
+//! kept when the rest of the entry is saved.
 
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -29,6 +33,65 @@ pub struct Layout {
     /// Smart Mode (M7): on unless the lightning button turned it off for
     /// this workspace (Fleet keeps the choice per workspace too).
     pub smart_mode: bool,
+}
+
+/// A breakpoint as `layout.json` keeps it (M8): the file relative to the
+/// workspace root, the 0-based line, and what the user set on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedBreakpoint {
+    pub path: PathBuf,
+    pub line: usize,
+    pub enabled: bool,
+    pub condition: Option<String>,
+    pub log_message: Option<String>,
+}
+
+/// The entry's `breakpoints` array.
+fn breakpoints_to_json(list: &[SavedBreakpoint]) -> Value {
+    Value::Array(
+        list.iter()
+            .map(|b| {
+                let mut o = Map::new();
+                // Forward slashes, so a workspace on a shared disk reads the
+                // same on every platform.
+                let path = b
+                    .path
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                o.insert("path".into(), Value::String(path));
+                o.insert("line".into(), json!(b.line));
+                o.insert("enabled".into(), Value::Bool(b.enabled));
+                if let Some(c) = &b.condition {
+                    o.insert("condition".into(), Value::String(c.clone()));
+                }
+                if let Some(l) = &b.log_message {
+                    o.insert("logMessage".into(), Value::String(l.clone()));
+                }
+                Value::Object(o)
+            })
+            .collect(),
+    )
+}
+
+fn breakpoints_from_json(value: Option<&Value>) -> Vec<SavedBreakpoint> {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let text = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).map(str::to_string);
+    items
+        .iter()
+        .filter_map(|v| {
+            Some(SavedBreakpoint {
+                path: PathBuf::from(v.get("path")?.as_str()?),
+                line: v.get("line")?.as_u64()? as usize,
+                enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+                condition: text(v, "condition"),
+                log_message: text(v, "logMessage"),
+            })
+        })
+        .collect()
 }
 
 fn now_secs() -> u64 {
@@ -139,30 +202,66 @@ impl Layout {
     pub fn save(&self, root: &Path) {
         let Some(path) = Self::file() else { return };
         let mut all = Self::read_all();
+        let entry = self.entry_json(all.get(&root.display().to_string()));
+        all.insert(root.display().to_string(), entry);
+        Self::write_all(&path, all);
+    }
+
+    /// The workspace's entry, keeping what `previous` holds that this
+    /// struct does not (the breakpoints, M8).
+    fn entry_json(&self, previous: Option<&Value>) -> Value {
         let panel = |p: PanelLayout| json!({"open": p.open, "size": p.size});
         let recent: Vec<Value> = self
             .recent
             .iter()
             .map(|p| Value::String(p.display().to_string()))
             .collect();
-        all.insert(
-            root.display().to_string(),
-            json!({
-                "left": panel(self.left),
-                "bottom": panel(self.bottom),
-                "right": panel(self.right),
-                "recent": recent,
-                "gotoPreviewHidden": self.goto_preview_hidden,
-                "recentRuns": self.recent_runs,
-                "smartMode": self.smart_mode,
-                "opened": now_secs(),
-            }),
-        );
+        let mut entry = json!({
+            "left": panel(self.left),
+            "bottom": panel(self.bottom),
+            "right": panel(self.right),
+            "recent": recent,
+            "gotoPreviewHidden": self.goto_preview_hidden,
+            "recentRuns": self.recent_runs,
+            "smartMode": self.smart_mode,
+            "opened": now_secs(),
+        });
+        if let Some(b) = previous.and_then(|p| p.get("breakpoints")) {
+            entry["breakpoints"] = b.clone();
+        }
+        entry
+    }
+
+    /// The breakpoints `layout.json` holds for `root` (M8).
+    pub fn load_breakpoints(root: &Path) -> Vec<SavedBreakpoint> {
+        let all = Self::read_all();
+        breakpoints_from_json(
+            all.get(&root.display().to_string())
+                .and_then(|e| e.get("breakpoints")),
+        )
+    }
+
+    /// Writes `root`'s breakpoints, leaving the rest of its entry (a root
+    /// the file did not know gets a fresh layout beside them).
+    pub fn save_breakpoints(root: &Path, list: &[SavedBreakpoint]) {
+        let Some(path) = Self::file() else { return };
+        let mut all = Self::read_all();
+        let key = root.display().to_string();
+        let mut entry = match all.remove(&key) {
+            Some(Value::Object(m)) => Value::Object(m),
+            _ => Layout::fresh().entry_json(None),
+        };
+        entry["breakpoints"] = breakpoints_to_json(list);
+        all.insert(key, entry);
+        Self::write_all(&path, all);
+    }
+
+    fn write_all(path: &Path, all: Map<String, Value>) {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Ok(text) = serde_json::to_string_pretty(&Value::Object(all)) {
-            if let Err(e) = std::fs::write(&path, text + "\n") {
+            if let Err(e) = std::fs::write(path, text + "\n") {
                 eprintln!("weep: cannot save {}: {e}", path.display());
             }
         }
@@ -182,5 +281,60 @@ impl Layout {
             .collect();
         roots.sort_by_key(|a| std::cmp::Reverse(a.0));
         roots.into_iter().map(|(_, p)| p).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved() -> Vec<SavedBreakpoint> {
+        vec![
+            SavedBreakpoint {
+                path: PathBuf::from("src").join("main.rs"),
+                line: 0,
+                enabled: true,
+                condition: None,
+                log_message: None,
+            },
+            SavedBreakpoint {
+                path: PathBuf::from("Cargo.toml"),
+                line: 41,
+                enabled: false,
+                condition: Some("i > 3".into()),
+                log_message: Some("i = {i}".into()),
+            },
+        ]
+    }
+
+    #[test]
+    fn breakpoints_round_trip() {
+        let json = breakpoints_to_json(&saved());
+        assert_eq!(json[0]["path"], "src/main.rs");
+        assert_eq!(json[1]["logMessage"], "i = {i}");
+        assert!(json[0].get("condition").is_none());
+        let text = serde_json::to_string(&json).unwrap();
+        let back: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(breakpoints_from_json(Some(&back)), saved());
+    }
+
+    #[test]
+    fn unreadable_breakpoints_are_skipped() {
+        let json = json!([{"path": "a.rs"}, {"line": 2}, {"path": "b.rs", "line": 2}]);
+        let back = breakpoints_from_json(Some(&json));
+        assert_eq!(back.len(), 1);
+        assert!(back[0].enabled);
+        assert!(breakpoints_from_json(None).is_empty());
+    }
+
+    #[test]
+    fn saving_the_layout_keeps_the_breakpoints() {
+        let previous = json!({"left": {}, "breakpoints": breakpoints_to_json(&saved())});
+        let entry = Layout::fresh().entry_json(Some(&previous));
+        assert_eq!(breakpoints_from_json(entry.get("breakpoints")), saved());
+        assert!(Layout::fresh()
+            .entry_json(None)
+            .get("breakpoints")
+            .is_none());
     }
 }

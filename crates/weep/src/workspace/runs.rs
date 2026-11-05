@@ -3,7 +3,8 @@
 //! (the configuration at the caret in run.json, else the last run),
 //! `run/rerun`, `stop-run-configurations` and `run/stop`, the gutter's run
 //! icons, "Edit Run Configurations..." and `run/delete-configuration`; one
-//! run tool tab per started configuration in the bottom panel.
+//! run tool tab per started configuration in the bottom panel. The popup's
+//! Debug button and Shift+Enter hand a row to `debug.rs` (M8).
 
 use super::*;
 use crate::menu::MenuEntry;
@@ -36,7 +37,10 @@ impl Workspace {
         RunFile::parse(&text).map(|f| f.configurations)
     }
 
-    fn run_configurations_or_notify(&mut self, cx: &mut Context<Self>) -> Vec<RunConfig> {
+    pub(super) fn run_configurations_or_notify(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Vec<RunConfig> {
         match self.run_configurations(cx) {
             Ok(configs) => configs,
             Err(e) => {
@@ -63,7 +67,7 @@ impl Workspace {
             .collect()
     }
 
-    fn remember_run(&mut self, name: &str) {
+    pub(super) fn remember_run(&mut self, name: &str) {
         self.recent_runs.retain(|n| n != name);
         self.recent_runs.insert(0, name.to_string());
         self.recent_runs.truncate(20);
@@ -224,6 +228,10 @@ impl Workspace {
                 self.close_run_popup(cx);
                 self.run_configuration_at(*ix, cx);
             }
+            RunPopupEvent::Debug(ix) => {
+                self.close_run_popup(cx);
+                self.debug_configuration_at(*ix, cx);
+            }
             RunPopupEvent::Command(text) => {
                 self.close_run_popup(cx);
                 let command = Command::shell(text, &self.root);
@@ -350,28 +358,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let run_path = self.run_file_path();
-        let in_run_file = self
-            .active_editor()
-            .map(|e| e.read(cx).path(cx) == Some(run_path.clone()))
-            .unwrap_or(false);
-        if in_run_file {
-            let row = self
-                .active_editor()
-                .map(|e| {
-                    e.update(cx, |e, cx| {
-                        let head = e.cursor.selection.head;
-                        e.document.read(cx).buffer.offset_to_point(head).row
-                    })
-                })
-                .unwrap_or(0);
+        if let Some(ix) = self.run_configuration_at_caret(cx) {
             let configs = self.run_configurations_or_notify(cx);
-            let at = configs
-                .iter()
-                .rposition(|c| c.line.is_some_and(|l| l <= row))
-                .or(if configs.is_empty() { None } else { Some(0) });
-            if let Some(ix) = at {
-                let config = configs[ix].clone();
+            if let Some(config) = configs.get(ix).cloned() {
                 self.run_config(&config, cx);
                 return;
             }
@@ -384,6 +373,27 @@ impl Workspace {
             }
         }
         self.open_run_popup(window, cx);
+    }
+
+    /// With run.json in the active editor, the configuration the caret is
+    /// in (the last one starting at or above its row; the first when the
+    /// caret is above them all). `run/run-in-context` and
+    /// `debug/debug-in-context` share it.
+    pub(super) fn run_configuration_at_caret(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let run_path = self.run_file_path();
+        let editor = self.active_editor()?.clone();
+        if editor.read(cx).path(cx) != Some(run_path) {
+            return None;
+        }
+        let row = editor.update(cx, |e, cx| {
+            let head = e.cursor.selection.head;
+            e.document.read(cx).buffer.offset_to_point(head).row
+        });
+        let configs = self.run_configurations_or_notify(cx);
+        configs
+            .iter()
+            .rposition(|c| c.line.is_some_and(|l| l <= row))
+            .or(if configs.is_empty() { None } else { Some(0) })
     }
 
     /// `run/rerun` (Ctrl+Alt+R): the shown run tab's command again in the

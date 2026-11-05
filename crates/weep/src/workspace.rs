@@ -12,6 +12,7 @@ use crate::file_tree::{FileTree, FileTreeEvent};
 use crate::find::{FindBar, FindBarEvent};
 use crate::layout::{Layout, PanelLayout};
 use crate::popup::{Prompt, PromptEvent, PromptKind};
+mod debug;
 mod runs;
 mod smart;
 mod terminals;
@@ -693,6 +694,12 @@ pub struct Workspace {
     /// Smart Mode (M7): the language servers, the navigation history, the
     /// usages popup.
     smart: smart::SmartMode,
+    /// M8: the debug sessions this workspace started, the last one debugged.
+    debug: debug::DebugState,
+    /// M8: the Debug, Breakpoints and Debugger Console tools' views.
+    debug_views: crate::debug_tool::DebugViews,
+    /// M8 (agent E): the floating debug panel, quick evaluate, the attach dialog.
+    debug_panel: Entity<crate::debug_panel::DebugPanel>,
     /// This workspace's window, for deferred focus changes.
     window: AnyWindowHandle,
     focus_handle: FocusHandle,
@@ -764,6 +771,28 @@ impl Workspace {
         let repo = weep_git::Repo::discover(&root);
         let git_tool = cx.new(|cx| GitTool::new(repo.clone(), cx));
         let history_tool = cx.new(|cx| HistoryTool::new(repo.clone(), cx));
+        // M8: the debugger tools' views; their file opens and menus land here.
+        let debug_views = crate::debug_tool::DebugViews::new(root.clone(), window, cx);
+        cx.subscribe_in(&debug_views.debug, window, Self::on_debug_view_event)
+            .detach();
+        cx.subscribe_in(&debug_views.breakpoints, window, Self::on_debug_view_event)
+            .detach();
+        {
+            let weak = cx.weak_entity();
+            debug_views.breakpoints.update(cx, |tool, _| {
+                tool.line_source = Some(Rc::new(move |path: &Path, line: usize, cx: &App| {
+                    let this = weak.upgrade()?;
+                    let doc = this
+                        .read(cx)
+                        .documents
+                        .iter()
+                        .find(|d| d.read(cx).path.as_deref() == Some(path))?
+                        .clone();
+                    let buffer = &doc.read(cx).buffer;
+                    (line < buffer.line_count()).then(|| buffer.line(line))
+                }));
+            });
+        }
         let mut this = Workspace {
             branch: git_branch(&root).map(Into::into),
             repo,
@@ -804,12 +833,17 @@ impl Workspace {
             run_popup: None,
             recent_runs: layout.recent_runs.clone(),
             smart: smart::SmartMode::new(layout.smart_mode),
+            debug: debug::DebugState::default(),
+            debug_views,
+            debug_panel: cx.new(crate::debug_panel::DebugPanel::new), // M8 (agent E)
             window: window.window_handle(),
             focus_handle: cx.focus_handle(),
             last_title: String::new(),
             tui_area: Rc::new(Cell::new(Bounds::default())),
         };
         this.init_workbench(window, cx);
+        // M8: the workspace's breakpoints, loaded from and saved to layout.json.
+        crate::breakpoints::persist(this.root.clone(), cx);
         // `launchTerminalOnOpen`: a shell in the bottom panel, the editor keeping the focus.
         if Self::settings(cx).launch_terminal_on_open() {
             this.new_terminal(None, false, window, cx);
@@ -1629,6 +1663,36 @@ impl Workspace {
             tree.select_path(&to);
         });
         cx.notify();
+    }
+
+    /// M8: a debugger tool opens a frame's or a breakpoint's line, or shows
+    /// a menu (the variables' right click, the thread chooser).
+    fn on_debug_view_event<V>(
+        &mut self,
+        _: &Entity<V>,
+        event: &crate::debug_tool::DebugViewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            crate::debug_tool::DebugViewEvent::Open { path, line, focus } => {
+                let focused = window.focused(cx);
+                self.open_path(path.clone(), false, cx);
+                if let Some(editor) = self.active_editor().cloned() {
+                    editor.update(cx, |e, cx| e.goto(*line, 0, cx));
+                }
+                if *focus {
+                    self.focus_active_editor(cx);
+                } else if let Some(handle) = focused {
+                    handle.focus(window, cx);
+                }
+            }
+            crate::debug_tool::DebugViewEvent::Menu { position, entries } => {
+                let entries = std::mem::take(&mut *entries.borrow_mut());
+                let focus = window.focused(cx);
+                self.open_menu(entries, *position, focus, cx);
+            }
+        }
     }
 
     fn goto_line(&mut self, _: &GotoLine, window: &mut Window, cx: &mut Context<Self>) {
@@ -3110,6 +3174,10 @@ impl Workspace {
                     Some(view) => view.clone().into_any_element(),
                     None => div().size_full().into_any_element(),
                 },
+                // M8: the debugger tools.
+                Tool::Debug => self.debug_views.debug.clone().into_any_element(),
+                Tool::Breakpoints => self.debug_views.breakpoints.clone().into_any_element(),
+                Tool::DebuggerConsole => self.debug_views.console.clone().into_any_element(),
                 other => div()
                     .size_full()
                     .flex()
@@ -3317,6 +3385,10 @@ impl Workspace {
             Some(Tool::Run) => tab
                 .and_then(|t| self.run_view(t.instance))
                 .map(|v| v.read(cx).tui_bars()),
+            // M8: the debugger tools' lists.
+            Some(Tool::Debug) => Some(self.debug_views.debug.read(cx).tui_bars()),
+            Some(Tool::Breakpoints) => Some(self.debug_views.breakpoints.read(cx).tui_bars()),
+            Some(Tool::DebuggerConsole) => Some(self.debug_views.console.read(cx).tui_bars()),
             _ => None,
         };
         let edges = crate::skin::Edges {
@@ -4267,6 +4339,7 @@ impl Render for Workspace {
                 unread_notifications: self.notifications.read(cx).unread(),
                 smart,
                 smart_card_open,
+                debug: self.debug_indicator(cx),
             },
             &theme,
             &m,
@@ -4343,6 +4416,23 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::stop_run_configurations))
             .on_action(cx.listener(Self::run_stop))
             .on_action(cx.listener(Self::run_edit_configurations))
+            // M8: the debug sessions and the debugger tools.
+            .on_action(cx.listener(Self::debug_in_context))
+            .on_action(cx.listener(Self::debug_resume))
+            .on_action(cx.listener(Self::debug_pause))
+            .on_action(cx.listener(Self::debug_step_over))
+            .on_action(cx.listener(Self::debug_step_into))
+            .on_action(cx.listener(Self::debug_force_step_into))
+            .on_action(cx.listener(Self::debug_step_out))
+            .on_action(cx.listener(Self::debug_stop))
+            .on_action(cx.listener(Self::debugger_attach_to_process))
+            .on_action(cx.listener(Self::debug_quick_evaluate))
+            .on_action(cx.listener(Self::debug_jump_to_tool))
+            .on_action(cx.listener(Self::debug_new_tool))
+            .on_action(cx.listener(Self::debug_breakpoints_jump_to_tool))
+            .on_action(cx.listener(Self::new_breakpoints_tool))
+            .on_action(cx.listener(Self::debug_console_jump_to_tool))
+            .on_action(cx.listener(Self::debug_console_new_tool))
             .on_action(cx.listener(Self::diff_two_files))
             .on_action(cx.listener(Self::diff_with_clipboard))
             .on_action(cx.listener(Self::unsplit))
@@ -4438,6 +4528,12 @@ impl Render for Workspace {
             .text_color(theme.text_primary)
             .child(toolbar)
             .child(content)
+            // M8 (agent E): the floating debug panel and its popups, over the window.
+            .child(crate::debug_panel::DebugPanel::over(
+                &self.debug_panel,
+                self.active_editor(),
+                cx,
+            ))
             // The tui skin's status bar is a row of its grid (`render_tui_area`).
             .when(!tui && Self::settings(cx).editor_show_status_bar(), |d| {
                 d.child(self.render_status_bar(&theme, &m, None, cx))

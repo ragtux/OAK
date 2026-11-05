@@ -282,6 +282,13 @@ impl Settings {
         self.bool("editor.showCodeVision").unwrap_or(true)
     }
 
+    // M8: the floating debug panel.
+    /// `editor.showFloatingDebugPanel`: the Settings page's "Show floating
+    /// debug toolbar" (Run and Debug), off by default.
+    pub fn editor_show_floating_debug_panel(&self) -> bool {
+        self.bool("editor.showFloatingDebugPanel").unwrap_or(false)
+    }
+
     // ---- the keys M1 reads ---------------------------------------------------
 
     /// `theme`: "Color theme to use for the whole Fleet application", by name.
@@ -792,6 +799,13 @@ impl Settings {
     /// `editor.renderRunInGutter`: "Show run icons in the gutter". True.
     pub fn editor_render_run_in_gutter(&self) -> bool {
         self.bool("editor.renderRunInGutter").unwrap_or(true)
+    }
+
+    // M8: breakpoints in the gutter.
+    /// `editor.showBreakpoints`: "Show breakpoints in the gutter". True
+    /// (estimate: the documentation gives no default; Fleet shows them).
+    pub fn editor_show_breakpoints(&self) -> bool {
+        self.bool("editor.showBreakpoints").unwrap_or(true)
     }
 
     /// `ff.runIconsAfterLineNumbers`: "Display run icon right after line

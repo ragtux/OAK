@@ -5,6 +5,14 @@
 //! and a "..." on the selected row, and "Edit Run Configurations..." under
 //! a separator. Enter runs the selected row, or the typed text as a shell
 //! command when it matches no configuration.
+//!
+//! M8: Fleet lists a configuration once and offers Run and Debug on it
+//! (batch 5 caught a row with both buttons; batch 11's `command` rows had
+//! Run only). The selected row of a type WEEP debugs through a build
+//! (`cargo`) carries a "Debug" button after "Run" (estimate: the order and
+//! its width, the Run button's); Shift+Enter debugs the selected row of
+//! any type WEEP can debug (`cargo`, `command`; estimate: the gesture is
+//! unprobed).
 
 use crate::actions::{PopupConfirm, PopupDown, PopupUp, RunDeleteConfiguration};
 use crate::assets::icon;
@@ -23,6 +31,8 @@ use weep_run::RunConfig;
 pub enum RunPopupEvent {
     /// Run configuration `index` (into the list the popup was given).
     Run(usize),
+    /// Debug configuration `index` (M8).
+    Debug(usize),
     /// Run the typed text through the shell.
     Command(String),
     /// Open `.fleet/run.json`, at a configuration's line when given.
@@ -66,6 +76,18 @@ impl Focusable for RunPopup {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.input.read(_cx).focus_handle(_cx)
     }
+}
+
+/// Whether WEEP can debug a configuration type (M8): a `cargo` row through
+/// its build, a `command` row's program directly.
+pub fn debuggable(kind: &str) -> bool {
+    matches!(kind, "cargo" | "command")
+}
+
+/// Whether the selected row shows the "Debug" button (estimate: rows Fleet
+/// debugs, `cargo` here; batch 11 saw `command` rows with Run alone).
+fn debug_button(kind: &str) -> bool {
+    kind == "cargo"
 }
 
 /// The tab's and the row's icon for a configuration type (estimates: Fleet
@@ -125,7 +147,8 @@ impl RunPopup {
     fn on_input(&mut self, _: Entity<TextInput>, event: &InputEvent, cx: &mut Context<Self>) {
         match event {
             InputEvent::Changed => self.refilter(cx),
-            InputEvent::Submit { .. } => self.confirm_selected(cx),
+            InputEvent::Submit { shift: false } => self.confirm_selected(cx),
+            InputEvent::Submit { shift: true } => self.debug_selected(cx),
             InputEvent::Cancel => cx.emit(RunPopupEvent::Cancel),
             _ => {}
         }
@@ -219,6 +242,15 @@ impl RunPopup {
         }
     }
 
+    /// Shift+Enter: the selected row under the debugger.
+    fn debug_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(ix) = self.selected_config() {
+            if debuggable(&self.configs[ix].kind) {
+                cx.emit(RunPopupEvent::Debug(ix));
+            }
+        }
+    }
+
     fn confirm_selected(&mut self, cx: &mut Context<Self>) {
         match self.rows.get(self.selected) {
             Some(Row::Recent(ix)) | Some(Row::Config(ix)) => cx.emit(RunPopupEvent::Run(*ix)),
@@ -271,8 +303,10 @@ impl RunPopup {
                     theme.list_text
                 };
                 let run_entity = entity.clone();
+                let debug_entity = entity.clone();
                 let more_entity = entity.clone();
                 let hover_entity = entity.clone();
+                let with_debug = debug_button(&c.kind);
                 div()
                     .h(px(m.goto_row_pitch))
                     .flex_shrink_0()
@@ -335,6 +369,31 @@ impl RunPopup {
                                             })
                                         }),
                                 )
+                                // M8: "Debug" after "Run", the same button
+                                // (estimate).
+                                .when(with_debug, |d| {
+                                    d.child(
+                                        div()
+                                            .id("run-row-debug")
+                                            .w(px(m.run_popup_button_width))
+                                            .h(px(m.run_popup_button_height))
+                                            .mr(px(m.run_popup_button_gap - m.popup_row_icon_gap))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(m.button_radius))
+                                            .bg(theme.button_secondary_bg)
+                                            .hover(|s| s.bg(theme.button_secondary_bg_hovered))
+                                            .text_color(theme.button_secondary_text)
+                                            .child("Debug")
+                                            .on_click(move |_, _, cx| {
+                                                cx.stop_propagation();
+                                                debug_entity.update(cx, |_, cx| {
+                                                    cx.emit(RunPopupEvent::Debug(config_ix))
+                                                })
+                                            }),
+                                    )
+                                })
                                 .child(
                                     div()
                                         .id("run-row-more")
@@ -587,7 +646,7 @@ impl RunPopup {
             rows - 1,
             2,
             cols.saturating_sub(4),
-            skin::hints(&[("↵", "run"), ("esc", "close")], &theme),
+            skin::hints(&[("↵", "run"), ("⇧↵", "debug"), ("esc", "close")], &theme),
             bg,
         ));
         for (row, t) in titles {
@@ -637,11 +696,13 @@ impl RunPopup {
             Row::Recent(config) | Row::Config(config) => {
                 let config_ix = *config;
                 let c = &self.configs[config_ix];
-                let mut row = TuiRow::text(skin::fit_text(&c.name, cols.saturating_sub(16)));
+                let mut row = TuiRow::text(skin::fit_text(&c.name, cols.saturating_sub(26)));
                 row.glyph = Some(Self::tui_glyph(&c.kind, theme));
                 row.italic = matches!(self.rows[ix], Row::Recent(_));
                 let run = entity.clone();
+                let debug = entity.clone();
                 let more = entity.clone();
+                let with_debug = debug_button(&c.kind);
                 tui_row(
                     gpui::ElementId::NamedInteger("run-row".into(), ix as u64),
                     row,
@@ -674,6 +735,19 @@ impl RunPopup {
                         ),
                     )
                     .child(div().w(cell.cols(1)).flex_shrink_0())
+                    .when(with_debug, |d| {
+                        d.child(
+                            skin::button("run-row-debug", "Debug", false, theme, cell).on_click(
+                                move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    debug.update(cx, |_, cx| {
+                                        cx.emit(RunPopupEvent::Debug(config_ix))
+                                    })
+                                },
+                            ),
+                        )
+                        .child(div().w(cell.cols(1)).flex_shrink_0())
+                    })
                     .child(
                         div()
                             .id("run-row-more")

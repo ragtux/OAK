@@ -803,6 +803,26 @@ pub mod metrics {
     /// The Files tree's keyboard-highlight rectangle (`files.keyboardNavigation`
     /// highlight): 1 px of `tree.focusBorder` (estimate).
     pub const TREE_HIGHLIGHT_BORDER: f32 = 1.;
+    // M8: the floating debug panel and quick evaluate (`debug_panel.rs`,
+    // `editor/debug.rs`). Batch 13 has not run: every value is an estimate.
+    /// The panel's top edge below the active editor's (estimate: the find
+    /// bar's own offset from the editor's top is of this order).
+    pub const DEBUG_PANEL_TOP: f32 = 8.;
+    /// Padding around the buttons (estimate).
+    pub const DEBUG_PANEL_PAD: f32 = 4.;
+    /// One icon button, square (estimate: a notch under the toolbar's 28,
+    /// as IntelliJ's floating toolbar is more compact than its main one).
+    pub const DEBUG_PANEL_BUTTON: f32 = 24.;
+    pub const DEBUG_PANEL_GAP: f32 = 2.;
+    /// The drag handle's width before the buttons (estimate).
+    pub const DEBUG_PANEL_HANDLE: f32 = 12.;
+    /// Quick evaluate: a row of the value tree, the indent per level and
+    /// the rows shown before it scrolls (estimates: the Goto row less its
+    /// pitch gap, the Files tree's indent).
+    pub const QUICK_EVAL_ROW: f32 = 22.;
+    pub const QUICK_EVAL_INDENT: f32 = 16.;
+    pub const QUICK_EVAL_MAX_ROWS: f32 = 12.;
+    pub const QUICK_EVAL_MIN_WIDTH: f32 = 240.;
 }
 
 macro_rules! scaled_metrics {
@@ -1269,6 +1289,16 @@ scaled_metrics!(
     notifications_pad_x = NOTIFICATIONS_PAD_X,
     notifications_empty_height = NOTIFICATIONS_EMPTY_HEIGHT,
     notifications_icon_gap = NOTIFICATIONS_ICON_GAP,
+    // M8: the floating debug panel and quick evaluate.
+    debug_panel_top = DEBUG_PANEL_TOP,
+    debug_panel_pad = DEBUG_PANEL_PAD,
+    debug_panel_button = DEBUG_PANEL_BUTTON,
+    debug_panel_gap = DEBUG_PANEL_GAP,
+    debug_panel_handle = DEBUG_PANEL_HANDLE,
+    quick_eval_row = QUICK_EVAL_ROW,
+    quick_eval_indent = QUICK_EVAL_INDENT,
+    quick_eval_max_rows = QUICK_EVAL_MAX_ROWS,
+    quick_eval_min_width = QUICK_EVAL_MIN_WIDTH,
 );
 
 impl Global for Metrics {}
@@ -1514,6 +1544,21 @@ pub struct Theme {
     /// (read off the `fold` scene's hover shot; no theme key names it, so
     /// `icon.background.red` with the opacity is an estimate).
     pub breakpoint_hint: Hsla,
+    /// M8: breakpoints and the execution point in the gutter.
+    /// A line breakpoint, filled (and a disabled one's ring): the hint's
+    /// `icon.background.red` at full strength (estimate: no theme key names
+    /// the breakpoint and no probe has shot one).
+    pub breakpoint: Hsla,
+    /// A breakpoint the running session could not bind: `icon.secondary`
+    /// (estimate: IntelliJ greys an unbound breakpoint).
+    pub breakpoint_unverified: Hsla,
+    /// `debug.currentFrame`: the execution point's line, its background.
+    pub debug_current_frame: Hsla,
+    /// The execution arrow over the breakpoint column: `icon.primary` for
+    /// the top frame, `icon.secondary` for a caller selected in the frames
+    /// list (estimate: no key names the arrow).
+    pub execution_point: Hsla,
+    pub execution_point_caller: Hsla,
     /// `settings.modified.indicator`: the Settings tool's bar beside a row
     /// whose value WEEP's file sets (the shot read `#BD8128`; no key gives
     /// that, so the named key stands in, an estimate).
@@ -1852,6 +1897,13 @@ impl Theme {
             shortcut_overlay_bg: to_hsla(Color::rgb(0xB8, 0xB9, 0xB9)),
             shortcut_overlay_text: to_hsla(Color::rgb(0x09, 0x09, 0x09)),
             breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.28),
+            // M8: breakpoints and the execution point.
+            breakpoint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)),
+            breakpoint_unverified: c("icon.secondary", Color::rgb(0x7A, 0x7F, 0x86)),
+            debug_current_frame: selection_attr("debug.currentFrame")
+                .unwrap_or_else(|| to_hsla(Color::rgb(0xD7, 0x32, 0x51).with_alpha(0x33))),
+            execution_point: c("icon.primary", text_primary),
+            execution_point_caller: c("icon.secondary", Color::rgb(0x7A, 0x7F, 0x86)),
             problems_success_bg: c(
                 "problemsWidget.tag.success.background",
                 Color::rgb(0x1F, 0x39, 0x2D),

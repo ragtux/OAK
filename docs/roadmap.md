@@ -541,12 +541,51 @@ languages, a `cargo check` run's diagnostics shown as they arrive (the
 server's `checkOnSave` runs; its progress shows in the lightning's tooltip),
 and Fleet's Smart Mode popup under the lightning (WEEP shows a menu).
 
-### M8 Debugger via DAP (L)
+### M8 Debugger via DAP (L; first pass built 2026-11-04, batch 13 written, not run)
 
-- `debug/*` actions (14 bound), breakpoints (`breakpoints/*` icons,
-  `editor.showBreakpoints`), Debug, Breakpoints and Debugger Console tools,
-  floating debug panel (`editor.showFloatingDebugPanel`),
-  `debugger/attach-to-process`.
+Built in one pass without Fleet, by five agents split by file ownership over
+a skeleton of shared types (`docs/fleet-probe.md`, nineteenth pass, lists
+every estimate). The `weep-dap` crate speaks the Debug Adapter Protocol to an
+adapter on its pipes (Content-Length framing on worker threads, the
+initialize / launch or attach / initialized / setBreakpoints /
+configurationDone handshake, requests queued until it is done, 0-based lines
+against the protocol's 1-based ones, Rust's pretty printers loaded from the
+toolchain), tested against the real lldb-dap (Xcode's on macOS; `PATH`, the
+versioned LLVM paths and `lldb-dap.exe` elsewhere, unverified). Line
+breakpoints live in one app-wide store (`breakpoints.rs`) keyed by path; the
+debug sessions in `debugger.rs`; `workspace/debug.rs` starts them from run
+configurations.
+
+- Done: breakpoints in the gutter (a click, `debug/toggle-breakpoint`,
+  `toggle-enabled-breakpoint`, `remove-breakpoint`, `editor.showBreakpoints`):
+  enabled, disabled and not-verified looks with tooltips, lines that follow
+  edits (a deleted line takes its breakpoint), kept per workspace in
+  `layout.json`; the execution point (`debug.currentFrame` and an arrow, top
+  frame and caller).
+- Done: sessions from `.fleet/run.json`: a `cargo` row is built with JSON
+  messages (its output in the Debugger Console) and its bin or test
+  executable launched (`weep_run::cargo`); a `command` row's program launched
+  directly; `debug/debug-in-context`; Debug in the Run & Debug popup (a
+  button on cargo rows, Shift+Enter); the toolbar's debugging state;
+  `debugger/attach-to-process` (the user's processes in a Goto-framed list).
+  On a stop: the threads, the stack, the first scope expanded, the watches
+  re-evaluated, the frame's file opened and the Debug tool shown.
+- Done: `resume`, `pause`, `step-over`, `step-into`, `force-step-into`
+  (lldb's step-into), `step-out`, `stop`; the Debug tool (frames, variables,
+  watches with `add-watch`, `edit-watch`, `delete-watch`), the Breakpoints
+  tool, the Debugger Console (output and an evaluate field); their
+  `jump-to-tool` and `new-tool` actions; the floating debug panel
+  (`editor.showFloatingDebugPanel`); `quick-evaluate-expression` and the
+  value on hover while stopped. Both skins.
+- Probes: batch 13 as the `debug` scene (written, not run on either editor).
+
+Left for later: conditions and log messages edited in the UI (the store and
+the protocol carry them), exception breakpoints (`breakpoints/exception-*`
+icons), `drop-frame`, `quick-evaluate-expression-with-click`, a Debug entry
+under the gutter's run icon (it has no menu), expanded variables kept across
+a stop, undo bringing back a deleted line's breakpoint, move-line carrying
+breakpoints, the frames of library code dimmed, `runInTerminal`, adapters
+for other languages, and `java.debugger.*`.
 
 ### Later or never
 

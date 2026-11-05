@@ -77,6 +77,19 @@ impl Workspace {
                     handle.focus(window, cx);
                 }
             }
+            // M8: the debugger tools take the keys themselves.
+            Tool::Debug => {
+                let handle = self.debug_views.debug.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
+            }
+            Tool::Breakpoints => {
+                let handle = self.debug_views.breakpoints.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
+            }
+            Tool::DebuggerConsole => {
+                let handle = self.debug_views.console.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
+            }
             _ => self.panel(side).focus_handle.focus(window, cx),
         }
     }
@@ -252,6 +265,10 @@ impl Workspace {
         }
         if tab.tool == Tool::Run {
             self.drop_run(tab.instance, cx);
+        }
+        // M8: the last Debug tab takes the ended debug sessions with it.
+        if tab.tool == Tool::Debug {
+            self.debug_tab_closed(cx);
         }
         if had_focus {
             if self.panel(side).tools.is_empty() {

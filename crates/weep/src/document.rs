@@ -10,7 +10,11 @@
 //! rows above declarations (`editor.showCodeVision`). All are kept with the
 //! buffer version they were computed for and moved through the edits made
 //! since.
+//!
+//! The file's breakpoints (M8) live in the app's `BreakpointStore`, not here;
+//! every edit moves them with their lines.
 
+use crate::breakpoints::{BreakpointStore, Tracked};
 use gpui::{Context, EventEmitter};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -243,6 +247,14 @@ impl Document {
 
     /// The file moved (`files/rename`): the language follows the new name.
     pub fn set_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        // M8: the breakpoints go with the file.
+        if let (Some(from), Some(to), Some(store)) = (
+            self.path.clone(),
+            path.clone(),
+            BreakpointStore::try_global(cx),
+        ) {
+            store.update(cx, |store, cx| store.rename_file(&from, &to, cx));
+        }
         self.language = path.as_deref().and_then(Language::from_path);
         self.editorconfig = path
             .as_deref()
@@ -297,11 +309,16 @@ impl Document {
         self.indent_source = Some(source);
     }
 
-    /// Runs an edit on the buffer and tells every view.
+    /// Runs an edit on the buffer and tells every view. The file's
+    /// breakpoints (M8) follow the edit's lines (`breakpoints::follow_edits`).
     pub fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Buffer)) {
         let before = self.buffer.version();
+        let breakpoints = Tracked::before_edit(self.path.as_deref(), &self.buffer, cx);
         f(&mut self.buffer);
         if self.buffer.version() != before {
+            if let Some(tracked) = breakpoints {
+                tracked.after_edit(&self.buffer, cx);
+            }
             cx.emit(DocumentEvent::Changed);
             cx.notify();
         }

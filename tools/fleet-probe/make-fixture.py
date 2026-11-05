@@ -15,6 +15,8 @@ What it writes, and which probe it serves:
     .hidden, .editorconfig,        dotfiles: the hidden-files toggle
     .fleet/run.json                Fleet's run configurations (M6): two `command` rows (one fails) and a `cargo` one
     misc/broken.json, misc/broken.rs  a syntax error each: the problems widget and the status badge (M6)
+    misc/debuggee.rs               a second binary to stop in under the debugger, with its `cargo`
+                                   row in run.json (M8, the `debug` scene)
     src/main.rs, data/config.json, data/settings.toml, README.md
                                    one file per supported grammar: syntax colours
     long/thousand.txt              1000 lines: scrollbar thumb, line-number gutter width
@@ -169,6 +171,11 @@ RUN_JSON = """{
       "type": "cargo",
       "name": "run fixture",
       "cargoArgs": ["run"]
+    },
+    {
+      "type": "cargo",
+      "name": "debug fixture",
+      "cargoArgs": ["run", "--bin", "debuggee"]
     }
   ]
 }
@@ -193,8 +200,35 @@ CARGO_TOML = """[package]
 name = "probe-fixture"
 version = "0.1.0"
 edition = "2021"
+default-run = "probe-fixture"
+
+[[bin]]
+name = "debuggee"
+path = "misc/debuggee.rs"
 
 [dependencies]
+"""
+
+# M8: the `debug` scene's program, short enough that every line shows without
+# scrolling: a breakpoint on line 6 stops with a vector (expandable), a string
+# and a number in scope; the line after it prints to the Debugger Console.
+DEBUGGEE_RS = """//! Fixture (M8): a program to stop in under the debugger.
+fn main() {
+    let points = vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+    let label = String::from("points");
+    let total = sum(&points);
+    println!("{label}: {total}");
+}
+
+#[derive(Debug)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn sum(points: &[Point]) -> i32 {
+    points.iter().map(|p| p.x * p.y).sum()
+}
 """
 
 GIT_ENV = {
@@ -258,6 +292,7 @@ def main():
     write(root, "misc/empty.txt", "")
     write(root, "misc/broken.json", BROKEN_JSON)
     write(root, "misc/broken.rs", BROKEN_RS)
+    write(root, "misc/debuggee.rs", DEBUGGEE_RS)
     line = "2026-01-01T00:00:00Z INFO fixture: a log line with some padding to reach a round length ..\n"
     write(root, "big/big.log", line * (2 * 1024 * 1024 // len(line) + 1))
 

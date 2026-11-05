@@ -13,6 +13,13 @@
 
 mod actions;
 mod assets;
+mod attach_popup; // M8: attach to process (agent E)
+mod breakpoints;
+mod breakpoints_tool;
+mod debug_console;
+mod debug_panel; // M8: the floating debug panel (agent E)
+mod debug_tool;
+mod debugger;
 mod dialog;
 mod diff_view;
 mod document;
@@ -346,6 +353,8 @@ fn main() {
         .run(move |cx: &mut App| {
             settings::init(overrides, cx);
             settings::watch(cx);
+            breakpoints::BreakpointStore::init(cx);
+            debugger::Debugger::init(cx);
             if let Err(e) = cx.text_system().add_fonts(assets::fonts()) {
                 eprintln!("weep: could not register the bundled fonts: {e}");
             }
@@ -353,6 +362,8 @@ fn main() {
             file_tree::bind_keys(cx);
             input::bind_keys(cx);
             find::bind_keys(cx);
+            // M8: the Debug, Breakpoints and Debugger Console tools' keys.
+            debug_tool::bind_keys(cx);
             let preset = cx
                 .global::<settings::AppSettings>()
                 .settings

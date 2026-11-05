@@ -988,6 +988,38 @@ big/big.log, so five digits are unprobed.
 | numbers' right edge and text start, from the island's edge | ink right at 35.5 / 35.5 / 40 / 47.5 / 54 for 3 and 36 lines, 35.5 / 42.5 / 49.5 / 59 / 68.5 for 1000 lines (sizes 10 to 24); the text from 62 / 62 / 66.8 / 74 / 81 and 62 / 69 / 76.5 / 86.5 / 96. Both fit one rule: the numbers' column starts 12 in and holds the line count's digits, at least three, each 0.6 em; its right edge is never left of 36 and the text starts 26 after it (the chevron 4 after it), so 13 px gives 36 and 62 below 1000 lines and 43.2 and 69.2 from 1000; the line numbers in view do not matter (lines 1-17 of thousand.txt sit in the wide gutter) | 36 and 62 at every size and length → `GUTTER_NUMBER_LEFT` 12 with `GUTTER_NUMBER_RIGHT` and `GUTTER_WIDTH` as the least (`TextMetrics::with_number_column`, the measured space's advance): every numbers' edge on Fleet's pixels and the text's glyphs within 0.5 at all five sizes. The breakpoint hint and the run icon stay at 21.3 and 21 (unprobed past 13 px or 999 lines) |
 | a new editor's first frame | opens at line 1 | the gutter it now gets differs from the one the view was made with, so the frame's keep-the-first-line step divided by an empty map's zero row height and scrolled thousand.txt to its end (the tui skin did the same on files of 1000 lines) → no row height, no shift |
 
+## Nineteenth pass: M8, the debugger, built without Fleet (2026-11-04)
+
+No Fleet shot: M8 was built in one pass by five agents at once, and probes need
+the foreground. Batch 13 (`tools/fleet-probe/scenes/debug.json`) is written,
+not run; it stops the fixture's `misc/debuggee.rs` (a second `[[bin]]`, the
+`debug fixture` row of run.json) on a breakpoint. WEEP ran it once by hand: the
+run popup's Shift+Enter built the bin, Xcode's lldb-dap (lldb-2103) stopped on
+line 5, the editor showed the frame's line and arrow, the Debug tool the frames
+and the expanded Locals (`points` size=2, `label` "points"), the floating panel
+its five buttons. Every value below is an estimate; the colours are Fleet's keys.
+
+| element | WEEP (estimate) |
+|---|---|
+| breakpoint | in the hint's place and size (10 px at 21.3, batch 5), over the line number: enabled a fill of `icon.background.red`, disabled a 1.5 px ring of it, not verified by the adapter a fill of `icon.secondary`; a click in a 16 px box round the hint toggles it (a run icon on the row keeps the click when the row has no breakpoint); tooltip "Line breakpoint", "(disabled)", "(not verified)", the condition or log message under it |
+| execution point | the line's whole width washed with `debug.currentFrame` (half strength for a caller frame), an arrow over the breakpoint's place: WEEP's own filled arrow in `icon.primary` for the top frame, hollow in `icon.secondary` for a caller |
+| Debug tool | frames on the left (0.4 of the width, a thread chooser above when there are several), the variables tree on the right (watches first, then the scopes, the first expanded): `name = {type} value`, the type and `=` in `listItem.text.secondary`, the Files tree's 26 px rows and 16 px indent; a status row ("Running", "Process finished with exit code N"); WEEP's own watch icon (expui has none) |
+| Breakpoints tool | rows grouped by file (icon and root-relative path), then `line N: <the line's text>` with the Git tool's checkbox; "No breakpoints" when empty |
+| Debugger Console | the terminal's mono font: stdout and input (`> expr`) in `text.primary`, stderr and errors in `text.dangerous`, the adapter's lines and results in `text.secondary`; an input field at the bottom with history; the cargo build's output streams here before the launch |
+| floating debug panel | `editor.showFloatingDebugPanel` (Fleet's default false): 8 under the active editor's top, centred; 24 px buttons 2 apart, 4 of padding, a 12 px grip that drags it; Resume (Pause while running) in `icon.background.green`, Step Over, Step Into, Step Out, Stop in `icon.background.red`; the `popup.*` frame and `shadow.medium`. Seen covering the end of line 1 at the default placement |
+| quick evaluate | Cmd+Alt+E (Ctrl+Alt+F8): the expression at the caret (an identifier with `.`, `::`, `->` qualifiers) or the selection, in a popup under it like the documentation popup: 22 px rows in the editor face, 16 px indent, 12 rows at most, 240 wide at least, an "Add to Watches" link; also on the pointer resting on an identifier for `editor.hoverTooltipDelayMs` while stopped (Smart Mode's hover yields) |
+| attach to process | the Goto frame titled "Attach to Process", "Process name or PID", the user's processes newest first (pid, name, command line; 100 at most), a typed pid offered as "Attach to PID n" |
+| run popup | a "Debug" button after "Run" on `cargo` rows (batch 5 saw a row with both; batch 11's `command` rows had Run only); Shift+Enter debugs the selected row |
+| toolbar | while a session lives, the Run & Debug button shows `expui/run/debug`, green while running, on the pressed wash when stopped |
+
+What lldb-dap does (`crates/weep-dap/tests/lldb.rs`): it answers `launch`
+before sending `initialized`; it has no `terminate`, so Stop disconnects and the
+debuggee reports exit code 9; `threads` fails while the debuggee runs; breakpoint
+events come without a source and flip verified while modules load; a `println!`
+line binds two locations; the debuggee's output arrives as `stdout` with CRLF
+(a pty); the `repl` context answers in LLDB's format (`(int) $0 = 42`); Rust's
+pretty printers load from the toolchain's `lldb_lookup.py`.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

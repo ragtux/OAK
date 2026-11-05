@@ -240,3 +240,35 @@ actions!(
         PopupPageDown
     ]
 );
+
+// M8: the debugger through a debug adapter (DAP). Declared together so the
+// views that answer them (the editor, the Debug, Breakpoints and Debugger
+// Console tools, the floating debug panel) and the keymap's table
+// (`keymap.rs`, Fleet's ids) share one set.
+actions!(
+    debug,
+    [
+        DebugInContext,
+        DebugResume,
+        DebugPause,
+        DebugStepOver,
+        DebugStepInto,
+        DebugForceStepInto,
+        DebugStepOut,
+        DebugStop,
+        DebugToggleBreakpoint,
+        DebugToggleEnabledBreakpoint,
+        DebugRemoveBreakpoint,
+        DebugAddWatch,
+        DebugEditWatch,
+        DebugDeleteWatch,
+        DebugQuickEvaluateExpression,
+        DebugJumpToTool,
+        DebugNewTool,
+        DebugBreakpointsJumpToTool,
+        NewBreakpointsTool,
+        DebugConsoleJumpToTool,
+        DebugConsoleNewTool,
+        DebuggerAttachToProcess
+    ]
+);

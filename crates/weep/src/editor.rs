@@ -12,9 +12,12 @@
 //! display row at a time through gpui's shaper; only the rows in view are
 //! shaped each frame, so the cost is the viewport, not the file.
 
+pub mod debug; // M8: quick evaluate (agent E)
 pub mod smart;
 
 use crate::actions::*;
+use crate::breakpoints::{BreakpointStore, Look};
+use crate::debugger::Debugger;
 use crate::document::{Document, DocumentEvent, Problem, Severity};
 use crate::settings::AppSettings;
 use crate::skin::{self, Cell, Skin};
@@ -294,6 +297,8 @@ struct ViewOptions {
     problem_tooltip: bool,
     /// M7: `editor.showCodeVision`.
     code_vision: bool,
+    /// M8: `editor.showBreakpoints`.
+    show_breakpoints: bool,
 }
 
 impl ViewOptions {
@@ -326,6 +331,7 @@ impl ViewOptions {
             file_status: settings.editor_show_file_status(),
             problem_tooltip: settings.editor_show_tooltip_on_hover(),
             code_vision: settings.editor_show_code_vision(),
+            show_breakpoints: settings.editor_show_breakpoints(),
         }
     }
 
@@ -882,6 +888,8 @@ pub struct EditorView {
     /// How far below the editor's top the status badge sits: the part of
     /// the find bar's band the text is not pushed under (`FindBar`).
     status_top: Pixels,
+    /// M8: the active debug session, observed for its execution point.
+    debug_watch: Option<gpui::Subscription>,
 }
 
 impl EventEmitter<EditorEvent> for EditorView {}
@@ -938,7 +946,17 @@ impl EditorView {
         })
         .detach();
         let options = ViewOptions::from(&cx.global::<AppSettings>().settings);
-        EditorView {
+        // M8: breakpoints and the execution point repaint the gutter.
+        if let Some(store) = BreakpointStore::try_global(cx) {
+            cx.observe(&store, |_, _, cx| cx.notify()).detach();
+        }
+        let debugger = Debugger::global(cx);
+        cx.observe(&debugger, |this, _, cx| {
+            this.watch_debugger(cx);
+            cx.notify();
+        })
+        .detach();
+        let mut view = EditorView {
             document,
             cursor,
             scroll_y: px(0.),
@@ -987,7 +1005,10 @@ impl EditorView {
             badge: (0, 0, 0),
             status_top: px(0.),
             blame_hovered: false,
-        }
+            debug_watch: None,
+        };
+        view.watch_debugger(cx);
+        view
     }
 
     // ---- M6: run icons and problems ---------------------------------------------
@@ -2854,6 +2875,12 @@ impl EditorView {
                 return Hit::LineStatus(ix);
             }
         }
+        // M8: the breakpoint spot, where the hint shows. A row with a
+        // breakpoint gives it the click; elsewhere a run icon keeps its own.
+        let on_spot = seg == 0 && self.on_breakpoint_spot(x_in, cx);
+        if on_spot && self.breakpoint_rows(cx).contains(&row) {
+            return Hit::Breakpoint(row);
+        }
         // The tui gutter keeps the run icon in its own first cell.
         let run_left = if self.options.run_after_numbers && self.tm.cell.is_none() {
             px(self.tm.gutter_number_right + 4.)
@@ -2868,6 +2895,9 @@ impl EditorView {
             if let Some((_, ix)) = self.run_rows(cx).iter().find(|(r, _)| *r == row) {
                 return Hit::RunIcon(*ix);
             }
+        }
+        if on_spot {
+            return Hit::Breakpoint(row);
         }
         let chevron_left = px(self.tm.fold_chevron_x);
         if x_in >= chevron_left && x_in < chevron_left + px(self.tm.icon_size) && seg == 0 {
@@ -2971,6 +3001,7 @@ impl EditorView {
             Hit::RunIcon(ix) => {
                 cx.emit(EditorEvent::RunConfiguration(ix));
             }
+            Hit::Breakpoint(row) => self.toggle_breakpoints(&[row], cx),
             Hit::CodeVision(row, ix) => {
                 let lens = self
                     .document
@@ -3849,6 +3880,8 @@ enum Hit {
     CodeVision(usize, usize),
     /// A code vision row away from its entries: nothing to do.
     Gap,
+    /// M8: the breakpoint spot of a buffer row's gutter (the hint's place).
+    Breakpoint(usize),
 }
 
 /// Whether a hunk's rows hold `row`; a deletion sits on the row after it.
@@ -4056,6 +4089,271 @@ impl EntityInputHandler for EditorView {
     }
 }
 
+// ---- M8: breakpoints and the execution point -------------------------------------
+
+/// The breakpoint spot of the gutter, from the island's left: the hint's
+/// circle widened to an icon box around its centre (estimate: Fleet's hit
+/// area unmeasured; the tui skin's is the first cell). The left edge and
+/// the width.
+fn breakpoint_spot(tm: &TextMetrics) -> (Pixels, Pixels) {
+    let width = tm.icon_size.max(tm.breakpoint_hint_size);
+    let centre = tm.breakpoint_hint_x + tm.breakpoint_hint_size / 2.;
+    (px(centre - width / 2.), px(width))
+}
+
+/// The breakpoints in view (row, form) and the execution point (row, top frame).
+type DebugMarks = (Vec<(usize, Look)>, Option<(usize, bool)>);
+
+/// The same file, also when one path came through a symlink (the adapter
+/// reports the source paths it was built with); only paths with the same
+/// file name reach the disk.
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a == b
+        || a.file_name() == b.file_name()
+            && matches!(
+                (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+                (Ok(x), Ok(y)) if x == y
+            )
+}
+
+impl EditorView {
+    /// Observes the active debug session, whose execution point the gutter
+    /// paints; called again whenever the sessions change.
+    fn watch_debugger(&mut self, cx: &mut Context<Self>) {
+        let active = Debugger::global(cx).read(cx).active();
+        self.debug_watch = active.map(|s| cx.observe(&s, |_, _, cx| cx.notify()));
+    }
+
+    /// The rows of the file's breakpoints, in order.
+    fn breakpoint_rows(&self, cx: &App) -> Vec<usize> {
+        let Some(path) = self.document.read(cx).path.as_deref() else {
+            return Vec::new();
+        };
+        BreakpointStore::global(cx)
+            .read(cx)
+            .in_file(path)
+            .iter()
+            .map(|b| b.line)
+            .collect()
+    }
+
+    /// The gutter's debug marks for a frame: each breakpoint's row and form
+    /// (none while `editor.showBreakpoints` is off), and the execution
+    /// point's row in this file with whether it is the top frame.
+    fn debug_marks(&self, show: bool, cx: &App) -> DebugMarks {
+        let Some(path) = self.document.read(cx).path.as_deref() else {
+            return (Vec::new(), None);
+        };
+        let breakpoints = if show {
+            BreakpointStore::global(cx)
+                .read(cx)
+                .in_file(path)
+                .iter()
+                .map(|b| (b.line, b.look()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let execution = Debugger::global(cx)
+            .read(cx)
+            .execution_point(cx)
+            .filter(|p| same_file(&p.path, path))
+            .map(|p| (p.line, p.top));
+        (breakpoints, execution)
+    }
+
+    /// Whether `x_in` (from the island's left) is on the breakpoint spot
+    /// of a view that takes breakpoints: a file's, not a preview's.
+    fn on_breakpoint_spot(&self, x_in: Pixels, cx: &App) -> bool {
+        let (left, width) = breakpoint_spot(&self.tm);
+        self.options.show_breakpoints
+            && !self.read_only
+            && self.document.read(cx).path.is_some()
+            && x_in >= left
+            && x_in < left + width
+    }
+
+    /// The rows holding a caret, each once.
+    fn caret_rows(&mut self, cx: &App) -> Vec<usize> {
+        let mut rows: Vec<usize> = self.with_buffer(cx, |c, b| {
+            c.selections()
+                .iter()
+                .map(|s| b.offset_to_point(s.head).row)
+                .collect()
+        });
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    }
+
+    /// Runs `f` on the store for the file's path and each of `rows`.
+    fn on_breakpoints(
+        &mut self,
+        rows: &[usize],
+        cx: &mut Context<Self>,
+        f: impl Fn(&mut BreakpointStore, &std::path::Path, usize, &mut Context<BreakpointStore>),
+    ) {
+        if self.read_only {
+            return;
+        }
+        let Some(path) = self.document.read(cx).path.clone() else {
+            return;
+        };
+        BreakpointStore::global(cx).update(cx, |store, cx| {
+            for &row in rows {
+                f(store, &path, row, cx);
+            }
+        });
+    }
+
+    /// Adds a breakpoint on each row without one, removes each one there.
+    fn toggle_breakpoints(&mut self, rows: &[usize], cx: &mut Context<Self>) {
+        self.on_breakpoints(rows, cx, |s, p, row, cx| s.toggle(p, row, cx));
+    }
+
+    /// `debug/toggle-breakpoint`: on every caret's line.
+    fn debug_toggle_breakpoint(
+        &mut self,
+        _: &DebugToggleBreakpoint,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.caret_rows(cx);
+        self.toggle_breakpoints(&rows, cx);
+    }
+
+    /// `debug/toggle-enabled-breakpoint`: disables or enables the caret
+    /// lines' breakpoints.
+    fn debug_toggle_enabled_breakpoint(
+        &mut self,
+        _: &DebugToggleEnabledBreakpoint,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.caret_rows(cx);
+        self.on_breakpoints(&rows, cx, |s, p, row, cx| s.toggle_enabled(p, row, cx));
+    }
+
+    /// `debug/remove-breakpoint`: removes the caret lines' breakpoints.
+    fn debug_remove_breakpoint(
+        &mut self,
+        _: &DebugRemoveBreakpoint,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.caret_rows(cx);
+        self.on_breakpoints(&rows, cx, |s, p, row, cx| s.remove(p, row, cx));
+    }
+
+    /// A hover box over each breakpoint in view, carrying its tooltip
+    /// ("Line breakpoint", its condition under it).
+    fn render_breakpoint_tips(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        if !self.options.show_breakpoints {
+            return Vec::new();
+        }
+        let Some(path) = self.document.read(cx).path.clone() else {
+            return Vec::new();
+        };
+        let list = BreakpointStore::global(cx).read(cx).in_file(&path).to_vec();
+        let (left, width) = breakpoint_spot(&self.tm);
+        let lh = self.line_height();
+        let height = self.last_bounds.size.height;
+        let sticky = lh * self.sticky_rows.len() as f32;
+        let x = self.text_offset() + left;
+        list.into_iter()
+            .filter(|b| {
+                self.map
+                    .rows
+                    .get(b.line)
+                    .is_some_and(|r| !r.segments.is_empty())
+            })
+            .filter_map(|b| {
+                let y = self.map.top(self.map.display_row(b.line, 0)) - self.scroll_y;
+                if y < sticky || y + lh > height {
+                    return None;
+                }
+                let (title, detail) = b.tooltip();
+                let tip = div()
+                    .id(("breakpoint-tip", b.line))
+                    .absolute()
+                    .left(x)
+                    .top(y)
+                    .w(width)
+                    .h(lh);
+                Some(
+                    match detail {
+                        Some(detail) => tip.tooltip(Tooltip::with_detail(title, detail)),
+                        None => tip.tooltip(Tooltip::text(title)),
+                    }
+                    .into_any_element(),
+                )
+            })
+            .collect()
+    }
+}
+
+/// A breakpoint in the Fleet gutter, a `d` circle at `centre`: filled when
+/// enabled, grey when the session could not bind it, a ring when disabled
+/// (its stroke 15 % of the circle, 1.5 px at 10: estimate).
+fn paint_breakpoint(
+    window: &mut Window,
+    centre: Point<Pixels>,
+    d: Pixels,
+    look: Look,
+    theme: &Theme,
+) {
+    let bounds = Bounds::new(centre - point(d / 2., d / 2.), size(d, d));
+    let quad = match look {
+        Look::Enabled => fill(bounds, theme.breakpoint),
+        Look::Unverified => fill(bounds, theme.breakpoint_unverified),
+        Look::Disabled => fill(bounds, gpui::transparent_black())
+            .border_widths(d * 0.15)
+            .border_color(theme.breakpoint),
+    };
+    window.paint_quad(quad.corner_radii(Corners::all(d / 2.)));
+}
+
+/// The execution arrow in the Fleet gutter: an icon box centred on the
+/// breakpoint's place, filled for the top frame, hollow for a caller.
+fn paint_execution_arrow(
+    window: &mut Window,
+    centre: Point<Pixels>,
+    icon: Pixels,
+    top: bool,
+    theme: &Theme,
+    cx: &mut App,
+) {
+    let (path, color): (SharedString, Hsla) = if top {
+        (
+            "icons/weep/execution-point.svg".into(),
+            theme.execution_point,
+        )
+    } else {
+        (
+            "icons/weep/execution-frame.svg".into(),
+            theme.execution_point_caller,
+        )
+    };
+    let _ = window.paint_svg(
+        Bounds::new(centre - point(icon / 2., icon / 2.), size(icon, icon)),
+        path,
+        None,
+        gpui::TransformationMatrix::unit(),
+        color,
+        cx,
+    );
+}
+
+/// The execution point line's wash: `debug.currentFrame`, at half strength
+/// for a caller frame (estimate).
+fn execution_wash(theme: &Theme, top: bool) -> Hsla {
+    if top {
+        theme.debug_current_frame
+    } else {
+        theme.debug_current_frame.opacity(0.5)
+    }
+}
+
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tui = (Skin::current(cx) == Skin::Tui).then(|| Cell::current(cx));
@@ -4067,6 +4365,7 @@ impl Render for EditorView {
             None => (self.render_status_popup(cx), self.render_problems(cx)),
         };
         let smart = self.render_smart(window, cx);
+        let breakpoint_tips = self.render_breakpoint_tips(cx);
         // The badge, the widget and the hover tooltip come after the
         // element, so they paint over its washes.
         div()
@@ -4135,11 +4434,15 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::move_to_matching_bracket))
             .on_action(cx.listener(Self::collapse_folding))
             .on_action(cx.listener(Self::expand_folding))
+            .on_action(cx.listener(Self::debug_toggle_breakpoint))
+            .on_action(cx.listener(Self::debug_toggle_enabled_breakpoint))
+            .on_action(cx.listener(Self::debug_remove_breakpoint))
             .size_full()
             .child(EditorElement {
                 editor: cx.entity(),
             })
             .children(self.render_interline(cx))
+            .children(breakpoint_tips)
             .children(problems)
             .children(smart)
     }
@@ -4470,6 +4773,31 @@ pub struct Prepaint {
     /// The display map the rows were laid out by (their places).
     map: DisplayMap,
     lenses: Vec<LensLayout>,
+    /// M8: the file's breakpoints (row, form) and the execution point's
+    /// row with whether it is the top frame.
+    breakpoints: Vec<(usize, Look)>,
+    execution: Option<(usize, bool)>,
+}
+
+impl Prepaint {
+    /// The breakpoint on a row's first segment.
+    fn breakpoint_on(&self, laid: &LaidOutRow) -> Option<Look> {
+        if laid.continuation {
+            return None;
+        }
+        self.breakpoints
+            .iter()
+            .find(|(r, _)| *r == laid.row)
+            .map(|(_, look)| *look)
+    }
+
+    /// The execution point on a row (any segment), and whether it is the
+    /// top frame.
+    fn execution_on(&self, laid: &LaidOutRow) -> Option<bool> {
+        self.execution
+            .filter(|(r, _)| *r == laid.row)
+            .map(|(_, top)| top)
+    }
 }
 
 /// A code vision row in view: its display row and each lens's title with
@@ -4647,6 +4975,10 @@ impl Element for EditorElement {
             )
         });
         let run_rows: Vec<(usize, usize)> = self.editor.update(cx, |e, cx| e.run_rows(cx));
+        let (breakpoints, execution) = self
+            .editor
+            .read(cx)
+            .debug_marks(options.show_breakpoints, cx);
         let lens_hovered = self.editor.read(cx).lens_hovered;
         let mut lenses: Vec<LensLayout> = Vec::new();
         let mut lens_boxes: Vec<(usize, usize, Range<Pixels>)> = Vec::new();
@@ -5169,6 +5501,8 @@ impl Element for EditorElement {
             gutter_hovered,
             map,
             lenses,
+            breakpoints,
+            execution,
         }
     }
 
@@ -5268,6 +5602,14 @@ impl Element for EditorElement {
                     window.paint_quad(fill(
                         Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, lh)),
                         color,
+                    ));
+                }
+                // M8: the execution point's line, across gutter and text like
+                // the current line (estimate: Fleet's extent unprobed).
+                if let Some(top) = prepaint.execution_on(laid) {
+                    window.paint_quad(fill(
+                        Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, lh)),
+                        execution_wash(&theme, top),
                     ));
                 }
                 // The git line status (ninth pass): a bar on the island's edge for
@@ -5457,8 +5799,15 @@ impl Element for EditorElement {
                 // Line number, right-aligned in the gutter. The hovered row
                 // shows the breakpoint hint in its place: Fleet leaves the
                 // number out there (fifteenth pass, the `fold` scene).
-                let hinted = prepaint.gutter_hovered && prepaint.hovered_row == Some(laid.row);
-                if let Some(number) = laid.number.as_ref().filter(|_| !hinted) {
+                // M8: a breakpoint or the execution arrow takes the number's
+                // place the same way (estimate).
+                let hinted = options.show_breakpoints
+                    && prepaint.gutter_hovered
+                    && prepaint.hovered_row == Some(laid.row);
+                let breakpoint = prepaint.breakpoint_on(laid);
+                let arrow = prepaint.execution_on(laid).filter(|_| !laid.continuation);
+                let marked = breakpoint.is_some() || arrow.is_some();
+                if let Some(number) = laid.number.as_ref().filter(|_| !hinted && !marked) {
                     let _ = number.paint(
                         point(number_right - number.width, y),
                         lh,
@@ -5470,7 +5819,8 @@ impl Element for EditorElement {
                 }
                 // The run icon (M6, batch 11): `icon.background.green` in a 16 px
                 // box in place of the number, or after it (`ff.runIconsAfterLineNumbers`).
-                if laid.run_icon {
+                // A breakpoint or the arrow in the same place hides it (M8).
+                if laid.run_icon && !(marked && !options.run_after_numbers) {
                     let x = if options.run_after_numbers {
                         number_right + px(4.)
                     } else {
@@ -5491,8 +5841,13 @@ impl Element for EditorElement {
                 }
                 // The hovered row shows the breakpoint hint: a filled circle at
                 // 21.3 (batch 5; the `fold` scene showed no wash under the chevron).
-                if hinted {
-                    let d = px(tm.breakpoint_hint_size);
+                // M8: a breakpoint is drawn in the hint's place and size, and
+                // the execution arrow over it.
+                let d = px(tm.breakpoint_hint_size);
+                let spot = point(origin_x + px(tm.breakpoint_hint_x) + d / 2., y + lh / 2.);
+                if let Some(look) = breakpoint {
+                    paint_breakpoint(window, spot, d, look, &theme);
+                } else if hinted {
                     let hint = Bounds::new(
                         point(origin_x + px(tm.breakpoint_hint_x), y + (lh - d) / 2.),
                         size(d, d),
@@ -5500,6 +5855,9 @@ impl Element for EditorElement {
                     window.paint_quad(
                         fill(hint, theme.breakpoint_hint).corner_radii(Corners::all(d / 2.)),
                     );
+                }
+                if let Some(top) = arrow {
+                    paint_execution_arrow(window, spot, px(tm.icon_size), top, &theme, cx);
                 }
                 // The fold chevron in its 16 px box (batch 5).
                 if let Some(folded) = laid.chevron {
@@ -5855,6 +6213,13 @@ fn paint_tui(
     };
     let run_glyph = glyph("▶", theme.icon_green, window);
     let hint_glyph = glyph("○", theme.breakpoint_hint, window);
+    // M8: breakpoints `●` (grey when unbound) and `○` disabled; the
+    // execution arrow `▶` for the top frame, `▷` for a caller.
+    let breakpoint_glyph = glyph("●", theme.breakpoint, window);
+    let disabled_glyph = glyph("○", theme.breakpoint, window);
+    let unverified_glyph = glyph("●", theme.breakpoint_unverified, window);
+    let arrow_glyph = glyph("▶", theme.execution_point, window);
+    let caller_glyph = glyph("▷", theme.execution_point_caller, window);
     let open_glyph = glyph("▾", theme.fold_icon, window);
     let folded_glyph = glyph("▸", theme.fold_icon, window);
     let wrap_glyph = glyph("↪", theme.text_tertiary, window);
@@ -5931,6 +6296,17 @@ fn paint_tui(
             };
             fill_cells(window, bounds.origin.x, right, y, lh, color);
         }
+        // M8: the execution point's line, its whole row of cells.
+        if let Some(top) = prepaint.execution_on(laid) {
+            fill_cells(
+                window,
+                bounds.origin.x,
+                right,
+                y,
+                lh,
+                execution_wash(&theme, top),
+            );
+        }
         // The open hunk's rows wash across the text.
         if let Some(hunk) = status_popup.and_then(|ix| hunks.get(ix)) {
             if hunk.rows > 0 && hunk_covers(hunk, laid.row) {
@@ -6003,8 +6379,29 @@ fn paint_tui(
                 cx,
             );
         }
-        // The first cell: the run icon, else the breakpoint hint on hover.
-        if laid.run_icon {
+        // The first cell: the execution arrow, a breakpoint, the run icon,
+        // else the breakpoint hint on hover.
+        let first = match (
+            prepaint.execution_on(laid).filter(|_| !laid.continuation),
+            prepaint.breakpoint_on(laid),
+        ) {
+            (Some(true), _) => Some(&arrow_glyph),
+            (Some(false), _) => Some(&caller_glyph),
+            (None, Some(Look::Enabled)) => Some(&breakpoint_glyph),
+            (None, Some(Look::Disabled)) => Some(&disabled_glyph),
+            (None, Some(Look::Unverified)) => Some(&unverified_glyph),
+            (None, None) => None,
+        };
+        if let Some(g) = first {
+            let _ = g.paint(
+                point(in_cell(g, origin_x), y),
+                lh,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        } else if laid.run_icon {
             let _ = run_glyph.paint(
                 point(in_cell(&run_glyph, origin_x), y),
                 lh,
@@ -6014,6 +6411,7 @@ fn paint_tui(
                 cx,
             );
         } else if !laid.continuation
+            && options.show_breakpoints
             && prepaint.gutter_hovered
             && prepaint.hovered_row == Some(laid.row)
         {

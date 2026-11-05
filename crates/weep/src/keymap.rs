@@ -19,17 +19,28 @@ const WORKSPACE: Option<&str> = Some("Workspace");
 const POPUP: Option<&str> = Some("Popup");
 /// A focused terminal's own copy, paste, select-all and clear (M5).
 const TERMINAL: Option<&str> = Some("Terminal");
+/// M8: the debugger tools' own actions (`debug_tool.rs` sets these contexts):
+/// the watches in the Debug tool, the breakpoint list's rows. Fleet's
+/// Backspace and Delete for them would delete text anywhere else.
+const DEBUG_TOOL: Option<&str> = Some("DebugTool");
+const BREAKPOINTS_TOOL: Option<&str> = Some("BreakpointsTool");
 
 /// One table, three readers: the key bindings, the boxed action for an id
 /// (menus and the Goto panel dispatch it), and the list of canonical ids
-/// (the first spelling of each arm) the Goto panel offers.
+/// (the first spelling of each arm) the Goto panel offers. A row may name
+/// more contexts after the first (`EDITOR + BREAKPOINTS_TOOL`): its chords
+/// bind in each; the first decides `is_editor_action`.
 macro_rules! action_table {
-    ($( $first:literal $(| $alias:literal)* => $action:ident, $ctx:ident ;)*) => {
-        /// The gpui binding for a Fleet action id, or `None` for one WEEP lacks.
-        fn binding(keystroke: &str, action: &str) -> Option<KeyBinding> {
+    ($( $first:literal $(| $alias:literal)* => $action:ident, $ctx:ident $(+ $more:ident)* ;)*) => {
+        /// The gpui bindings for a Fleet action id (one per context), empty
+        /// for one WEEP lacks.
+        fn bindings(keystroke: &str, action: &str) -> Vec<KeyBinding> {
             match action {
-                $( $first $(| $alias)* => Some(KeyBinding::new(keystroke, $action, $ctx)), )*
-                _ => None,
+                $( $first $(| $alias)* => vec![
+                    KeyBinding::new(keystroke, $action, $ctx)
+                    $(, KeyBinding::new(keystroke, $action, $more))*
+                ], )*
+                _ => Vec::new(),
             }
         }
 
@@ -176,6 +187,31 @@ action_table! {
     "optimize-imports" => OptimizeImports, EDITOR;
     "back" => Back, WORKSPACE;
     "forward" => Forward, WORKSPACE;
+    // M8: the debugger. Sessions, steps and the tools run by the workspace
+    // (`workspace/debug.rs`); breakpoints and quick evaluate in the editor;
+    // the watches and the breakpoint list in their tools.
+    "debug/debug-in-context" => DebugInContext, WORKSPACE;
+    "debug/resume" => DebugResume, WORKSPACE;
+    "debug/pause" => DebugPause, WORKSPACE;
+    "debug/step-over" => DebugStepOver, WORKSPACE;
+    "debug/step-into" => DebugStepInto, WORKSPACE;
+    "debug/force-step-into" => DebugForceStepInto, WORKSPACE;
+    "debug/step-out" => DebugStepOut, WORKSPACE;
+    "debug/stop" => DebugStop, WORKSPACE;
+    "debug/toggle-breakpoint" => DebugToggleBreakpoint, EDITOR;
+    "debug/toggle-enabled-breakpoint" => DebugToggleEnabledBreakpoint, EDITOR + BREAKPOINTS_TOOL;
+    "debug/remove-breakpoint" => DebugRemoveBreakpoint, BREAKPOINTS_TOOL;
+    "debug/add-watch" => DebugAddWatch, DEBUG_TOOL;
+    "debug/edit-watch" => DebugEditWatch, DEBUG_TOOL;
+    "debug/delete-watch" => DebugDeleteWatch, DEBUG_TOOL;
+    "debug/quick-evaluate-expression" => DebugQuickEvaluateExpression, EDITOR;
+    "debug/jump-to-tool" => DebugJumpToTool, WORKSPACE;
+    "debug/new-tool" => DebugNewTool, WORKSPACE;
+    "debug/breakpoints/jump-to-tool" => DebugBreakpointsJumpToTool, WORKSPACE;
+    "new-breakpoints-tool" => NewBreakpointsTool, WORKSPACE;
+    "debug/console/jump-to-tool" => DebugConsoleJumpToTool, WORKSPACE;
+    "debug/console/new-tool" => DebugConsoleNewTool, WORKSPACE;
+    "debugger/attach-to-process" => DebuggerAttachToProcess, WORKSPACE;
 
     "arrow-up" => MoveUp, EDITOR;
     "arrow-down" => MoveDown, EDITOR;
@@ -354,6 +390,30 @@ pub fn action_title(id: &str) -> String {
         "optimize-imports" => Some("Optimize Imports"),
         "back" => Some("Back"),
         "forward" => Some("Forward"),
+        // M8: estimates (no Fleet menu or tooltip of the debugger captured
+        // yet), in IntelliJ's words where Fleet's family shares them.
+        "debug/debug-in-context" => Some("Debug in Context"),
+        "debug/resume" => Some("Resume"),
+        "debug/pause" => Some("Pause"),
+        "debug/step-over" => Some("Step Over"),
+        "debug/step-into" => Some("Step Into"),
+        "debug/force-step-into" => Some("Force Step Into"),
+        "debug/step-out" => Some("Step Out"),
+        "debug/stop" => Some("Stop Debugging"),
+        "debug/toggle-breakpoint" => Some("Toggle Line Breakpoint"),
+        "debug/toggle-enabled-breakpoint" => Some("Enable/Disable Breakpoint"),
+        "debug/remove-breakpoint" => Some("Remove Breakpoint"),
+        "debug/add-watch" => Some("Add Watch"),
+        "debug/edit-watch" => Some("Edit Watch"),
+        "debug/delete-watch" => Some("Delete Watch"),
+        "debug/quick-evaluate-expression" => Some("Quick Evaluate Expression"),
+        "debug/jump-to-tool" => Some("Debug"),
+        "debug/new-tool" => Some("New Debug Tool"),
+        "debug/breakpoints/jump-to-tool" => Some("Breakpoints"),
+        "new-breakpoints-tool" => Some("New Breakpoints Tool"),
+        "debug/console/jump-to-tool" => Some("Debugger Console"),
+        "debug/console/new-tool" => Some("New Debugger Console Tool"),
+        "debugger/attach-to-process" => Some("Attach to Process..."),
         "confirm" => Some("Enter"),
         "arrow-up" => Some("Up"),
         "arrow-down" => Some("Down"),
@@ -560,10 +620,9 @@ pub fn bind(keymap: &Keymap, cx: &mut App) {
     let mut bindings = Vec::new();
     for r in keymap.resolved(Platform::current()) {
         // gpui's parser refuses a few spellings; a bad chord must not take the app down.
-        let parsed = std::panic::catch_unwind(|| binding(&r.keystroke, &r.action));
+        let parsed = std::panic::catch_unwind(|| self::bindings(&r.keystroke, &r.action));
         match parsed {
-            Ok(Some(b)) => bindings.push(b),
-            Ok(None) => {}
+            Ok(b) => bindings.extend(b),
             Err(_) => eprintln!("weep: cannot bind {:?} ({})", r.chord, r.action),
         }
     }
@@ -618,5 +677,9 @@ mod tests {
         }
         assert!(is_editor_action("copy"));
         assert!(!is_editor_action("save-file"));
+        // M8: one id in two contexts binds twice.
+        assert_eq!(bindings("f9", "debug/toggle-enabled-breakpoint").len(), 2);
+        assert!(is_editor_action("debug/toggle-breakpoint"));
+        assert!(bindings("f9", "debug/drop-frame").is_empty());
     }
 }

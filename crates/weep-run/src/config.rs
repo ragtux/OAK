@@ -214,6 +214,41 @@ impl Command {
     }
 }
 
+impl Command {
+    /// The program as a path a debug adapter can launch (M8): a path with a
+    /// directory part against `cwd`, a bare name looked up in `path` (the
+    /// `PATH` value), else the name itself.
+    pub fn program_path(&self, path: Option<&std::ffi::OsStr>) -> PathBuf {
+        resolve_program(&self.program, &self.cwd, path)
+    }
+}
+
+/// [`Command::program_path`] on its own.
+pub fn resolve_program(program: &str, cwd: &Path, path: Option<&std::ffi::OsStr>) -> PathBuf {
+    let p = Path::new(program);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    if p.components().count() > 1 {
+        return cwd.join(p);
+    }
+    if let Some(path) = path {
+        for dir in std::env::split_paths(path) {
+            let candidate = dir.join(program);
+            if candidate.is_file() {
+                return candidate;
+            }
+            if cfg!(windows) {
+                let exe = dir.join(format!("{program}.exe"));
+                if exe.is_file() {
+                    return exe;
+                }
+            }
+        }
+    }
+    p.to_path_buf()
+}
+
 /// `KEY=VALUE` lines of an environment file; `#` lines and blank ones skipped.
 pub fn parse_env_file(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -442,6 +477,30 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("allowParallelRun"));
+    }
+
+    #[test]
+    fn programs_resolve_for_the_debugger() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tool"), "").unwrap();
+        let cwd = Path::new("/w");
+        assert_eq!(
+            resolve_program("/bin/x", cwd, None),
+            PathBuf::from("/bin/x")
+        );
+        assert_eq!(
+            resolve_program("target/debug/app", cwd, None),
+            PathBuf::from("/w/target/debug/app")
+        );
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        assert_eq!(
+            resolve_program("tool", cwd, Some(&path)),
+            dir.path().join("tool")
+        );
+        assert_eq!(
+            resolve_program("nope", cwd, Some(&path)),
+            PathBuf::from("nope")
+        );
     }
 
     #[test]

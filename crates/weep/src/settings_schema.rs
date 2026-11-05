@@ -197,6 +197,8 @@ pub const SECTIONS: &[Section] = &[
                         "true",
                     ),
                     check("Show run icons in the gutter", "editor.renderRunInGutter", "true"),
+                    // M8: the label is the documentation's line (estimate: Fleet's page unprobed).
+                    check("Show breakpoints in the gutter", "editor.showBreakpoints", "true"),
                     item("Line numbers", "editor.lineNumbers", Kind::Dropdown(LINE_NUMBERS), "\"On\""),
                     check("Show visual guides", "editor.showVisualGuides", "true"),
                     link("Visual guides position", "editor.guides"),

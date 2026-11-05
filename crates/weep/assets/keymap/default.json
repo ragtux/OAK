@@ -880,6 +880,99 @@
       "action": "run/delete-configuration"
     },
     {
+      "win": "ctrl-shift-semicolon",
+      "linux": "ctrl-shift-semicolon",
+      "action": "debug/step-out"
+    },
+    {
+      "mac": "cmd-n",
+      "key": "ctrl-n",
+      "action": "debug/add-watch"
+    },
+    {
+      "mac": "cmd-alt-r",
+      "key": "alt-shift-r",
+      "action": "debug/debug-in-context"
+    },
+    {
+      "mac": "ctrl-r",
+      "key": "f2",
+      "action": "debug/edit-watch"
+    },
+    {
+      "key": "f6",
+      "action": "debug/pause"
+    },
+    {
+      "mac": "cmd-alt-e",
+      "key": "ctrl-alt-f8",
+      "action": "debug/quick-evaluate-expression"
+    },
+    {
+      "key": "f5",
+      "action": "debug/resume"
+    },
+    {
+      "mac": "cmd-digit9",
+      "key": "ctrl-digit9",
+      "action": "debug/toggle-breakpoint"
+    },
+    {
+      "key": "f9",
+      "action": "debug/toggle-breakpoint"
+    },
+    {
+      "mac": "cmd-semicolon",
+      "key": "ctrl-semicolon",
+      "action": "debug/step-into"
+    },
+    {
+      "key": "f11",
+      "action": "debug/step-into"
+    },
+    {
+      "mac": "cmd-shift-semicolon",
+      "action": "debug/step-out"
+    },
+    {
+      "key": "shift-f11",
+      "action": "debug/step-out"
+    },
+    {
+      "mac": "cmd-apostrophe",
+      "key": "ctrl-apostrophe",
+      "action": "debug/step-over"
+    },
+    {
+      "key": "f10",
+      "action": "debug/step-over"
+    },
+    {
+      "mac": "cmd-shift-backslash",
+      "key": "ctrl-shift-backslash",
+      "action": "debug/stop"
+    },
+    {
+      "key": "shift-f5",
+      "action": "debug/stop"
+    },
+    {
+      "key": "backspace",
+      "action": "debug/remove-breakpoint"
+    },
+    {
+      "key": "delete",
+      "action": "debug/remove-breakpoint"
+    },
+    {
+      "key": "backspace",
+      "action": "debug/delete-watch"
+    },
+    {
+      "key": "delete",
+      "action": "debug/delete-watch"
+    },
+    {
       "mac": "cmd-e",
       "key": "ctrl-e",
       "action": "editor/go-to-next-problem"

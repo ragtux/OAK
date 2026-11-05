@@ -53,6 +53,11 @@ bundle!(
     "icons/weep/circle.svg",
     "icons/weep/exclamation.svg",
     "icons/weep/run-gutter.svg",
+    // M8: the Debug tool's watch rows (Fleet's `debugger-nodes/watch`).
+    "icons/weep/watch.svg",
+    // M8: the gutter's execution arrows (the top frame, a caller frame).
+    "icons/weep/execution-point.svg",
+    "icons/weep/execution-frame.svg",
     "icons/weep/file-rust.svg",
     "icons/weep/file-toml.svg",
     "icons/weep/file-json.svg",
@@ -93,6 +98,12 @@ bundle!(
     "icons/expui/run/stop.svg",
     "icons/expui/run/rerun.svg",
     "icons/expui/run/restart.svg",
+    // M8: the floating debug panel's buttons (agent E).
+    "icons/expui/run/resume.svg",
+    "icons/expui/run/pause.svg",
+    "icons/expui/run/stepOver.svg",
+    "icons/expui/run/stepInto.svg",
+    "icons/expui/run/stepOut.svg",
     "icons/expui/actions/lightning.svg",
     "icons/expui/actions/replace.svg",
     "icons/expui/toolwindows/notifications.svg",

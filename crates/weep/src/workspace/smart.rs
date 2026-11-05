@@ -1343,6 +1343,13 @@ impl Workspace {
             }
             EditorEvent::Completion { explicit } => self.request_completion(editor, *explicit, cx),
             EditorEvent::SignatureHelp => self.request_signature(editor, cx),
+            // M8: while a debug session is stopped, the pointer's hover is the
+            // debug panel's value popup, not the documentation.
+            EditorEvent::Hover { mouse: true, .. }
+                if crate::debugger::Debugger::global(cx)
+                    .read(cx)
+                    .active()
+                    .is_some_and(|s| s.read(cx).state.is_stopped()) => {}
             EditorEvent::Hover { offset, mouse } => {
                 self.request_hover(editor, Some(*offset), *mouse, cx)
             }

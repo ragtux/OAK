@@ -249,6 +249,7 @@ Each batch produces rows in `fleet-probe.md`, constants in
 | 10 | Git and diff | M4 | Changes list rows, commit field, history table, blame column, diff colours and gutter, side-by-side split, 3-way view. | Scenes: `scenes/git*.json`, run on Fleet 2026-11-02 (ninth pass). |
 | 11 | Run and problems | M6 | Run gutter icons, run popup, build output tool, problems widget colours and layout, file status badge states. | Scene: `scenes/run.json`, run on both editors 2026-11-02 (twelfth pass). |
 | 12 | Smart Mode | M7 | Completion popup rows and documentation pane, parameter info, quick-fix menu, code vision line, lightning states. | Scene: `scenes/smart.json`, run on WEEP and played into the open Fleet with `attach` 2026-11-03 (thirteenth pass: the lightning, the completion popup, the documentation pane, the parameter card and the Smart Mode card measured; the declaration, usages and diagnostics shots still to catch after the Jump-to prompt derailed the run). |
+| 13 | Debugger | M8 | Gutter breakpoint (enabled, disabled, hovered), the execution line, the Debug tool's frames, variables (one expanded) and watches, the Debugger Console's output and an evaluated expression, the Breakpoints tool, the floating debug panel and its tooltips, quick evaluate and the value on hover, the attach dialog. | Scene: `scenes/debug.json` (written 2026-11-04, not run yet: its coordinates are estimates to correct from the first shots; the fixture's `misc/debuggee.rs` and its `debug fixture` cargo row are what it stops in). |
 
 ## What the probes cannot settle
 
