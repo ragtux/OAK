@@ -1062,6 +1062,36 @@ eval.rs`). The hover value popup also fired on a word in a comment
 (`debugger` in line 1's). Fleet's Rust evaluation is unprobed (its watch step
 missed).
 
+## Twenty-first pass: macOS, batch 13 replayed after the corrections (2026-11-05)
+
+The corrections from the twentieth pass (commit 6f2bca7: five agents, one per
+owner, each measuring Fleet's shots) replayed with the scene's clicks taken
+from Fleet's layout. Fleet ran to the end this time (`DevToolsSecurity`
+enabled, the fixture regenerated before each editor). Now the same in both
+editors, within the half-scale side-by-side's reading: the gutter breakpoint
+and hint, the breakpoint's menu, Go to Action's breakpoint rows and titles,
+the run popup's Run ↩ / Debug ⌥↩ buttons, the run tab named after the
+configuration with the build's output, the right panel's Debug tool
+(Processes with its eight buttons and the session row, Threads & Frames,
+Variables with Add Watch, scopes collapsed until opened), the stopped line
+with its dot and no arrow, the floating panel at the editor's top right, the
+watch row (`total * 2 = {type} 28`), the Breakpoints tool (`Breakpoints 1` with
+its check box, `debuggee.rs:6  misc`) and the attach dialog's frame, header and
+rows. Fleet's attach list came in a different order from the twentieth
+pass's: it is unordered, so WEEP's newest-first stays.
+
+Still different:
+
+| what | Fleet | WEEP |
+|---|---|---|
+| a variable's row | `name: {type} value` (a colon; watches keep `expr = {type} value`) | `name = {type} value` for both |
+| scope names | Local, Static, Global, Registers (codelldb's) | Locals, Globals, Registers (lldb-dap's) |
+| Debugger Console | "Console is in 'commands' mode, prefix expressions with '?'." then "Launching: <program>"; an evaluation is a block: the input highlighted as code after a `›`, the result `{long long} 28` dimmed under it, "3ms" and a "rerun" link at the block's right, a rule between blocks | lldb-dap's init commands echoed (`(lldb) command script import …`), `> total * 2` then LLDB's `(int) $2 = 28`, no blocks |
+| focus on a stop | the frame row grey (the Debug tool not focused) | blue: WEEP focuses the Debug tool on the first stop |
+| thread label at the first stop | `1: tid=N "main"` | `1: tid=N` until the name arrives (it shows later) |
+| run tab | output wrapped with a hanging indent; the adapter's line further down | not wrapped |
+| quick evaluate | unprobed: the scene's click before Go to Line fell in Fleet's right panel (now (640, 300)) | a popup under the expression: `points = size=2 alloc::vec::Vec<…>`, Add to Watches |
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws
