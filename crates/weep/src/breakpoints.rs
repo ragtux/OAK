@@ -16,11 +16,14 @@
 //! ([`follow_edits`]). A workspace keeps its breakpoints across launches in
 //! `layout.json` ([`persist`]).
 
+use crate::actions::{DebugBreakpointsJumpToTool, PopupCancel};
 use crate::layout::{Layout, SavedBreakpoint};
+use crate::menu::{MenuEntry, MenuItem, SelectFn};
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use weep_text::{Buffer, Edit};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,6 +216,96 @@ impl BreakpointStore {
             cx.notify();
         }
     }
+}
+
+/// A row of the menu a right click on a breakpoint opens (batch 13: at the
+/// pointer, "Remove Breakpoint" with ⌫, "Disable Breakpoint", a separator,
+/// "View All Breakpoints").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GutterMenuRow {
+    Remove,
+    /// Disables an enabled breakpoint, enables a disabled one.
+    ToggleEnabled {
+        enabled: bool,
+    },
+    Separator,
+    /// Opens the Breakpoints tool (`debug/breakpoints/jump-to-tool`).
+    ViewAll,
+}
+
+impl GutterMenuRow {
+    pub fn label(self) -> &'static str {
+        match self {
+            GutterMenuRow::Remove => "Remove Breakpoint",
+            GutterMenuRow::ToggleEnabled { enabled: true } => "Disable Breakpoint",
+            // estimate: Fleet's row for a disabled breakpoint was not shot.
+            GutterMenuRow::ToggleEnabled { enabled: false } => "Enable Breakpoint",
+            GutterMenuRow::Separator => "",
+            GutterMenuRow::ViewAll => "View All Breakpoints",
+        }
+    }
+}
+
+/// The gutter menu's rows for a breakpoint.
+pub fn gutter_menu_rows(breakpoint: &LineBreakpoint) -> [GutterMenuRow; 4] {
+    [
+        GutterMenuRow::Remove,
+        GutterMenuRow::ToggleEnabled {
+            enabled: breakpoint.enabled,
+        },
+        GutterMenuRow::Separator,
+        GutterMenuRow::ViewAll,
+    ]
+}
+
+/// The menu for the breakpoint on `line` of `path` (none without one): its
+/// rows act on that breakpoint, not on the carets' lines. Fleet shows the
+/// remove chord (⌫) beside "Remove Breakpoint" and no other.
+pub fn gutter_menu(path: &Path, line: usize, cx: &App) -> Vec<MenuEntry> {
+    let Some(breakpoint) =
+        BreakpointStore::try_global(cx).and_then(|s| s.read(cx).at(path, line).cloned())
+    else {
+        return Vec::new();
+    };
+    gutter_menu_rows(&breakpoint)
+        .into_iter()
+        .map(|row| {
+            let path = path.to_path_buf();
+            let item = |shortcut: Option<String>, f: SelectFn| {
+                MenuEntry::Item(MenuItem {
+                    label: row.label().into(),
+                    shortcut: shortcut.map(Into::into),
+                    action: Box::new(PopupCancel),
+                    enabled: true,
+                    on_select: Some(f),
+                })
+            };
+            match row {
+                GutterMenuRow::Remove => item(
+                    crate::keymap::hint_for(cx, "debug/remove-breakpoint"),
+                    Rc::new(move |_, cx| {
+                        let store = BreakpointStore::global(cx);
+                        store.update(cx, |s, cx| s.remove(&path, line, cx));
+                    }),
+                ),
+                GutterMenuRow::ToggleEnabled { .. } => item(
+                    None,
+                    Rc::new(move |_, cx| {
+                        let store = BreakpointStore::global(cx);
+                        store.update(cx, |s, cx| s.toggle_enabled(&path, line, cx));
+                    }),
+                ),
+                GutterMenuRow::Separator => MenuEntry::Separator,
+                GutterMenuRow::ViewAll => MenuEntry::Item(MenuItem {
+                    label: row.label().into(),
+                    shortcut: None,
+                    action: Box::new(DebugBreakpointsJumpToTool),
+                    enabled: true,
+                    on_select: None,
+                }),
+            }
+        })
+        .collect()
 }
 
 /// Adds a breakpoint on `line` to a sorted list, or removes the one there;
@@ -432,6 +525,24 @@ pub fn persist<T: 'static>(root: PathBuf, cx: &mut Context<T>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gutter_menu_rows_follow_fleet() {
+        let mut b = LineBreakpoint::at(5);
+        let labels = |b: &LineBreakpoint| gutter_menu_rows(b).map(GutterMenuRow::label);
+        assert_eq!(
+            labels(&b),
+            [
+                "Remove Breakpoint",
+                "Disable Breakpoint",
+                "",
+                "View All Breakpoints"
+            ]
+        );
+        assert_eq!(gutter_menu_rows(&b)[2], GutterMenuRow::Separator);
+        b.enabled = false;
+        assert_eq!(labels(&b)[1], "Enable Breakpoint");
+    }
 
     /// The new line of each of `lines` (rows of `before`) after `edits` turned
     /// `before` into `after`; `None` for a deleted line.

@@ -8,13 +8,14 @@
 //!
 //! M8: Fleet lists a configuration once and offers Run and Debug on it
 //! (batch 5 caught a row with both buttons; batch 11's `command` rows had
-//! Run only). The selected row of a type WEEP debugs through a build
-//! (`cargo`) carries a "Debug" button after "Run" (estimate: the order and
-//! its width, the Run button's); Shift+Enter debugs the selected row of
-//! any type WEEP can debug (`cargo`, `command`; estimate: the gesture is
-//! unprobed).
+//! Run only). Batch 13 (macOS): the selected `cargo` row shows "Run ↩" and
+//! "Debug ⌥↩", the chord inside each button in `button.secondary.text.hint`;
+//! Alt+Enter debugs the selected row of any type WEEP can debug (`cargo`,
+//! `command`). With run.json's caret in a configuration, that one leads
+//! the workspace's list (batch 13: "debug fixture" first, the caret on it,
+//! no Recent section).
 
-use crate::actions::{PopupConfirm, PopupDown, PopupUp, RunDeleteConfiguration};
+use crate::actions::{PopupConfirm, PopupDown, PopupUp, RunDeleteConfiguration, RunPopupDebug};
 use crate::assets::icon;
 use crate::input::{InputEvent, TextInput};
 use crate::list_popup::{tui_cols, tui_input_row, tui_row, tui_top, TuiRow};
@@ -23,7 +24,7 @@ use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use gpui::{
     deferred, div, point, prelude::*, px, App, BoxShadow, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Pixels, Point, Render, SharedString, Window,
+    FocusHandle, Focusable, FontWeight, KeyBinding, Pixels, Point, Render, SharedString, Window,
 };
 use weep_run::RunConfig;
 
@@ -64,6 +65,8 @@ pub struct RunPopup {
     configs: Vec<RunConfig>,
     /// Recent runs, most recent first, as indices into `configs`.
     recent: Vec<usize>,
+    /// The configuration at run.json's caret, listed first.
+    context: Option<usize>,
     workspace: SharedString,
     rows: Vec<Row>,
     selected: usize,
@@ -76,6 +79,36 @@ impl Focusable for RunPopup {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.input.read(_cx).focus_handle(_cx)
     }
+}
+
+/// The popup's own key: Alt+Enter debugs the selected row (batch 13). In
+/// its own context, so the workspace's Alt+Enter (`replace-one`) is not
+/// reached from the popup.
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(
+        "alt-enter",
+        RunPopupDebug,
+        Some("RunPopup"),
+    )]);
+}
+
+/// The chords the Run and Debug buttons show: "↩" and "⌥↩" on macOS
+/// (batch 13), the platform's spelling elsewhere (estimate).
+fn button_chords() -> (String, String) {
+    (
+        crate::keymap::presentable("enter"),
+        crate::keymap::presentable("alt-enter"),
+    )
+}
+
+/// The workspace section's order: the configuration in context first, the
+/// rest as run.json lists them.
+fn config_order(count: usize, context: Option<usize>) -> Vec<usize> {
+    let first = context.filter(|c| *c < count);
+    first
+        .into_iter()
+        .chain((0..count).filter(|ix| Some(*ix) != first))
+        .collect()
 }
 
 /// Whether WEEP can debug a configuration type (M8): a `cargo` row through
@@ -104,6 +137,7 @@ impl RunPopup {
     pub fn new(
         configs: Vec<RunConfig>,
         recent: Vec<usize>,
+        context: Option<usize>,
         workspace: String,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -118,6 +152,7 @@ impl RunPopup {
             input,
             configs,
             recent,
+            context,
             workspace: workspace.into(),
             rows: Vec::new(),
             selected: 0,
@@ -147,8 +182,8 @@ impl RunPopup {
     fn on_input(&mut self, _: Entity<TextInput>, event: &InputEvent, cx: &mut Context<Self>) {
         match event {
             InputEvent::Changed => self.refilter(cx),
-            InputEvent::Submit { shift: false } => self.confirm_selected(cx),
-            InputEvent::Submit { shift: true } => self.debug_selected(cx),
+            // Shift+Enter is no debug gesture (batch 13: Alt+Enter is).
+            InputEvent::Submit { .. } => self.confirm_selected(cx),
             InputEvent::Cancel => cx.emit(RunPopupEvent::Cancel),
             _ => {}
         }
@@ -176,7 +211,8 @@ impl RunPopup {
             rows.extend(recent.iter().map(|ix| Row::Recent(*ix)));
             rows.push(Row::Separator);
         }
-        let configs: Vec<usize> = (0..self.configs.len())
+        let configs: Vec<usize> = config_order(self.configs.len(), self.context)
+            .into_iter()
             .filter(|ix| self.matches(&query, *ix))
             .collect();
         if !configs.is_empty() {
@@ -242,7 +278,11 @@ impl RunPopup {
         }
     }
 
-    /// Shift+Enter: the selected row under the debugger.
+    fn debug_action(&mut self, _: &RunPopupDebug, _: &mut Window, cx: &mut Context<Self>) {
+        self.debug_selected(cx);
+    }
+
+    /// Alt+Enter: the selected row under the debugger.
     fn debug_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(ix) = self.selected_config() {
             if debuggable(&self.configs[ix].kind) {
@@ -262,6 +302,35 @@ impl RunPopup {
                 }
             }
         }
+    }
+
+    /// A selected row's button: the label, then its chord in the hint
+    /// colour (batch 13: 20 tall, 4 in on either side, one space between).
+    fn row_button(
+        id: &'static str,
+        label: &'static str,
+        chord: String,
+        theme: &Theme,
+        m: &Metrics,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .flex_shrink_0()
+            .h(px(m.run_popup_button_height))
+            .px(px(m.run_popup_button_pad_x))
+            .flex()
+            .items_center()
+            .gap(px(m.run_popup_button_chord_gap))
+            .rounded(px(m.button_radius))
+            .bg(theme.button_secondary_bg)
+            .hover(|s| s.bg(theme.button_secondary_bg_hovered))
+            .text_color(theme.button_secondary_text)
+            .child(label)
+            .child(
+                div()
+                    .text_color(theme.button_secondary_text_hint)
+                    .child(chord),
+            )
     }
 
     fn render_row(
@@ -348,20 +417,17 @@ impl RunPopup {
                             )
                             .child(div().flex_1())
                             .when(selected, |d| {
+                                // Batch 13: "Run ↩" then, 4 on, "Debug ⌥↩";
+                                // the last one where Run alone ended.
+                                let (run_chord, debug_chord) = button_chords();
+                                let after = m.run_popup_button_gap - m.popup_row_icon_gap;
                                 d.child(
-                                    div()
-                                        .id("run-row-run")
-                                        .w(px(m.run_popup_button_width))
-                                        .h(px(m.run_popup_button_height))
-                                        .mr(px(m.run_popup_button_gap - m.popup_row_icon_gap))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(px(m.button_radius))
-                                        .bg(theme.button_secondary_bg)
-                                        .hover(|s| s.bg(theme.button_secondary_bg_hovered))
-                                        .text_color(theme.button_secondary_text)
-                                        .child("Run")
+                                    Self::row_button("run-row-run", "Run", run_chord, theme, m)
+                                        .mr(px(if with_debug {
+                                            m.run_popup_buttons_gap - m.popup_row_icon_gap
+                                        } else {
+                                            after
+                                        }))
                                         .on_click(move |_, _, cx| {
                                             cx.stop_propagation();
                                             run_entity.update(cx, |_, cx| {
@@ -369,29 +435,24 @@ impl RunPopup {
                                             })
                                         }),
                                 )
-                                // M8: "Debug" after "Run", the same button
-                                // (estimate).
                                 .when(with_debug, |d| {
                                     d.child(
-                                        div()
-                                            .id("run-row-debug")
-                                            .w(px(m.run_popup_button_width))
-                                            .h(px(m.run_popup_button_height))
-                                            .mr(px(m.run_popup_button_gap - m.popup_row_icon_gap))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(px(m.button_radius))
-                                            .bg(theme.button_secondary_bg)
-                                            .hover(|s| s.bg(theme.button_secondary_bg_hovered))
-                                            .text_color(theme.button_secondary_text)
-                                            .child("Debug")
-                                            .on_click(move |_, _, cx| {
+                                        Self::row_button(
+                                            "run-row-debug",
+                                            "Debug",
+                                            debug_chord,
+                                            theme,
+                                            m,
+                                        )
+                                        .mr(px(after))
+                                        .on_click(
+                                            move |_, _, cx| {
                                                 cx.stop_propagation();
                                                 debug_entity.update(cx, |_, cx| {
                                                     cx.emit(RunPopupEvent::Debug(config_ix))
                                                 })
-                                            }),
+                                            },
+                                        ),
                                     )
                                 })
                                 .child(
@@ -483,8 +544,9 @@ impl Render for RunPopup {
         deferred(
             div()
                 .id("run-popup")
-                .key_context("Popup")
+                .key_context("Popup RunPopup")
                 .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::debug_action))
                 .on_action(cx.listener(Self::up))
                 .on_action(cx.listener(Self::down))
                 .on_action(cx.listener(Self::confirm))
@@ -628,6 +690,7 @@ impl RunPopup {
             .children(body_rows)
             .into_any_element();
         let close = cx.entity();
+        let chords = button_chords();
         let mut boxed = skin::boxed(
             cell,
             cols,
@@ -646,7 +709,14 @@ impl RunPopup {
             rows - 1,
             2,
             cols.saturating_sub(4),
-            skin::hints(&[("↵", "run"), ("⇧↵", "debug"), ("esc", "close")], &theme),
+            skin::hints(
+                &[
+                    (chords.0.as_str(), "run"),
+                    (chords.1.as_str(), "debug"),
+                    ("esc", "close"),
+                ],
+                &theme,
+            ),
             bg,
         ));
         for (row, t) in titles {
@@ -662,8 +732,9 @@ impl RunPopup {
         deferred(
             div()
                 .id("run-popup")
-                .key_context("Popup")
+                .key_context("Popup RunPopup")
                 .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::debug_action))
                 .on_action(cx.listener(Self::up))
                 .on_action(cx.listener(Self::down))
                 .on_action(cx.listener(Self::confirm))
@@ -696,7 +767,7 @@ impl RunPopup {
             Row::Recent(config) | Row::Config(config) => {
                 let config_ix = *config;
                 let c = &self.configs[config_ix];
-                let mut row = TuiRow::text(skin::fit_text(&c.name, cols.saturating_sub(26)));
+                let mut row = TuiRow::text(skin::fit_text(&c.name, cols.saturating_sub(32)));
                 row.glyph = Some(Self::tui_glyph(&c.kind, theme));
                 row.italic = matches!(self.rows[ix], Row::Recent(_));
                 let run = entity.clone();
@@ -726,8 +797,12 @@ impl RunPopup {
                     })
                 })
                 .when(selected, |d| {
+                    // `[ Run ↩ ] [ Debug ⌥↩ ] ⋯` as Fleet's row (batch 13).
+                    let (run_chord, debug_chord) = button_chords();
+                    let run_label = format!("Run {run_chord}");
+                    let debug_label = format!("Debug {debug_chord}");
                     d.child(
-                        skin::button("run-row-run", "Run", false, theme, cell).on_click(
+                        skin::button("run-row-run", &run_label, false, theme, cell).on_click(
                             move |_, _, cx| {
                                 cx.stop_propagation();
                                 run.update(cx, |_, cx| cx.emit(RunPopupEvent::Run(config_ix)))
@@ -737,14 +812,13 @@ impl RunPopup {
                     .child(div().w(cell.cols(1)).flex_shrink_0())
                     .when(with_debug, |d| {
                         d.child(
-                            skin::button("run-row-debug", "Debug", false, theme, cell).on_click(
-                                move |_, _, cx| {
+                            skin::button("run-row-debug", &debug_label, false, theme, cell)
+                                .on_click(move |_, _, cx| {
                                     cx.stop_propagation();
                                     debug.update(cx, |_, cx| {
                                         cx.emit(RunPopupEvent::Debug(config_ix))
                                     })
-                                },
-                            ),
+                                }),
                         )
                         .child(div().w(cell.cols(1)).flex_shrink_0())
                     })
@@ -776,5 +850,25 @@ impl RunPopup {
                     .into_any_element()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_configuration_in_context_leads() {
+        // Batch 13: run.json lists echo hello, fail, run fixture, debug
+        // fixture; the caret on the last, Fleet listed it first.
+        assert_eq!(config_order(4, Some(3)), vec![3, 0, 1, 2]);
+        assert_eq!(config_order(4, None), vec![0, 1, 2, 3]);
+        assert_eq!(config_order(2, Some(7)), vec![0, 1]);
+    }
+
+    #[test]
+    fn debug_buttons_and_gesture_targets() {
+        assert!(debug_button("cargo") && !debug_button("command"));
+        assert!(debuggable("command") && !debuggable("docker"));
     }
 }

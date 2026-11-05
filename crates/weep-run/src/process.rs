@@ -1,6 +1,7 @@
-//! A running configuration: the child process, its merged output a line at
-//! a time, and its exit. Two threads read stdout and stderr, a third waits
-//! for the exit; each sends on a channel and wakes the owner.
+//! A running configuration: the child process, its output a line at a time
+//! (stdout and stderr told apart: the run tool paints stderr red, batch 13),
+//! and its exit. Two threads read stdout and stderr, a third waits for the
+//! exit; each sends on a channel and wakes the owner.
 
 use crate::config::Command;
 use std::io::{BufRead, BufReader};
@@ -8,11 +9,12 @@ use std::process::Stdio;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-/// What the process sent: a line (without its newline), or its exit code
-/// (`None` when a signal ended it).
+/// What the process sent: a line of stdout or of stderr (without its
+/// newline), or its exit code (`None` when a signal ended it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Line(String),
+    Stderr(String),
     Exited(Option<i32>),
 }
 
@@ -50,10 +52,10 @@ impl Run {
         let (tx, rx) = channel();
         let mut readers = Vec::new();
         if let Some(out) = child.stdout.take() {
-            readers.push(reader(Box::new(out), tx.clone(), wake.clone()));
+            readers.push(reader(Box::new(out), false, tx.clone(), wake.clone()));
         }
         if let Some(err) = child.stderr.take() {
-            readers.push(reader(Box::new(err), tx.clone(), wake.clone()));
+            readers.push(reader(Box::new(err), true, tx.clone(), wake.clone()));
         }
         // The exit is reported after the readers drained the pipes, so no
         // line arrives after `Exited`.
@@ -122,6 +124,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 fn reader(
     source: Box<dyn std::io::Read + Send>,
+    stderr: bool,
     tx: Sender<Event>,
     wake: Wake,
 ) -> std::thread::JoinHandle<()> {
@@ -137,7 +140,12 @@ fn reader(
                         buf.pop();
                     }
                     let line = String::from_utf8_lossy(&buf).into_owned();
-                    if tx.send(Event::Line(line)).is_err() {
+                    let event = if stderr {
+                        Event::Stderr(line)
+                    } else {
+                        Event::Line(line)
+                    };
+                    if tx.send(event).is_err() {
                         break;
                     }
                     wake();
@@ -193,6 +201,17 @@ mod tests {
         let mut run = Run::spawn(&command, || {}).unwrap();
         let events = drain(&mut run);
         assert_eq!(events.last(), Some(&Event::Exited(Some(3))));
+    }
+
+    #[test]
+    fn stderr_lines_are_told_apart() {
+        let command = Command::shell("echo to-err 1>&2", Path::new("."));
+        let mut run = Run::spawn(&command, || {}).unwrap();
+        let events = drain(&mut run);
+        assert_eq!(
+            events,
+            vec![Event::Stderr("to-err".into()), Event::Exited(Some(0))]
+        );
     }
 
     #[test]

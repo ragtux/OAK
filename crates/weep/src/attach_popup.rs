@@ -1,17 +1,25 @@
 //! Fleet's `debugger/attach-to-process` ("Opens dialog to attach the
 //! debugger to the manually specified or discovered processes", M8): the
-//! Goto popup's frame with an "Attach to Process" title, a field, and the
-//! user's processes (name, command line, pid) filtered by the Goto matcher
-//! (`weep-search`'s fuzzy); a typed pid that is not listed is offered too.
-//! Enter hands the chosen pid to the caller, which starts an attach
-//! session (`weep_dap::Start::Attach`).
+//! Goto frame titled "Attach to Process", a field ("Enter host:port or
+//! search process"), a group header "LLDB" (the debugger the processes are
+//! listed for), then a row per process, `pid name`, filtered by the Goto
+//! matcher (`weep-search`'s fuzzy) on the name, or by a typed pid; a typed
+//! pid that is not listed is offered too. Enter hands the chosen pid to the
+//! caller, which starts an attach session (`weep_dap::Start::Attach`).
 //!
-//! The processes come from `ps` on macOS and Linux (the user's own: `-x`
-//! without `-a`; names and command lines read in two calls, since `ps`
-//! cuts or pads the name column) and `tasklist` on Windows; the parsing is
-//! plain functions, tested. Batch 13 has not run: that Fleet frames the
-//! dialog as Goto, its wording and its row order (newest pid first) are
-//! estimates; the sizes are the Goto popup's (batch 6).
+//! Batch 13 (debug-fleet-attach, -attach-filtered) settled the wording, the
+//! header, the rows (no command line, no count in the title) and that
+//! every process is listed, root's and the system users' too. Fleet's
+//! order follows no key the shot shows (not the pid, the name, the user,
+//! the start time, CPU time or memory: 44055, 25496, 603, 11803, 1060...;
+//! "zsh" left 67006, 35653, 37106, 62762, 42625), as a hash map's would;
+//! WEEP keeps a stable one, newest pid first (estimate). A host:port typed
+//! for a remote attach (Fleet's placeholder offers it) is not taken:
+//! lldb-dap reaches a remote only through `gdb-remote` attach commands,
+//! which `weep_dap::Start::Attach` does not carry.
+//!
+//! The processes come from `ps -A` on macOS and Linux and `tasklist` on
+//! Windows; the parsing is plain functions, tested.
 
 use crate::actions::{PopupConfirm, PopupDown, PopupPageDown, PopupPageUp, PopupUp};
 use crate::input::{InputEvent, TextInput};
@@ -31,6 +39,13 @@ use weep_search::fuzzy_match;
 /// What runs when a process is chosen: its pid and its name.
 pub type OnAttach = Rc<dyn Fn(u32, String, &mut Window, &mut App)>;
 
+/// The field's placeholder (batch 13).
+const PLACEHOLDER: &str = "Enter host:port or search process";
+
+/// The group header over the rows: the debugger they are listed for
+/// (batch 13: "LLDB"; WEEP's adapter is lldb-dap).
+const GROUP: &str = "LLDB";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttachPopupEvent {
     Close,
@@ -42,8 +57,6 @@ pub struct Process {
     pub pid: u32,
     /// The executable's name.
     pub name: String,
-    /// The command line (empty where the platform gives none).
-    pub command: String,
 }
 
 // ---- listing ---------------------------------------------------------------------
@@ -64,18 +77,14 @@ pub fn parse_pid_lines(output: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
-/// The processes from `ps`'s two answers, names (`-o pid=,comm=`) and
-/// command lines (`-o pid=,args=`), joined on the pid. A name given as a
-/// path keeps its last part; a process missing from one answer (it ended
-/// between the calls) is dropped.
-pub fn join_ps(names: &str, args: &str) -> Vec<Process> {
-    let args: std::collections::HashMap<u32, String> = parse_pid_lines(args).into_iter().collect();
-    parse_pid_lines(names)
+/// The processes from `ps -o pid=,comm=`: a name given as a path keeps its
+/// last part; a line without a name is dropped.
+pub fn parse_ps(output: &str) -> Vec<Process> {
+    parse_pid_lines(output)
         .into_iter()
         .filter_map(|(pid, name)| {
-            let command = args.get(&pid)?.clone();
             let name = name.rsplit('/').next().unwrap_or(&name).to_string();
-            (!name.is_empty()).then_some(Process { pid, name, command })
+            (!name.is_empty()).then_some(Process { pid, name })
         })
         .collect()
 }
@@ -103,7 +112,7 @@ fn csv_fields(line: &str) -> Vec<String> {
 }
 
 /// `tasklist /fo csv /nh` output: `"Image Name","PID","Session Name",
-/// "Session#","Mem Usage"` rows. Tasklist gives no command line.
+/// "Session#","Mem Usage"` rows.
 pub fn parse_tasklist(output: &str) -> Vec<Process> {
     output
         .lines()
@@ -112,11 +121,7 @@ pub fn parse_tasklist(output: &str) -> Vec<Process> {
             let f = csv_fields(line.trim());
             let pid = f.get(1)?.trim().parse().ok()?;
             let name = f.first()?.trim().to_string();
-            (!name.is_empty()).then_some(Process {
-                pid,
-                name,
-                command: String::new(),
-            })
+            (!name.is_empty()).then_some(Process { pid, name })
         })
         .collect()
 }
@@ -141,32 +146,26 @@ fn run(program: &str, args: &[&str]) -> Result<(u32, String), String> {
     Ok((pid, String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
-/// The user's processes, newest (highest pid) first, without WEEP itself
-/// and the lister.
+/// Every process (batch 13: Fleet lists root's and the system users' too),
+/// newest (highest pid) first, without WEEP itself, the lister and pid 0.
 pub fn list_processes() -> Result<Vec<Process>, String> {
-    let mut skip = vec![std::process::id()];
+    let mut skip = vec![0, std::process::id()];
     let mut processes = if cfg!(windows) {
-        let user = std::env::var("USERNAME").unwrap_or_default();
-        let filter = format!("USERNAME eq {user}");
-        let mut args = vec!["/fo", "csv", "/nh"];
-        if !user.is_empty() {
-            args.extend(["/fi", filter.as_str()]);
-        }
-        let (pid, out) = run("tasklist", &args)?;
+        let (pid, out) = run("tasklist", &["/fo", "csv", "/nh"])?;
         skip.push(pid);
         parse_tasklist(&out)
     } else {
-        // macOS's `-c` gives the executable's name, whole; Linux's `comm`
-        // is the name already (and its `-c` means something else).
-        let names_args: &[&str] = if cfg!(target_os = "macos") {
-            &["-xco", "pid=,comm="]
+        // macOS's `-c` gives the executable's whole name ("Google Chrome
+        // Helper (Renderer)"); Linux's `comm` is the name already (and its
+        // `-c` means something else).
+        let args: &[&str] = if cfg!(target_os = "macos") {
+            &["-Aco", "pid=,comm="]
         } else {
-            &["-xo", "pid=,comm="]
+            &["-Ao", "pid=,comm="]
         };
-        let (a, names) = run("ps", names_args)?;
-        let (b, args) = run("ps", &["-xo", "pid=,args="])?;
-        skip.extend([a, b]);
-        join_ps(&names, &args)
+        let (pid, out) = run("ps", args)?;
+        skip.push(pid);
+        parse_ps(&out)
     };
     processes.retain(|p| !skip.contains(&p.pid));
     processes.sort_by_key(|p| std::cmp::Reverse(p.pid));
@@ -194,8 +193,8 @@ pub enum Row {
 
 /// The rows for `query`, best first: a typed pid matches its process
 /// exactly first, then pids starting with it; otherwise the name through
-/// the Goto matcher, with the command line as a weaker match. An empty
-/// query lists everything in the given order. At most `limit` rows.
+/// the Goto matcher (batch 13: "zsh" marks the name alone). An empty query
+/// lists everything in the given order. At most `limit` rows.
 pub fn filter_processes(processes: &[Process], query: &str, limit: usize) -> Vec<Row> {
     let q = query.trim();
     if q.is_empty() {
@@ -221,14 +220,10 @@ pub fn filter_processes(processes: &[Process], query: &str, limit: usize) -> Vec
             }
         }
         if let Some(m) = fuzzy_match(q, &p.name) {
-            scored.push((m.score + 1000, ix, m.positions));
-        } else if !p.command.is_empty() {
-            if let Some(m) = fuzzy_match(q, &p.command) {
-                scored.push((m.score, ix, Vec::new()));
-            }
+            scored.push((m.score, ix, m.positions));
         }
     }
-    // Best first; among equals the list's own order (newest first).
+    // Best first; among equals the list's own order.
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let mut rows: Vec<Row> = Vec::new();
     if let Some(pid) = pid {
@@ -245,6 +240,17 @@ pub fn filter_processes(processes: &[Process], query: &str, limit: usize) -> Vec
     rows
 }
 
+/// A row's text, `pid name` (batch 13), and the char positions of the
+/// name's matched chars in it.
+pub fn row_text(pid: u32, name: &str, positions: &[usize]) -> (String, Vec<usize>) {
+    let pid = pid.to_string();
+    let shift = pid.chars().count() + 1;
+    (
+        format!("{pid} {name}"),
+        positions.iter().map(|p| p + shift).collect(),
+    )
+}
+
 /// Char indices to the byte ranges of `text` they cover, one per char.
 fn char_ranges(text: &str, positions: &[usize]) -> Vec<Range<usize>> {
     text.char_indices()
@@ -254,8 +260,9 @@ fn char_ranges(text: &str, positions: &[usize]) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// Rows shown at most (estimate: Fleet's Text Search caps its list at 100).
-const ROW_LIMIT: usize = 100;
+/// Rows shown at most (estimate: enough for every process of a desktop
+/// session; Fleet's list scrolls on past the 22 rows its frame shows).
+const ROW_LIMIT: usize = 1000;
 
 // ---- the popup ---------------------------------------------------------------------
 
@@ -283,7 +290,7 @@ impl Focusable for AttachPopup {
 impl AttachPopup {
     pub fn new(on_attach: OnAttach, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            let mut input = TextInput::new("Process name or PID", cx);
+            let mut input = TextInput::new(PLACEHOLDER, cx);
             input.tui_prompt = false;
             input
         });
@@ -413,23 +420,15 @@ impl AttachPopup {
         }
     }
 
-    fn row_texts(&self, row: &Row) -> (String, Vec<usize>, String, String) {
+    /// A row's text and the char positions to mark in it.
+    fn row_texts(&self, row: &Row) -> (String, Vec<usize>) {
         match row {
             Row::Process { ix, positions } => {
                 let p = &self.listed()[*ix];
-                (
-                    p.name.clone(),
-                    positions.clone(),
-                    p.command.clone(),
-                    p.pid.to_string(),
-                )
+                row_text(p.pid, &p.name, positions)
             }
-            Row::Typed(pid) => (
-                format!("Attach to PID {pid}"),
-                Vec::new(),
-                String::new(),
-                pid.to_string(),
-            ),
+            // WEEP's own row (estimate): a typed pid nobody lists.
+            Row::Typed(pid) => (format!("{pid} Attach to PID {pid}"), Vec::new()),
         }
     }
 }
@@ -444,6 +443,11 @@ impl Render for AttachPopup {
         let viewport = window.viewport_size();
         let width = px(m.goto_width).min(viewport.width - px(2. * m.island_margin));
         let left = (viewport.width - width) / 2.;
+        // Fleet's frame keeps its height while the list shrinks (batch 13:
+        // 680 tall, filtered to five rows or not).
+        let height = px(m.goto_max_height)
+            .min(viewport.height - px(m.goto_top + m.island_margin))
+            .max(px(0.));
         let field_focused = self.input.read(cx).is_focused(window);
         let entity = cx.entity();
         let rows: Vec<AnyElement> = self
@@ -452,9 +456,9 @@ impl Render for AttachPopup {
             .enumerate()
             .map(|(ix, row)| {
                 let selected = ix == self.selected;
-                let (name, positions, command, pid) = self.row_texts(row);
+                let (text, positions) = self.row_texts(row);
                 let highlights: Vec<(Range<usize>, HighlightStyle)> =
-                    char_ranges(&name, &positions)
+                    char_ranges(&text, &positions)
                         .into_iter()
                         .map(|r| {
                             (
@@ -469,53 +473,46 @@ impl Render for AttachPopup {
                         .collect();
                 let click = entity.clone();
                 let hover = entity.clone();
+                // A 24 px row on a 26 px pitch (batch 13: the selected box
+                // 340-388 px, the rows 52 px apart), the Goto's.
                 div()
-                    .id(ElementId::NamedInteger("attach-row".into(), ix as u64))
                     .h(px(m.goto_row_pitch))
                     .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .px(px(m.popup_row_pad_x))
-                    .rounded(px(m.popup_row_radius))
-                    .cursor_pointer()
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .text_color(if selected {
-                        theme.list_text_focused
-                    } else {
-                        theme.list_text
-                    })
-                    .when(selected, |d| d.bg(theme.list_bg_focused))
-                    .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
-                    .on_mouse_move(move |_, _, cx| {
-                        hover.update(cx, |this, cx| {
-                            if this.selected != ix {
-                                this.selected = ix;
-                                cx.notify();
-                            }
-                        })
-                    })
-                    .on_click(move |_, _, cx| {
-                        click.update(cx, |this, cx| this.choose(Some(ix), cx))
-                    })
-                    .child(div().flex_shrink_0().child(
-                        StyledText::new(SharedString::from(name)).with_highlights(highlights),
-                    ))
                     .child(
                         div()
-                            .ml(px(m.popup_row_icon_gap))
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(theme.list_text_secondary)
-                            .child(SharedString::from(command)),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .ml(px(m.popup_row_icon_gap))
-                            .text_color(theme.list_text_secondary)
-                            .child(SharedString::from(pid)),
+                            .id(ElementId::NamedInteger("attach-row".into(), ix as u64))
+                            .h(px(m.goto_row_height))
+                            .flex()
+                            .items_center()
+                            .px(px(m.popup_row_pad_x))
+                            .rounded(px(m.popup_row_radius))
+                            .cursor_pointer()
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .text_color(if selected {
+                                theme.list_text_focused
+                            } else {
+                                theme.list_text
+                            })
+                            .when(selected, |d| d.bg(theme.list_bg_focused))
+                            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                            .on_mouse_move(move |_, _, cx| {
+                                hover.update(cx, |this, cx| {
+                                    if this.selected != ix {
+                                        this.selected = ix;
+                                        cx.notify();
+                                    }
+                                })
+                            })
+                            .on_click(move |_, _, cx| {
+                                click.update(cx, |this, cx| this.choose(Some(ix), cx))
+                            })
+                            .child(
+                                div().min_w_0().truncate().child(
+                                    StyledText::new(SharedString::from(text))
+                                        .with_highlights(highlights),
+                                ),
+                            ),
                     )
                     .into_any_element()
             })
@@ -533,7 +530,20 @@ impl Render for AttachPopup {
                 })
                 .child(text)
         });
-        let count: SharedString = self.listed().len().to_string().into();
+        // The group header over the rows (batch 13: "LLDB" in
+        // `text.secondary`, smaller than the rows, its caps centred 13 under
+        // the field's bottom edge plus the 8 gap).
+        let header = (!self.rows.is_empty()).then(|| {
+            div()
+                .h(px(m.goto_header_height))
+                .px(px(m.popup_row_pad_x))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .text_size(px(m.attach_header_font))
+                .text_color(theme.text_secondary)
+                .child(GROUP)
+        });
         let close = entity.clone();
         deferred(
             div()
@@ -553,7 +563,7 @@ impl Render for AttachPopup {
                 .left(left)
                 .top(px(m.goto_top))
                 .w(width)
-                .max_h(px(m.goto_max_height))
+                .h(height)
                 .flex()
                 .flex_col()
                 .rounded(px(m.popup_radius))
@@ -579,19 +589,18 @@ impl Render for AttachPopup {
                         .flex()
                         .items_center()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("Attach to Process")
-                        .child(div().flex_1())
-                        .child(
-                            div()
-                                .font_weight(FontWeight::NORMAL)
-                                .text_color(theme.text_secondary)
-                                .child(count),
-                        ),
+                        .child("Attach to Process"),
                 )
                 .child(
                     div().px(px(m.goto_pad - 1.)).flex_shrink_0().flex().child(
                         frame(field_focused, window, &theme, &m)
                             .pl(px(m.goto_pad))
+                            // The field is filled as the dialog under it
+                            // (batch 13: the dialog's colour inside the
+                            // focus frame), not as an island.
+                            .when(field_focused, |d| {
+                                d.bg(theme.popup_goto_bg.blend(theme.input_bg))
+                            })
                             .child(div().flex_1().min_w_0().h_full().child(self.input.clone())),
                     ),
                 )
@@ -603,11 +612,11 @@ impl Render for AttachPopup {
                         .min_h_0()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll)
-                        .pl(px(m.goto_pad - 1.))
-                        .pr(px(m.run_popup_rows_pad_right))
+                        .px(px(m.attach_rows_pad_x))
                         .pb(px(m.goto_bottom_pad))
                         .flex()
                         .flex_col()
+                        .children(header)
                         .children(status)
                         .children(rows),
                 ),
@@ -619,10 +628,11 @@ impl Render for AttachPopup {
 // ---- the tui skin ------------------------------------------------------------------
 
 impl AttachPopup {
-    /// The dialog in the tui skin: a Goto box under the toolbar, the title
-    /// in its top edge and the count at its right end, the field on row 1,
-    /// a rule, then ` name  dim/command  pid` rows with the matched chars
-    /// coloured; ` ↵ attach  esc close ` in the bottom edge.
+    /// The dialog in the tui skin: a Goto box under the toolbar of the
+    /// Fleet frame's height, the title in its top edge, the field on row 1,
+    /// a rule, the `LLDB` header in `text_secondary`, then ` pid name` rows
+    /// with the matched chars coloured; ` ↵ attach  esc close ` in the
+    /// bottom edge.
     fn render_tui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
@@ -631,8 +641,8 @@ impl AttachPopup {
         let cols = tui_cols(m.goto_width, cell, window);
         let inner = cols - 2;
         let max_rows = crate::list_popup::tui_max_rows(cell, &m, window);
-        let total = self.rows.len().max(1);
-        let visible = total.min(max_rows.saturating_sub(4)).max(1);
+        // Field, rule, header: the rows' room is the rest of the fixed box.
+        let visible = max_rows.saturating_sub(5).max(1);
         self.tui_scroll
             .follow(self.selected, self.rows.len(), visible);
         let top = self.tui_scroll.top;
@@ -652,13 +662,21 @@ impl AttachPopup {
                     .child(SharedString::from(skin::fit_text(&text, inner - 2)))
                     .into_any_element(),
             );
+        } else {
+            body_rows.push(
+                div()
+                    .h(px(cell.h))
+                    .flex_shrink_0()
+                    .pl(cell.cols(1))
+                    .text_color(theme.text_secondary)
+                    .child(GROUP)
+                    .into_any_element(),
+            );
         }
         for (ix, row) in self.rows.iter().enumerate().skip(top).take(visible) {
-            let (name, positions, command, pid) = self.row_texts(row);
-            let mut r = TuiRow::text(name.clone());
-            r.highlights = char_ranges(&name, &positions);
-            r.detail = (!command.is_empty()).then(|| command.into());
-            r.right = Some(pid.into());
+            let (text, positions) = self.row_texts(row);
+            let mut r = TuiRow::text(text.clone());
+            r.highlights = char_ranges(&text, &positions);
             let click = entity.clone();
             body_rows.push(
                 tui_row(
@@ -674,8 +692,8 @@ impl AttachPopup {
             );
         }
         let field_focused = self.input.read(cx).is_focused(window);
-        let shown = body_rows.len().max(1);
-        let rows = 4 + shown;
+        // The box keeps its height as the list shrinks, as Fleet's frame.
+        let rows = 5 + visible;
         let n = self.rows.len();
         let body = div()
             .size_full()
@@ -697,7 +715,6 @@ impl AttachPopup {
             .child(div().h(px(cell.h)).flex_shrink_0())
             .children(body_rows)
             .into_any_element();
-        let count = SharedString::from(format!(" {} ", self.listed().len()));
         let mut boxed = skin::boxed(
             cell,
             cols,
@@ -711,15 +728,6 @@ impl AttachPopup {
             m,
         )
         .occlude()
-        .child(skin::edge_strip_end(
-            cell,
-            0,
-            vec![div()
-                .text_color(theme.text_tertiary)
-                .child(count)
-                .into_any_element()],
-            bg,
-        ))
         .child(skin::edge_strip(
             cell,
             rows - 1,
@@ -732,7 +740,7 @@ impl AttachPopup {
             boxed = boxed.child(tui_scrollbar(
                 cell,
                 cols - 1,
-                3,
+                4,
                 rows - 1,
                 top,
                 visible,
@@ -768,26 +776,26 @@ impl AttachPopup {
 mod tests {
     use super::*;
 
-    const NAMES: &str = "    1 launchd\n  351 logd\n 4242 Google Chrome Helper\n  900 zsh\n";
-    const ARGS: &str = "    1 /sbin/launchd\n  351 /usr/libexec/logd\n 4242 /Applications/Google Chrome.app/Contents/Frameworks/Helper --type=gpu\n";
-
     #[test]
-    fn ps_answers_join_on_the_pid() {
-        let p = join_ps(NAMES, ARGS);
-        // zsh ended between the two calls: dropped.
+    fn ps_names() {
+        let p = parse_ps("    1 launchd\n  351 logd\n 4242 Google Chrome Helper (Renderer)\n");
         assert_eq!(p.len(), 3);
         assert_eq!(
             p[2],
             Process {
                 pid: 4242,
-                name: "Google Chrome Helper".into(),
-                command: "/Applications/Google Chrome.app/Contents/Frameworks/Helper --type=gpu"
-                    .into(),
+                name: "Google Chrome Helper (Renderer)".into(),
             }
         );
         // Linux's `comm` can be a path's last part only; a path keeps its name.
-        let p = join_ps("  7 /usr/bin/python3\n", "  7 python3 -m http.server\n");
-        assert_eq!(p[0].name, "python3");
+        let p = parse_ps("  7 /usr/bin/python3\n  8 \n");
+        assert_eq!(
+            p,
+            vec![Process {
+                pid: 7,
+                name: "python3".into()
+            }]
+        );
         assert!(parse_pid_lines("garbage\n\n  12\n")
             .iter()
             .all(|(pid, _)| *pid == 12));
@@ -803,7 +811,6 @@ mod tests {
         assert_eq!(p[1].pid, 10456);
         assert_eq!(p[1].name, "weep.exe");
         assert_eq!(p[2].name, "odd \"name\".exe");
-        assert!(p.iter().all(|p| p.command.is_empty()));
         assert!(
             parse_tasklist("INFO: No tasks are running which match the specified criteria.")
                 .is_empty()
@@ -815,17 +822,14 @@ mod tests {
             Process {
                 pid: 4242,
                 name: "probe-fixture".into(),
-                command: "target/debug/probe-fixture".into(),
             },
             Process {
                 pid: 4200,
                 name: "zsh".into(),
-                command: "-zsh".into(),
             },
             Process {
                 pid: 42,
                 name: "python3".into(),
-                command: "python3 -m http.server".into(),
             },
         ]
     }
@@ -849,18 +853,29 @@ mod tests {
         // A pid nobody has is offered as typed.
         let rows = filter_processes(&p, "99", 10);
         assert_eq!(rows, vec![Row::Typed(99)]);
-        // Names through the fuzzy matcher, the command line weaker.
+        // Names through the fuzzy matcher, the name alone.
         let rows = filter_processes(&p, "fix", 10);
         assert!(matches!(&rows[0], Row::Process { ix: 0, positions } if positions.len() == 3));
-        let rows = filter_processes(&p, "http", 10);
+        let rows = filter_processes(&p, "zsh", 10);
         assert_eq!(
             rows,
             vec![Row::Process {
-                ix: 2,
-                positions: Vec::new()
+                ix: 1,
+                positions: vec![0, 1, 2]
             }]
         );
         assert!(filter_processes(&p, "nothing-like-it", 10).is_empty());
+        // A host:port matches no name: nothing (no remote attach).
+        assert!(filter_processes(&p, "localhost:1234", 10).is_empty());
+    }
+
+    #[test]
+    fn rows_read_pid_then_name() {
+        // batch 13: "67006 zsh", the name's match marked.
+        let (text, marks) = row_text(67006, "zsh", &[0, 1, 2]);
+        assert_eq!(text, "67006 zsh");
+        assert_eq!(marks, vec![6, 7, 8]);
+        assert_eq!(char_ranges(&text, &marks), vec![6..7, 7..8, 8..9]);
     }
 
     #[test]
@@ -879,10 +894,12 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn lists_this_users_processes() {
+    fn lists_every_users_processes() {
         let p = list_processes().expect("ps runs");
         assert!(!p.is_empty());
         assert!(p.iter().all(|p| p.pid != std::process::id()));
         assert!(p.windows(2).all(|w| w[0].pid > w[1].pid));
+        // launchd (macOS) or init (Linux), root's: listed too.
+        assert!(p.iter().any(|p| p.pid == 1));
     }
 }

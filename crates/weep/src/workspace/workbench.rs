@@ -43,17 +43,16 @@ pub(super) fn toggle_hints(cx: &App) -> [Option<SharedString>; 3] {
 
 /// Which panel a tool opens in when Goto or the toolbar asks for it:
 /// Fleet's fresh window puts Files, Search, Git and History on the left;
-/// the run-time tools below; the rest on the right (estimate).
-fn tool_side(tool: Tool) -> Side {
+/// the run-time tools below; the rest on the right (estimate). M8 (batch
+/// 13): the Debug tool opens in the right panel, Breakpoints beside it; the
+/// Debugger Console below, by the session's run tab.
+pub(super) fn tool_side(tool: Tool) -> Side {
     match tool {
         Tool::Files | Tool::Search | Tool::Git | Tool::History | Tool::Snapshots => Side::Left,
-        Tool::Terminal
-        | Tool::Run
-        | Tool::Debug
-        | Tool::DebuggerConsole
-        | Tool::BuildOutput
-        | Tool::Problems
-        | Tool::Breakpoints => Side::Bottom,
+        Tool::Terminal | Tool::Run | Tool::DebuggerConsole | Tool::BuildOutput | Tool::Problems => {
+            Side::Bottom
+        }
+        Tool::Debug | Tool::Breakpoints => Side::Right,
         Tool::Notifications | Tool::Preview => Side::Right,
     }
 }
@@ -1593,6 +1592,21 @@ impl Workspace {
         self.open_menu(entries, position, Some(focus), cx);
     }
 
+    /// M8: a right click on a breakpoint in an editor's gutter opens Fleet's
+    /// breakpoint menu at the pointer (batch 13; `breakpoints::gutter_menu`).
+    pub(super) fn breakpoint_context_menu(
+        &mut self,
+        editor: &Entity<EditorView>,
+        position: Point<Pixels>,
+        path: &std::path::Path,
+        line: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = editor.read(cx).focus_handle(cx);
+        let entries = crate::breakpoints::gutter_menu(path, line, cx);
+        self.open_menu(entries, position, Some(focus), cx);
+    }
+
     // ---- the Goto panel -------------------------------------------------------------------
 
     fn goto_sources(&mut self, cx: &mut Context<Self>) -> GotoSources {
@@ -1644,8 +1658,10 @@ impl Workspace {
         }
     }
 
-    /// Opens the Goto panel in `mode`, or switches the open one to it. The
-    /// field starts with the editor's one-line selection when
+    /// Opens the Goto panel in `mode`. While it is open, the chord of the
+    /// list it shows closes it and another list's chord switches to that
+    /// list with an empty field (`goto::Reopen`; batch 13). The field
+    /// starts with the editor's one-line selection when
     /// `editor.useSelectionForSearch` is on.
     pub(super) fn open_goto(
         &mut self,
@@ -1654,8 +1670,17 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(goto) = self.goto.clone() {
-            goto.update(cx, |g, cx| g.set_mode(mode, cx));
-            goto.read(cx).focus_handle(cx).focus(window, cx);
+            match goto.read(cx).mode().reopen(mode) {
+                crate::goto::Reopen::Close => {
+                    self.goto = None;
+                    self.focus_editor_now(window, cx);
+                    cx.notify();
+                }
+                crate::goto::Reopen::Switch => {
+                    goto.update(cx, |g, cx| g.switch_to(mode, cx));
+                    goto.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            }
             return;
         }
         let use_selection = Self::settings(cx).editor_use_selection_for_search();
@@ -1704,6 +1729,16 @@ impl Workspace {
 
     /// `find-in-path` / `replace-in-path`: the Text Search tab.
     fn open_text_search(&mut self, replace: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // The other of find/replace-in-path on the Text Search tab turns
+        // the Replace field on or off, keeping the query.
+        if let Some(goto) = self.goto.clone() {
+            let g = goto.read(cx);
+            if g.mode() == GotoMode::TextSearch && g.replace_mode() != replace {
+                goto.update(cx, |g, cx| g.set_replace_mode(replace, cx));
+                goto.read(cx).focus_handle(cx).focus(window, cx);
+                return;
+            }
+        }
         self.open_goto(GotoMode::TextSearch, window, cx);
         if replace {
             if let Some(goto) = self.goto.clone() {

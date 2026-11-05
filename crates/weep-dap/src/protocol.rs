@@ -3,6 +3,7 @@
 //! into [`Response`] and [`Event`] (1-based lines made 0-based). Pure
 //! functions, so the mapping is tested without an adapter.
 
+use crate::eval::{EvalRequest, Walk};
 use crate::{
     Breakpoint, EvalContext, Event, LaunchRequest, OutputCategory, Response, Scope,
     SourceBreakpoint, StackFrame, Thread, Variable,
@@ -25,7 +26,11 @@ pub(crate) enum Pending {
     StackTrace(i64),
     Scopes(i64),
     Variables(i64),
-    Evaluate,
+    Evaluate(EvalRequest),
+    /// An evaluation through the variables tree, waiting on `scopes`.
+    WalkScopes(Walk),
+    /// ... and on a `variables`.
+    WalkVariables(Walk),
     /// continue, next, stepIn, stepOut, pause: nothing to keep.
     Ack,
 }
@@ -197,7 +202,9 @@ pub fn variable(v: &Value) -> Option<Variable> {
         value: str_field(v, "value").unwrap_or_default(),
         type_name: str_field(v, "type").filter(|t| !t.is_empty()),
         variables_reference: int_field(v, "variablesReference").unwrap_or(0),
-        evaluate_name: str_field(v, "evaluateName").filter(|n| !n.is_empty()),
+        // lldb-dap's names for the Rust formatters' children name nothing.
+        evaluate_name: str_field(v, "evaluateName")
+            .filter(|n| crate::eval::usable_evaluate_name(n)),
     })
 }
 
@@ -246,8 +253,8 @@ pub(crate) fn response(pending: &Pending, body: &Value) -> Response {
             reference: *reference,
             variables: list(body, "variables", variable),
         },
-        Pending::Evaluate => Response::Evaluate {
-            result: str_field(body, "result").unwrap_or_default(),
+        Pending::Evaluate(_) => Response::Evaluate {
+            result: crate::eval::clean_result(str_field(body, "result").unwrap_or_default()),
             type_name: str_field(body, "type").filter(|t| !t.is_empty()),
             variables_reference: int_field(body, "variablesReference").unwrap_or(0),
         },
@@ -428,7 +435,15 @@ mod tests {
 
         let body = json!({"result": "43", "type": "int", "variablesReference": 0});
         assert_eq!(
-            response(&Pending::Evaluate, &body),
+            response(
+                &Pending::Evaluate(EvalRequest {
+                    expression: "x + 1".into(),
+                    frame_id: Some(7),
+                    context: EvalContext::Watch,
+                    retried: false,
+                }),
+                &body
+            ),
             Response::Evaluate {
                 result: "43".into(),
                 type_name: Some("int".into()),

@@ -4,9 +4,11 @@
 //! `run/rerun`, `stop-run-configurations` and `run/stop`, the gutter's run
 //! icons, "Edit Run Configurations..." and `run/delete-configuration`; one
 //! run tool tab per started configuration in the bottom panel. The popup's
-//! Debug button and Shift+Enter hand a row to `debug.rs` (M8).
+//! Debug button and Alt+Enter hand a row to `debug.rs` (M8), whose session
+//! shows its build and output in a run tab of its own (batch 13).
 
 use super::*;
+use crate::debugger::DebugSession;
 use crate::menu::MenuEntry;
 use crate::run_popup::{RunPopup, RunPopupEvent};
 use crate::run_tool::{RunView, RunViewEvent};
@@ -105,20 +107,48 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if !parallel {
-            let existing = self
-                .runs
-                .iter()
-                .find(|(_, v)| v.read(cx).name() == name && !v.read(cx).running())
-                .map(|(id, v)| (*id, v.clone()));
-            if let Some((id, view)) = existing {
+            if let Some((id, view)) = self.idle_run_tab(&name, cx) {
                 view.update(cx, |v, cx| v.restart(Some(command), cx));
                 self.show_run_tab(id, cx);
                 return;
             }
         }
         let view = cx.new(|cx| RunView::new(name, kind, command, cx));
-        cx.subscribe(&view, |_, _, event: &RunViewEvent, cx| match event {
+        self.add_run_tab(view, cx);
+    }
+
+    /// A run tab of this name whose process (or debug session) has ended.
+    fn idle_run_tab(&self, name: &str, cx: &App) -> Option<(usize, Entity<RunView>)> {
+        self.runs
+            .iter()
+            .find(|(_, v)| v.read(cx).name() == name && !v.read(cx).running(cx))
+            .map(|(id, v)| (*id, v.clone()))
+    }
+
+    /// M8: a debug session's run tab (batch 13: Fleet shows the build and
+    /// the adapter's command line in a bottom-panel tab named after the
+    /// configuration), reusing an idle tab of the same name; shown and
+    /// focused as a run's is.
+    pub(super) fn start_debug_run_tab(
+        &mut self,
+        session: Entity<DebugSession>,
+        name: String,
+        kind: String,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((id, view)) = self.idle_run_tab(&name, cx) {
+            view.update(cx, |v, cx| v.set_debug(session, cx));
+            self.show_run_tab(id, cx);
+            return;
+        }
+        let view = cx.new(|cx| RunView::for_debug(name, kind, session, cx));
+        self.add_run_tab(view, cx);
+    }
+
+    fn add_run_tab(&mut self, view: Entity<RunView>, cx: &mut Context<Self>) {
+        cx.subscribe(&view, |this, _, event: &RunViewEvent, cx| match event {
             RunViewEvent::Exited(_) => cx.notify(),
+            RunViewEvent::DebugRestart(session) => this.restart_debug_session(session.clone(), cx),
         })
         .detach();
         let id = self.next_run;
@@ -192,6 +222,9 @@ impl Workspace {
             popup.read(cx).focus_handle(cx).focus(window, cx);
             return;
         }
+        // The configuration at run.json's caret first (batch 13: Fleet
+        // listed "debug fixture" first with the caret on it).
+        let context = self.run_configuration_at_caret(cx);
         let configs = self.run_configurations_or_notify(cx);
         let recent = self.recent_run_indices(&configs, cx);
         let name = self
@@ -199,7 +232,7 @@ impl Workspace {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let popup = cx.new(|cx| RunPopup::new(configs, recent, name, cx));
+        let popup = cx.new(|cx| RunPopup::new(configs, recent, context, name, cx));
         cx.subscribe_in(&popup, window, Self::on_run_popup_event)
             .detach();
         popup.read(cx).focus_handle(cx).focus(window, cx);
@@ -420,7 +453,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         for (_, view) in &self.runs {
-            view.update(cx, |v, _| v.stop());
+            view.update(cx, |v, cx| v.stop(cx));
         }
         cx.notify();
     }
@@ -428,7 +461,7 @@ impl Workspace {
     /// `run/stop`: the shown run tab's process.
     pub(super) fn run_stop(&mut self, _: &RunStop, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(view) = self.active_run(cx) {
-            view.update(cx, |v, _| v.stop());
+            view.update(cx, |v, cx| v.stop(cx));
             cx.notify();
         }
     }
@@ -436,7 +469,7 @@ impl Workspace {
     /// Closing a run tab stops its process.
     pub(super) fn drop_run(&mut self, id: usize, cx: &mut Context<Self>) {
         if let Some(view) = self.run_view(id).cloned() {
-            view.update(cx, |v, _| v.stop());
+            view.update(cx, |v, cx| v.stop(cx));
         }
         self.runs.retain(|(rid, _)| *rid != id);
     }

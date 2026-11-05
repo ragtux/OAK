@@ -16,10 +16,10 @@
   "manual": [
     "Fleet: Smart Mode must be on for the fixture (the Trust dialog accepted, the backend downloaded) and the fixture built once (`cargo build` in it), so the debug run stops within the wait.",
     "Fleet keeps breakpoints with the workspace: regenerate the fixture (make-fixture.py) before a rerun, or the first click removes the breakpoint instead.",
-    "The rows' y assume no code vision row over `fn main` (line 6 at y=197); with one, add 18.5 to Y6/Y5. The Variables row (700, 548) and the floating panel (824, 82) are guesses: correct them from the `stopped` shot.",
     "macOS: macprobe.py sends the scene's chords through WEEP's keymap (`key` -> `mac`); F5, F9 and F10 go as they are. Attaching needs the debugger entitlement; the attach shots only open the dialog.",
     "2026-11-04 run: the disabled-breakpoint shots were dropped; Fleet's Go to Action knows no \"toggle enabled breakpoint\". Learn the title from `actions-breakpoint`, or the gesture from `breakpoint-menu`, and add the disabled shots back.",
-    "2026-11-04 run: regenerate the fixture between the Fleet and the WEEP run (Fleet's console step typed into its editor and autosaved). Fleet opens the Debug tool in the right panel: its Variables 'Local' row is at about (938, 412) and 'Add Watch' at (1213, 380); focus the tool before Cmd+N (in the editor it makes a new file). Fleet debugs with Alt+Enter on the popup row."
+    "2026-11-04 run: regenerate the fixture between the Fleet and the WEEP run (Fleet's console step typed into its editor and autosaved). Fleet opens the Debug tool in the right panel: its Variables 'Local' row is at about (938, 412) and 'Add Watch' at (1213, 380); focus the tool before Cmd+N (in the editor it makes a new file). Fleet debugs with Alt+Enter on the popup row.",
+    "2026-11-05: coordinates after the stop taken from Fleet's batch 13 shots (both editors now put the Debug tool in the right panel): Step Into (822, 91), Variables' Local row (960, 412), Add Watch (1215, 380), the Debugger Console's input (420, 690). Fleet's console (codelldb) is in 'commands' mode: an expression needs a leading '?'."
   ],
   "steps": {
     "fleet": [
@@ -253,8 +253,8 @@
       ],
       [
         "hover",
-        824,
-        82,
+        822,
+        91,
         1500
       ],
       [
@@ -272,11 +272,19 @@
       ],
       [
         "move",
-        700,
-        548
+        960,
+        412
       ],
       [
         "click"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "key",
+        "right"
       ],
       [
         "wait",
@@ -287,8 +295,16 @@
         "variables-expanded"
       ],
       [
-        "key",
-        "ctrl+n"
+        "move",
+        1215,
+        380
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        800
       ],
       [
         "wait",
@@ -309,6 +325,18 @@
       [
         "shot",
         "watch"
+      ],
+      [
+        "move",
+        1100,
+        250
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        400
       ],
       [
         "key",
@@ -414,8 +442,20 @@
         "console"
       ],
       [
+        "move",
+        420,
+        690
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
         "type",
-        "label.len()"
+        "?total * 2"
       ],
       [
         "key",
@@ -751,8 +791,8 @@
       ],
       [
         "hover",
-        824,
-        82,
+        822,
+        91,
         1500
       ],
       [
@@ -770,11 +810,19 @@
       ],
       [
         "move",
-        700,
-        548
+        960,
+        412
       ],
       [
         "click"
+      ],
+      [
+        "wait",
+        600
+      ],
+      [
+        "key",
+        "right"
       ],
       [
         "wait",
@@ -785,8 +833,16 @@
         "variables-expanded"
       ],
       [
-        "key",
-        "ctrl+n"
+        "move",
+        1215,
+        380
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        800
       ],
       [
         "wait",
@@ -807,6 +863,18 @@
       [
         "shot",
         "watch"
+      ],
+      [
+        "move",
+        1100,
+        250
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        400
       ],
       [
         "key",
@@ -912,8 +980,20 @@
         "console"
       ],
       [
+        "move",
+        420,
+        690
+      ],
+      [
+        "click"
+      ],
+      [
+        "wait",
+        400
+      ],
+      [
         "type",
-        "label.len()"
+        "total * 2"
       ],
       [
         "key",

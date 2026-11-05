@@ -53,6 +53,13 @@ pub enum EditorEvent {
     Copied(String),
     /// A right click at this window position: the workspace opens the editor menu.
     ContextMenu(Point<Pixels>),
+    /// M8: a right click on the breakpoint on `line` of `path` in the gutter:
+    /// the workspace opens its menu at `position` (`breakpoints::gutter_menu`).
+    BreakpointMenu {
+        position: Point<Pixels>,
+        path: PathBuf,
+        line: usize,
+    },
     /// The line-status popup's Diff button: the workspace opens the Changed
     /// Files tab on this file.
     ShowDiff,
@@ -120,6 +127,10 @@ pub struct TextMetrics {
     pub fold_chevron_x: f32,
     pub breakpoint_hint_x: f32,
     pub breakpoint_hint_size: f32,
+    /// M8, batch 13: where the current line's wash starts from the island's
+    /// edge, and its left corners' radius.
+    pub current_line_left: f32,
+    pub current_line_radius: f32,
     pub run_icon_x: f32,
     pub problem_underline: f32,
     pub problem_underline_bottom: f32,
@@ -380,6 +391,8 @@ impl TextMetrics {
             fold_chevron_x: m.fold_chevron_x,
             breakpoint_hint_x: m.breakpoint_hint_x,
             breakpoint_hint_size: m.breakpoint_hint_size,
+            current_line_left: m.current_line_left,
+            current_line_radius: m.current_line_radius,
             run_icon_x: m.run_icon_x,
             problem_underline: m.problem_underline,
             problem_underline_bottom: m.problem_underline_bottom,
@@ -457,6 +470,8 @@ impl TextMetrics {
         self.scrollbar_thumb = 0.;
         self.scrollbar_thumb_min = cell.h;
         self.selection_radius = 0.;
+        self.current_line_left = 0.;
+        self.current_line_radius = 0.;
         self.selection_empty_line_width = w;
         self.occurrence_inset = 0.;
         self.occurrence_radius = 0.;
@@ -829,6 +844,9 @@ pub struct EditorView {
     /// The pointer is over the gutter: fold chevrons show.
     gutter_hovered: bool,
     hovered_row: Option<usize>,
+    /// M8: the breakpoint whose menu a right click opened; its tooltip stays
+    /// away until the pointer leaves its spot, so it never covers the menu.
+    breakpoint_menu_row: Option<usize>,
     /// Code vision: each entry the last frame laid out (the buffer row it
     /// is above, its index there, its span from the text's left at no
     /// scroll), and the one under the pointer.
@@ -978,6 +996,7 @@ impl EditorView {
             expand_history: Vec::new(),
             expand_last: None,
             gutter_hovered: false,
+            breakpoint_menu_row: None,
             lens_boxes: Vec::new(),
             lens_hovered: None,
             hovered_row: None,
@@ -1221,7 +1240,10 @@ impl EditorView {
         };
         // The badge or the widget's header sits on an island-coloured margin
         // that cuts the current line's wash around it (batch 11).
-        let status_top = self.status_top;
+        // M8 (agent E): under the floating debug panel when it covers this editor.
+        let status_top = self
+            .status_top
+            .max(crate::debug_panel::status_top_under_panel(cx.entity_id(), cx).unwrap_or(px(0.)));
         let cutout = |d: gpui::Div| {
             d.absolute()
                 .top(status_top)
@@ -2711,7 +2733,24 @@ impl EditorView {
     /// selection (estimate: what most editors do), then the menu opens.
     fn right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
-        if let Hit::Text(offset) = self.hit(event.position, window, cx) {
+        let hit = self.hit(event.position, window, cx);
+        // M8: on a breakpoint, its own menu (batch 13); the caret stays
+        // (estimate: Fleet's caret was on the line already). A right click
+        // on the bare hint keeps the editor's menu (estimate).
+        if let Hit::Breakpoint(row) = hit {
+            let path = self.document.read(cx).path.clone();
+            if let Some(path) = path.filter(|_| self.breakpoint_rows(cx).contains(&row)) {
+                self.breakpoint_menu_row = Some(row);
+                cx.notify();
+                cx.emit(EditorEvent::BreakpointMenu {
+                    position: event.position,
+                    path,
+                    line: row,
+                });
+                return;
+            }
+        }
+        if let Hit::Text(offset) = hit {
             let inside = self.with_buffer(cx, |c, _| {
                 c.selections().iter().any(|s| s.range().contains(&offset))
             });
@@ -3087,6 +3126,7 @@ impl EditorView {
         let x_in = position.x - bounds.origin.x - self.text_offset();
         let in_gutter = bounds.contains(&position) && x_in < px(self.tm.gutter_width);
         let mut lens = None;
+        let menu_row = self.breakpoint_menu_row;
         let row = if bounds.contains(&position) {
             let y = position.y - bounds.origin.y + self.scroll_y;
             let d = self.map.row_at(y);
@@ -3126,6 +3166,12 @@ impl EditorView {
             self.hovered_row = row;
             self.status_hovered = status;
             self.blame_hovered = blame_hovered;
+            cx.notify();
+        }
+        // M8: the right-clicked breakpoint's tooltip comes back once the
+        // pointer has left its spot.
+        if menu_row.is_some() && (row != menu_row || !self.on_breakpoint_spot(x_in, cx)) {
+            self.breakpoint_menu_row = None;
             cx.notify();
         }
         self.hover_problem(position, cx);
@@ -4260,7 +4306,9 @@ impl EditorView {
         let height = self.last_bounds.size.height;
         let sticky = lh * self.sticky_rows.len() as f32;
         let x = self.text_offset() + left;
+        let menu_row = self.breakpoint_menu_row;
         list.into_iter()
+            .filter(|b| Some(b.line) != menu_row)
             .filter(|b| {
                 self.map
                     .rows
@@ -4313,35 +4361,27 @@ fn paint_breakpoint(
     window.paint_quad(quad.corner_radii(Corners::all(d / 2.)));
 }
 
-/// The execution arrow in the Fleet gutter: an icon box centred on the
-/// breakpoint's place, filled for the top frame, hollow for a caller.
-fn paint_execution_arrow(
-    window: &mut Window,
-    centre: Point<Pixels>,
-    icon: Pixels,
-    top: bool,
-    theme: &Theme,
-    cx: &mut App,
-) {
-    let (path, color): (SharedString, Hsla) = if top {
-        (
-            "icons/weep/execution-point.svg".into(),
-            theme.execution_point,
-        )
-    } else {
-        (
-            "icons/weep/execution-frame.svg".into(),
-            theme.execution_point_caller,
-        )
-    };
-    let _ = window.paint_svg(
-        Bounds::new(centre - point(icon / 2., icon / 2.), size(icon, icon)),
-        path,
-        None,
-        gpui::TransformationMatrix::unit(),
-        color,
-        cx,
-    );
+/// A line's wash on the Fleet skin (the current line, the execution
+/// point): from `current_line_left` in from the island's edge `left` to
+/// `right`, its left corners rounded (batch 13).
+fn line_wash(
+    left: Pixels,
+    right: Pixels,
+    y: Pixels,
+    lh: Pixels,
+    tm: &TextMetrics,
+) -> (Bounds<Pixels>, Corners<Pixels>) {
+    let x = left + px(tm.current_line_left);
+    let r = px(tm.current_line_radius);
+    (
+        Bounds::new(point(x, y), size((right - x).max(px(0.)), lh)),
+        Corners {
+            top_left: r,
+            top_right: px(0.),
+            bottom_right: px(0.),
+            bottom_left: r,
+        },
+    )
 }
 
 /// The execution point line's wash: `debug.currentFrame`, at half strength
@@ -5599,18 +5639,16 @@ impl Element for EditorElement {
                     } else {
                         theme.current_line
                     };
-                    window.paint_quad(fill(
-                        Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, lh)),
-                        color,
-                    ));
+                    let (wash, corners) = line_wash(bounds.origin.x, bounds.right(), y, lh, &tm);
+                    window.paint_quad(fill(wash, color).corner_radii(corners));
                 }
-                // M8: the execution point's line, across gutter and text like
-                // the current line (estimate: Fleet's extent unprobed).
+                // M8: the execution point's line, over the current line's wash
+                // and in its shape (batch 13: Fleet's row is `debug.currentFrame`
+                // over the current line when the caret is on it).
                 if let Some(top) = prepaint.execution_on(laid) {
-                    window.paint_quad(fill(
-                        Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, lh)),
-                        execution_wash(&theme, top),
-                    ));
+                    let (wash, corners) = line_wash(bounds.origin.x, bounds.right(), y, lh, &tm);
+                    window
+                        .paint_quad(fill(wash, execution_wash(&theme, top)).corner_radii(corners));
                 }
                 // The git line status (ninth pass): a bar on the island's edge for
                 // each changed run, wider under the pointer and with its popup
@@ -5799,14 +5837,13 @@ impl Element for EditorElement {
                 // Line number, right-aligned in the gutter. The hovered row
                 // shows the breakpoint hint in its place: Fleet leaves the
                 // number out there (fifteenth pass, the `fold` scene).
-                // M8: a breakpoint or the execution arrow takes the number's
-                // place the same way (estimate).
+                // M8: a breakpoint takes the number's place the same way
+                // (batch 13). Fleet draws no execution arrow.
                 let hinted = options.show_breakpoints
                     && prepaint.gutter_hovered
                     && prepaint.hovered_row == Some(laid.row);
                 let breakpoint = prepaint.breakpoint_on(laid);
-                let arrow = prepaint.execution_on(laid).filter(|_| !laid.continuation);
-                let marked = breakpoint.is_some() || arrow.is_some();
+                let marked = breakpoint.is_some();
                 if let Some(number) = laid.number.as_ref().filter(|_| !hinted && !marked) {
                     let _ = number.paint(
                         point(number_right - number.width, y),
@@ -5819,7 +5856,7 @@ impl Element for EditorElement {
                 }
                 // The run icon (M6, batch 11): `icon.background.green` in a 16 px
                 // box in place of the number, or after it (`ff.runIconsAfterLineNumbers`).
-                // A breakpoint or the arrow in the same place hides it (M8).
+                // A breakpoint in the same place hides it (M8).
                 if laid.run_icon && !(marked && !options.run_after_numbers) {
                     let x = if options.run_after_numbers {
                         number_right + px(4.)
@@ -5841,8 +5878,9 @@ impl Element for EditorElement {
                 }
                 // The hovered row shows the breakpoint hint: a filled circle at
                 // 21.3 (batch 5; the `fold` scene showed no wash under the chevron).
-                // M8: a breakpoint is drawn in the hint's place and size, and
-                // the execution arrow over it.
+                // M8: a breakpoint is drawn in the hint's place and size
+                // (batch 13: 11.2 across, its centre 27 in); on the execution
+                // point's row it stays, with no arrow over it.
                 let d = px(tm.breakpoint_hint_size);
                 let spot = point(origin_x + px(tm.breakpoint_hint_x) + d / 2., y + lh / 2.);
                 if let Some(look) = breakpoint {
@@ -5855,9 +5893,6 @@ impl Element for EditorElement {
                     window.paint_quad(
                         fill(hint, theme.breakpoint_hint).corner_radii(Corners::all(d / 2.)),
                     );
-                }
-                if let Some(top) = arrow {
-                    paint_execution_arrow(window, spot, px(tm.icon_size), top, &theme, cx);
                 }
                 // The fold chevron in its 16 px box (batch 5).
                 if let Some(folded) = laid.chevron {
@@ -6213,13 +6248,11 @@ fn paint_tui(
     };
     let run_glyph = glyph("▶", theme.icon_green, window);
     let hint_glyph = glyph("○", theme.breakpoint_hint, window);
-    // M8: breakpoints `●` (grey when unbound) and `○` disabled; the
-    // execution arrow `▶` for the top frame, `▷` for a caller.
+    // M8: breakpoints `●` (grey when unbound) and `○` disabled; no
+    // execution arrow (Fleet draws none, batch 13).
     let breakpoint_glyph = glyph("●", theme.breakpoint, window);
     let disabled_glyph = glyph("○", theme.breakpoint, window);
     let unverified_glyph = glyph("●", theme.breakpoint_unverified, window);
-    let arrow_glyph = glyph("▶", theme.execution_point, window);
-    let caller_glyph = glyph("▷", theme.execution_point_caller, window);
     let open_glyph = glyph("▾", theme.fold_icon, window);
     let folded_glyph = glyph("▸", theme.fold_icon, window);
     let wrap_glyph = glyph("↪", theme.text_tertiary, window);
@@ -6379,18 +6412,13 @@ fn paint_tui(
                 cx,
             );
         }
-        // The first cell: the execution arrow, a breakpoint, the run icon,
-        // else the breakpoint hint on hover.
-        let first = match (
-            prepaint.execution_on(laid).filter(|_| !laid.continuation),
-            prepaint.breakpoint_on(laid),
-        ) {
-            (Some(true), _) => Some(&arrow_glyph),
-            (Some(false), _) => Some(&caller_glyph),
-            (None, Some(Look::Enabled)) => Some(&breakpoint_glyph),
-            (None, Some(Look::Disabled)) => Some(&disabled_glyph),
-            (None, Some(Look::Unverified)) => Some(&unverified_glyph),
-            (None, None) => None,
+        // The first cell: a breakpoint, the run icon, else the breakpoint
+        // hint on hover.
+        let first = match prepaint.breakpoint_on(laid) {
+            Some(Look::Enabled) => Some(&breakpoint_glyph),
+            Some(Look::Disabled) => Some(&disabled_glyph),
+            Some(Look::Unverified) => Some(&unverified_glyph),
+            None => None,
         };
         if let Some(g) = first {
             let _ = g.paint(
@@ -6720,6 +6748,27 @@ mod tests {
         }
         // Past the end the rows go on at the text's height (the overscroll).
         assert_eq!(map.top(9) - map.top(8), px(22.));
+    }
+
+    #[test]
+    fn line_wash_and_breakpoint_sit_where_fleet_draws_them() {
+        // Batch 13 at 2x: the editor island from 376, the stopped line's and
+        // the current line's wash from 382 to the island's right, its left
+        // end rounded 4; the breakpoint 11.2 across, its centre at 403.
+        let tm = TextMetrics::fleet(&Metrics::at(1.), 13., 22.);
+        let (wash, corners) = line_wash(px(376.), px(904.), px(187.), px(22.), &tm);
+        assert_eq!(wash.origin, point(px(382.), px(187.)));
+        assert_eq!(wash.right(), px(904.));
+        assert_eq!(wash.size.height, px(22.));
+        assert_eq!((corners.top_left, corners.bottom_left), (px(4.), px(4.)));
+        assert_eq!((corners.top_right, corners.bottom_right), (px(0.), px(0.)));
+        let (left, width) = breakpoint_spot(&tm);
+        assert!((f32::from(left + width / 2.) - 26.9).abs() < 0.01);
+        assert_eq!(tm.breakpoint_hint_size, 11.2);
+        // At zoom 2 everything doubles.
+        let tm2 = TextMetrics::fleet(&Metrics::at(2.), 26., 44.);
+        let (wash, _) = line_wash(px(0.), px(100.), px(0.), px(44.), &tm2);
+        assert_eq!(wash.origin.x, px(12.));
     }
 
     #[test]

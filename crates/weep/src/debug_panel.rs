@@ -1,23 +1,32 @@
 //! Fleet's floating debug toolbar (M8, `editor.showFloatingDebugPanel`,
 //! "Show floating debug toolbar", off by default): while the active debug
-//! session is not over, a small strip over the editor with Resume (Pause
-//! while the debuggee runs), Step Over, Step Into, Step Out and Stop, each
+//! session is not over, a strip at the top right of the active editor with
+//! Fleet's eight buttons, the Debug tool's Processes row: Resume, Pause,
+//! Restart, Stop, Step Over, Step Into, Step Out and a last one, each
 //! dispatching its `debug/*` action (the workspace routes them to the
-//! session), and a handle that drags it; the place it is dragged to is kept
-//! for the app's life.
+//! session). It has no grip: Fleet's does not move.
 //!
 //! The panel is the workspace's one debugger overlay, drawn over the whole
 //! window: it also hosts the quick evaluate popup (`editor/debug.rs`) and
 //! tracks the pointer for the value on hover while the debuggee is stopped,
 //! and it hosts the attach dialog (`attach_popup.rs`).
 //!
-//! Batch 13 has not run, so the panel's place and sizes are estimates
-//! (`theme.rs`, `DEBUG_PANEL_*`): the top centre of the active editor. The
-//! colours are the floating surfaces' keys: `popup.background`,
-//! `popup.border`, `shadow.medium`, the ghost buttons' washes.
+//! Batch 13 measured it (`theme.rs`, `DEBUG_PANEL_*`): 224 x 28 on the
+//! editor area's top, 12 in from the island's right edge, `popup.background`
+//! in a 1 px `popup.border`, no shadow; 20 px buttons 8 apart, the hovered
+//! one `ghostButton.off.background.hovered`; Resume in
+//! `icon.background.green`, Stop in `icon.background.red`, the rest in
+//! `icon.primary`, a button that cannot act now in `text.disabled` (Pause
+//! while stopped). The tooltip is the pointer's, "Step Into ⌘;". The status
+//! badge moves under the panel ([`status_top_under_panel`]).
+//!
+//! The last button (a box with a short bar at its bottom left) was not
+//! hovered in batch 13, so what it does is unknown (estimate: it shows the
+//! session's output or console, the Processes row's layout toggle); it is
+//! drawn as Fleet draws it and does nothing.
 
 use crate::actions::{
-    DebugPause, DebugResume, DebugStepInto, DebugStepOut, DebugStepOver, DebugStop,
+    DebugPause, DebugRestart, DebugResume, DebugStepInto, DebugStepOut, DebugStepOver, DebugStop,
 };
 use crate::assets::icon;
 use crate::attach_popup::{AttachPopup, AttachPopupEvent, OnAttach};
@@ -30,9 +39,9 @@ use crate::skin::{self, Cell, Skin};
 use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
-    canvas, div, point, prelude::*, px, Action, AnyElement, App, Bounds, BoxShadow, Context,
-    CursorStyle, DispatchPhase, Entity, Focusable, MouseButton, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, SharedString, Subscription, Task, WeakEntity, Window,
+    canvas, div, point, prelude::*, px, Action, AnyElement, App, Bounds, Context, DispatchPhase,
+    Entity, EntityId, Focusable, Global, MouseMoveEvent, Pixels, Point, Render, SharedString,
+    Subscription, Task, WeakEntity, Window,
 };
 use std::rc::Rc;
 use std::time::Duration;
@@ -41,49 +50,83 @@ use std::time::Duration;
 /// its expression (estimate: long enough to cross into the popup).
 const HOVER_CLOSE_GRACE_MS: u64 = 300;
 
-/// One of the panel's buttons.
+/// One of the panel's buttons, in Fleet's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Button {
     Resume,
     Pause,
+    Restart,
+    Stop,
     StepOver,
     StepInto,
     StepOut,
-    Stop,
+    /// The last button, unprobed: drawn, inert.
+    Output,
 }
 
 impl Button {
+    const ALL: [Button; 8] = [
+        Button::Resume,
+        Button::Pause,
+        Button::Restart,
+        Button::Stop,
+        Button::StepOver,
+        Button::StepInto,
+        Button::StepOut,
+        Button::Output,
+    ];
+
     fn action_id(self) -> &'static str {
         match self {
             Button::Resume => "debug/resume",
             Button::Pause => "debug/pause",
+            // Fleet's action list has no restart id: an element id only
+            // (`DebugRestart` is in no keymap table, so no chord).
+            Button::Restart => "debug/restart",
+            Button::Stop => "debug/stop",
             Button::StepOver => "debug/step-over",
             Button::StepInto => "debug/step-into",
             Button::StepOut => "debug/step-out",
-            Button::Stop => "debug/stop",
+            Button::Output => "debug/output",
         }
     }
 
-    fn action(self) -> Box<dyn Action> {
+    /// The tooltip's title: the action's (Fleet's tooltip is "Step Into ⌘;").
+    fn title(self) -> String {
         match self {
+            // No action id to title it by (estimate: the button's name).
+            Button::Restart => "Restart".into(),
+            _ => action_title(self.action_id()),
+        }
+    }
+
+    /// The action to dispatch; `None` for a button that does nothing yet.
+    fn action(self) -> Option<Box<dyn Action>> {
+        Some(match self {
             Button::Resume => Box::new(DebugResume),
             Button::Pause => Box::new(DebugPause),
+            Button::Restart => Box::new(DebugRestart),
+            Button::Stop => Box::new(DebugStop),
             Button::StepOver => Box::new(DebugStepOver),
             Button::StepInto => Box::new(DebugStepInto),
             Button::StepOut => Box::new(DebugStepOut),
-            Button::Stop => Box::new(DebugStop),
-        }
+            Button::Output => return None,
+        })
     }
 
-    /// JetBrains' expui run icons.
+    /// JetBrains' expui run icons where they match Fleet's drawing, else
+    /// WEEP's own (Fleet's pause is two bars, its restart turns left, its
+    /// step over is a bare arc, its steps into and out bare arrows).
     fn icon(self) -> &'static str {
         match self {
             Button::Resume => "expui/run/resume",
-            Button::Pause => "expui/run/pause",
-            Button::StepOver => "expui/run/stepOver",
-            Button::StepInto => "expui/run/stepInto",
-            Button::StepOut => "expui/run/stepOut",
+            Button::Pause => "weep/debug-pause",
+            Button::Restart => "weep/debug-restart",
             Button::Stop => "expui/run/stop",
+            Button::StepOver => "weep/debug-step-over",
+            Button::StepInto => "weep/arrow-down",
+            Button::StepOut => "weep/arrow-up",
+            Button::Output => "weep/debug-output",
         }
     }
 
@@ -92,58 +135,112 @@ impl Button {
         match self {
             Button::Resume => "▶",
             Button::Pause => "‖",
-            Button::StepOver => "↪",
-            Button::StepInto => "↧",
-            Button::StepOut => "↥",
+            Button::Restart => "↩",
             Button::Stop => "■",
+            Button::StepOver => "↪",
+            Button::StepInto => "↓",
+            Button::StepOut => "↑",
+            Button::Output => "□",
         }
     }
 }
 
-/// The buttons for a session's state, and whether each can be pressed:
-/// Resume while stopped, Pause while running; the steps only while
-/// stopped; Stop until the session is over.
-fn buttons(state: &SessionState) -> Vec<(Button, bool)> {
-    let stopped = state.is_stopped();
-    let first = if stopped {
-        (Button::Resume, true)
-    } else {
-        (Button::Pause, matches!(state, SessionState::Running))
-    };
-    vec![
-        first,
-        (Button::StepOver, stopped),
-        (Button::StepInto, stopped),
-        (Button::StepOut, stopped),
-        (Button::Stop, !state.is_over()),
-    ]
+/// How a button shows for the session's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Look {
+    /// Pressable: its colour, a hover box, its action.
+    Enabled,
+    /// Cannot act now: `text.disabled`, no hover.
+    Disabled,
+    /// Drawn in its colour but does nothing (the unprobed last button).
+    Inert,
 }
 
-/// The panel's top-left corner: the top centre of `area` (the active
-/// editor), moved by `offset`, kept inside `window`.
+/// The eight buttons and how each shows: Resume and the steps while
+/// stopped, Pause while running, Restart and Stop until the session is
+/// over (batch 13, stopped: Pause alone greyed).
+fn buttons(state: &SessionState) -> Vec<(Button, Look)> {
+    let stopped = state.is_stopped();
+    let live = !state.is_over();
+    let on = |b: bool| if b { Look::Enabled } else { Look::Disabled };
+    Button::ALL
+        .into_iter()
+        .map(|button| {
+            let look = match button {
+                Button::Resume | Button::StepOver | Button::StepInto | Button::StepOut => {
+                    on(stopped)
+                }
+                Button::Pause => on(matches!(state, SessionState::Running)),
+                Button::Restart | Button::Stop => on(live),
+                Button::Output => Look::Inert,
+            };
+            (button, look)
+        })
+        .collect()
+}
+
+/// The panel's top-left corner: its top edge `top` under `area`'s (the
+/// active editor's text area), its right edge `right` in from `area`'s,
+/// kept inside `window`.
 fn place(
     area: Bounds<Pixels>,
     size: gpui::Size<Pixels>,
     top: Pixels,
-    offset: Point<Pixels>,
+    right: Pixels,
     window: gpui::Size<Pixels>,
 ) -> Point<Pixels> {
-    let x = area.origin.x + (area.size.width - size.width) / 2. + offset.x;
-    let y = area.origin.y + top + offset.y;
+    let x = area.origin.x + area.size.width - right - size.width;
+    let y = area.origin.y + top;
     point(
         x.min(window.width - size.width).max(px(0.)),
         y.min(window.height - size.height).max(px(0.)),
     )
 }
 
+/// The panel's size in the Fleet skin: the buttons and their gaps, the
+/// padding and the 1 px border (batch 13: 224 x 28).
+fn fleet_size(m: &Metrics) -> gpui::Size<Pixels> {
+    let n = Button::ALL.len() as f32;
+    gpui::size(
+        px(n * m.debug_panel_button + (n - 1.) * m.debug_panel_gap + 2. * m.debug_panel_pad + 2.),
+        px(m.debug_panel_button + 2. * m.debug_panel_pad + 2.),
+    )
+}
+
+/// The tui panel's columns and rows: a box, three cells a button.
+const TUI_COLS: usize = 2 + 3 * Button::ALL.len();
+const TUI_ROWS: usize = 3;
+
+/// The editor the panel is drawn over while it shows, for the editor's
+/// status badge (`status_top_under_panel`).
+#[derive(Default)]
+struct PanelOver(Option<EntityId>);
+
+impl Global for PanelOver {}
+
+/// M8: where the editor `editor` puts its status badge while the floating
+/// debug panel covers its top right: under the panel (batch 13: the badge's
+/// box 8 + 6 under the panel's bottom edge, Fleet skin), or the row under
+/// the panel's box (tui). `None` while the panel is not over `editor`. The
+/// editor takes the larger of this and the find bar's offset.
+// M8: until editor.rs's `render_problems` (agent B) reads it.
+pub fn status_top_under_panel(editor: EntityId, cx: &App) -> Option<Pixels> {
+    let over = cx.try_global::<PanelOver>()?.0?;
+    if over != editor {
+        return None;
+    }
+    let m = cx.global::<Metrics>();
+    Some(if Skin::current(cx) == Skin::Tui {
+        Cell::current(cx).rows(TUI_ROWS)
+    } else {
+        px(m.debug_panel_top) + fleet_size(m).height + px(m.debug_panel_status_gap)
+    })
+}
+
 pub struct DebugPanel {
     /// The workspace's active editor: the panel sits over it, and its text
     /// is what the pointer evaluates.
     editor: Option<WeakEntity<EditorView>>,
-    /// Where the handle dragged the panel, from its default place.
-    offset: Point<Pixels>,
-    /// A drag in progress: the pointer and the offset at the press.
-    drag: Option<(Point<Pixels>, Point<Pixels>)>,
     quick: Option<Entity<QuickEvaluate>>,
     attach: Option<Entity<AttachPopup>>,
     /// The value on hover: the char under the pointer and its timer.
@@ -169,8 +266,6 @@ impl DebugPanel {
         ];
         let mut panel = DebugPanel {
             editor: None,
-            offset: point(px(0.), px(0.)),
-            drag: None,
             quick: None,
             attach: None,
             pointer_offset: None,
@@ -189,18 +284,26 @@ impl DebugPanel {
 
     /// The workspace's render hook: tells the panel the active editor and
     /// hands the panel back as the child to draw (over the whole window).
+    /// It also records which editor the panel covers, for that editor's
+    /// status badge (the editors render after the workspace).
     pub fn over(
         panel: &Entity<DebugPanel>,
         editor: Option<&Entity<EditorView>>,
         cx: &mut App,
     ) -> Entity<DebugPanel> {
+        let id = editor.map(|e| e.entity_id());
         let editor = editor.map(Entity::downgrade);
         panel.update(cx, |p, _| {
-            if p.editor.as_ref().map(|e| e.entity_id()) != editor.as_ref().map(|e| e.entity_id()) {
+            if p.editor.as_ref().map(|e| e.entity_id()) != id {
                 p.editor = editor;
                 p.pointer_offset = None;
             }
         });
+        let shown = panel.read(cx).shown(cx).is_some();
+        let over = id.filter(|_| shown);
+        if cx.try_global::<PanelOver>().map(|g| g.0) != Some(over) {
+            cx.set_global(PanelOver(over));
+        }
         panel.clone()
     }
 
@@ -271,29 +374,10 @@ impl DebugPanel {
         }
     }
 
-    /// The pointer moved anywhere in the window: a drag of the panel goes
-    /// on, a mouse popup closes when the pointer leaves its expression, and
-    /// resting on an expression while stopped opens one after the delay.
+    /// The pointer moved anywhere in the window: a mouse popup closes when
+    /// the pointer leaves its expression, and resting on an expression in
+    /// code while stopped opens one after the delay.
     fn pointer_moved(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if let Some((start, from)) = self.drag {
-            if event.pressed_button == Some(MouseButton::Left) {
-                let mut offset = from + (event.position - start);
-                if Skin::current(cx) == Skin::Tui {
-                    // Rule 6: a drag lands on whole cells.
-                    let cell = Cell::current(cx);
-                    offset = point(
-                        px((f32::from(offset.x) / cell.w).round() * cell.w),
-                        px((f32::from(offset.y) / cell.h).round() * cell.h),
-                    );
-                }
-                if offset != self.offset {
-                    self.offset = offset;
-                    cx.notify();
-                }
-                return;
-            }
-            self.drag = None;
-        }
         if event.pressed_button.is_some() {
             return;
         }
@@ -380,7 +464,8 @@ impl DebugPanel {
         let Some(session) = stopped_session(cx) else {
             return;
         };
-        let Some((expression, range)) = editor.read(cx).eval_expression_at(offset, cx) else {
+        let Some((expression, range)) = editor.update(cx, |e, cx| e.eval_expression_at(offset, cx))
+        else {
             return;
         };
         let quick = cx.new(|cx| QuickEvaluate::new(editor, &session, expression, range, true, cx));
@@ -442,15 +527,11 @@ impl DebugPanel {
         (!state.is_over()).then_some(state)
     }
 
-    fn start_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.drag = Some((position, self.offset));
-        cx.notify();
-    }
-
+    /// The pointer's tooltip: the action's title and its chord on one line
+    /// (batch 13: "Step Into ⌘;" under the pointer).
     fn tooltip(button: Button, cx: &App) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
-        let id = button.action_id();
-        let title = action_title(id);
-        let hint = hint_for(cx, id);
+        let title = button.title();
+        let hint = hint_for(cx, button.action_id());
         move |window, cx| match &hint {
             Some(h) => Tooltip::with_shortcut(title.clone(), h.clone())(window, cx),
             None => Tooltip::text(title.clone())(window, cx),
@@ -466,32 +547,24 @@ impl DebugPanel {
     ) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
-        let buttons = buttons(state);
-        let n = buttons.len() as f32;
-        let size = gpui::size(
-            px(2. * m.debug_panel_pad
-                + m.debug_panel_handle
-                + n * m.debug_panel_button
-                + n * m.debug_panel_gap
-                + 2.),
-            px(2. * m.debug_panel_pad + m.debug_panel_button + 2.),
-        );
+        let size = fleet_size(&m);
         let at = place(
             area,
             size,
             px(m.debug_panel_top),
-            self.offset,
+            px(m.debug_panel_right),
             window.viewport_size(),
         );
-        let entity = cx.entity();
-        let row: Vec<AnyElement> = buttons
+        let row: Vec<AnyElement> = buttons(state)
             .into_iter()
-            .map(|(button, enabled)| {
-                let color = match button {
-                    Button::Resume => theme.icon_green,
-                    Button::Stop => theme.icon_red,
+            .map(|(button, look)| {
+                let color = match (button, look) {
+                    (_, Look::Disabled) => theme.text_disabled,
+                    (Button::Resume, _) => theme.icon_green,
+                    (Button::Stop, _) => theme.icon_red,
                     _ => theme.icon_primary,
                 };
+                let action = button.action().filter(|_| look == Look::Enabled);
                 div()
                     .id(SharedString::from(button.action_id()))
                     .size(px(m.debug_panel_button))
@@ -499,19 +572,17 @@ impl DebugPanel {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(4. * m.zoom))
-                    .child(icon(
-                        button.icon(),
-                        m.icon_size,
-                        if enabled { color } else { theme.text_disabled },
-                    ))
-                    .tooltip(Self::tooltip(button, cx))
-                    .when(enabled, |d| {
+                    .rounded(px(m.debug_panel_button_radius))
+                    .child(icon(button.icon(), m.icon_size, color))
+                    .when(button != Button::Output, |d| {
+                        d.tooltip(Self::tooltip(button, cx))
+                    })
+                    .when_some(action, |d, action| {
                         d.cursor_pointer()
                             .hover(|s| s.bg(theme.ghost_hovered))
                             .active(|s| s.bg(theme.ghost_pressed))
                             .on_click(move |_, window, cx| {
-                                window.dispatch_action(button.action(), cx)
+                                window.dispatch_action(action.boxed_clone(), cx)
                             })
                     })
                     .into_any_element()
@@ -522,48 +593,24 @@ impl DebugPanel {
             .absolute()
             .left(at.x)
             .top(at.y)
+            .w(size.width)
+            .h(size.height)
             .occlude()
             .flex()
             .items_center()
             .gap(px(m.debug_panel_gap))
             .p(px(m.debug_panel_pad))
-            .rounded(px(m.popup_radius))
+            .rounded(px(m.debug_panel_radius))
             .border_1()
             .border_color(theme.popup_border)
             .bg(theme.popup_bg)
-            .shadow(vec![BoxShadow {
-                color: theme.shadow_medium,
-                offset: point(px(0.), px(m.popup_shadow_offset_y)),
-                blur_radius: px(m.popup_shadow_blur),
-                spread_radius: px(0.),
-            }])
-            .child(
-                div()
-                    .id("debug-panel-handle")
-                    .w(px(m.debug_panel_handle))
-                    .h(px(m.debug_panel_button))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::OpenHand)
-                    .child(icon(
-                        "expui/general/moreVertical",
-                        m.debug_panel_handle,
-                        theme.icon_secondary,
-                    ))
-                    .on_mouse_down(MouseButton::Left, move |e, _, cx| {
-                        cx.stop_propagation();
-                        entity.update(cx, |this, cx| this.start_drag(e.position, cx));
-                    }),
-            )
             .children(row)
             .into_any_element()
     }
 
-    /// The tui skin: a box of three rows on the grid, `⋮` for the handle,
-    /// then each button as its mark with a cell either side, filled on
-    /// hover; disabled ones in `text_disabled`.
+    /// The tui skin: a box of three rows on the grid at the editor's top
+    /// right (one cell in from its edge), each button its mark with a cell
+    /// either side, filled on hover; disabled ones in `text_disabled`.
     fn render_tui(
         &mut self,
         state: &SessionState,
@@ -574,51 +621,36 @@ impl DebugPanel {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
-        let buttons = buttons(state);
-        let cols = 2 + 3 + 3 * buttons.len();
-        let rows = 3;
-        let size = gpui::size(cell.cols(cols), cell.rows(rows));
-        let at = place(area, size, px(0.), self.offset, window.viewport_size());
+        let size = gpui::size(cell.cols(TUI_COLS), cell.rows(TUI_ROWS));
+        let at = place(area, size, px(0.), px(cell.w), window.viewport_size());
         let (col, row) = (Cell::fit(at.x, cell.w), Cell::fit(at.y, cell.h));
-        let entity = cx.entity();
         let body = div()
             .flex()
             .h(px(cell.h))
-            .child(
-                div()
-                    .id("debug-panel-handle")
-                    .w(cell.cols(3))
-                    .flex_shrink_0()
-                    .flex()
-                    .justify_center()
-                    .cursor(CursorStyle::OpenHand)
-                    .text_color(theme.text_tertiary)
-                    .child("⋮")
-                    .on_mouse_down(MouseButton::Left, move |e, _, cx| {
-                        cx.stop_propagation();
-                        entity.update(cx, |this, cx| this.start_drag(e.position, cx));
-                    }),
-            )
-            .children(buttons.into_iter().map(|(button, enabled)| {
-                let color = match button {
-                    Button::Resume => theme.text_positive,
-                    Button::Stop => theme.text_dangerous,
+            .children(buttons(state).into_iter().map(|(button, look)| {
+                let color = match (button, look) {
+                    (_, Look::Disabled) => theme.text_disabled,
+                    (Button::Resume, _) => theme.text_positive,
+                    (Button::Stop, _) => theme.text_dangerous,
                     _ => theme.text_primary,
                 };
+                let action = button.action().filter(|_| look == Look::Enabled);
                 div()
                     .id(SharedString::from(button.action_id()))
                     .w(cell.cols(3))
                     .flex_shrink_0()
                     .flex()
                     .justify_center()
-                    .text_color(if enabled { color } else { theme.text_disabled })
+                    .text_color(color)
                     .child(button.glyph())
-                    .tooltip(Self::tooltip(button, cx))
-                    .when(enabled, |d| {
+                    .when(button != Button::Output, |d| {
+                        d.tooltip(Self::tooltip(button, cx))
+                    })
+                    .when_some(action, |d, action| {
                         d.cursor_pointer()
                             .hover(|s| s.bg(theme.list_bg_hovered))
                             .on_click(move |_, window, cx| {
-                                window.dispatch_action(button.action(), cx)
+                                window.dispatch_action(action.boxed_clone(), cx)
                             })
                     })
             }))
@@ -631,8 +663,8 @@ impl DebugPanel {
             .occlude()
             .child(skin::boxed(
                 cell,
-                cols,
-                rows,
+                TUI_COLS,
+                TUI_ROWS,
                 Vec::new(),
                 Vec::new(),
                 body,
@@ -659,9 +691,9 @@ impl Render for DebugPanel {
             }),
             _ => None,
         };
-        // The window's pointer, while a drag goes on or the debuggee is
-        // stopped (the value on hover).
-        let listen = self.drag.is_some() || stopped_session(cx).is_some();
+        // The window's pointer while the debuggee is stopped (the value on
+        // hover).
+        let listen = stopped_session(cx).is_some();
         let entity = cx.entity();
         let pointer = canvas(
             |_, _, _| (),
@@ -669,20 +701,9 @@ impl Render for DebugPanel {
                 if !listen {
                     return;
                 }
-                let moved = entity.clone();
                 window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
                     if phase == DispatchPhase::Bubble {
-                        moved.update(cx, |this, cx| this.pointer_moved(e, cx));
-                    }
-                });
-                let released = entity.clone();
-                window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
-                    if phase == DispatchPhase::Capture && e.button == MouseButton::Left {
-                        released.update(cx, |this, cx| {
-                            if this.drag.take().is_some() {
-                                cx.notify();
-                            }
-                        });
+                        entity.update(cx, |this, cx| this.pointer_moved(e, cx));
                     }
                 });
             },
@@ -708,32 +729,49 @@ mod tests {
     use super::*;
     use gpui::size;
 
+    fn looks(state: &SessionState) -> Vec<Look> {
+        buttons(state).into_iter().map(|(_, l)| l).collect()
+    }
+
     #[test]
-    fn buttons_follow_the_state() {
+    fn eight_buttons_in_fleets_order() {
         let stopped = SessionState::Stopped {
             reason: "breakpoint".into(),
             description: None,
         };
-        let b = buttons(&stopped);
-        assert_eq!(b[0], (Button::Resume, true));
-        assert!(b[1..].iter().all(|(_, on)| *on));
-        let b = buttons(&SessionState::Running);
-        assert_eq!(b[0], (Button::Pause, true));
-        assert_eq!(b[1], (Button::StepOver, false));
-        assert_eq!(b[4], (Button::Stop, true));
-        let b = buttons(&SessionState::Starting);
-        assert_eq!(b[0], (Button::Pause, false));
-        assert_eq!(b[4], (Button::Stop, true));
+        let b: Vec<Button> = buttons(&stopped).into_iter().map(|(b, _)| b).collect();
+        assert_eq!(b, Button::ALL);
+        use Look::*;
+        // Stopped (batch 13): Pause alone greyed; the last button drawn
+        // but inert.
+        assert_eq!(
+            looks(&stopped),
+            [Enabled, Disabled, Enabled, Enabled, Enabled, Enabled, Enabled, Inert]
+        );
+        assert_eq!(
+            looks(&SessionState::Running),
+            [Disabled, Enabled, Enabled, Enabled, Disabled, Disabled, Disabled, Inert]
+        );
+        assert_eq!(looks(&SessionState::Starting)[1], Disabled);
+        assert_eq!(looks(&SessionState::Starting)[3], Enabled);
     }
 
     #[test]
-    fn placed_at_the_top_centre_and_kept_inside() {
+    fn measured_size() {
+        let m = Metrics::at(1.);
+        assert_eq!(fleet_size(&m), size(px(224.), px(28.)));
+    }
+
+    #[test]
+    fn placed_at_the_top_right_and_kept_inside() {
         let area = Bounds::new(point(px(100.), px(50.)), size(px(400.), px(300.)));
         let panel = size(px(100.), px(30.));
         let window = size(px(800.), px(600.));
-        let at = place(area, panel, px(8.), point(px(0.), px(0.)), window);
-        assert_eq!(at, point(px(250.), px(58.)));
-        let at = place(area, panel, px(8.), point(px(1000.), px(-100.)), window);
-        assert_eq!(at, point(px(700.), px(0.)));
+        let at = place(area, panel, px(0.), px(12.), window);
+        assert_eq!(at, point(px(388.), px(50.)));
+        // A narrow editor: the panel stays in the window.
+        let narrow = Bounds::new(point(px(10.), px(50.)), size(px(60.), px(300.)));
+        let at = place(narrow, panel, px(0.), px(12.), window);
+        assert_eq!(at, point(px(0.), px(50.)));
     }
 }

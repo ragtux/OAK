@@ -269,6 +269,13 @@ actions!(
         NewBreakpointsTool,
         DebugConsoleJumpToTool,
         DebugConsoleNewTool,
-        DebuggerAttachToProcess
+        DebuggerAttachToProcess,
+        // M8 (batch 13): Fleet's Restart (Processes row, floating panel),
+        // whose id is unknown: dispatched by those buttons, not in the
+        // keymap's table.
+        DebugRestart,
+        // The Run & Debug popup's Alt+Enter (batch 13: "Debug ⌥↩"), bound
+        // by `run_popup::bind_keys` in its own context.
+        RunPopupDebug
     ]
 );

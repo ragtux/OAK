@@ -390,8 +390,10 @@ pub fn action_title(id: &str) -> String {
         "optimize-imports" => Some("Optimize Imports"),
         "back" => Some("Back"),
         "forward" => Some("Forward"),
-        // M8: estimates (no Fleet menu or tooltip of the debugger captured
-        // yet), in IntelliJ's words where Fleet's family shares them.
+        // M8: batch 13's Go to Action for "breakpoint" settled the breakpoint
+        // rows and the tools' "Jump to X Tool" / "New X Tool" (Fleet's list
+        // has no bare tool row: that is `goto/tool`'s); the rest estimates,
+        // in IntelliJ's words where Fleet's family shares them.
         "debug/debug-in-context" => Some("Debug in Context"),
         "debug/resume" => Some("Resume"),
         "debug/pause" => Some("Pause"),
@@ -400,18 +402,20 @@ pub fn action_title(id: &str) -> String {
         "debug/force-step-into" => Some("Force Step Into"),
         "debug/step-out" => Some("Step Out"),
         "debug/stop" => Some("Stop Debugging"),
-        "debug/toggle-breakpoint" => Some("Toggle Line Breakpoint"),
-        "debug/toggle-enabled-breakpoint" => Some("Enable/Disable Breakpoint"),
+        "debug/toggle-breakpoint" => Some("Toggle Breakpoint"),
+        // Fleet's title with the caret on an enabled breakpoint (batch 13);
+        // a disabled one's ("Enable Breakpoint") is unprobed.
+        "debug/toggle-enabled-breakpoint" => Some("Disable Breakpoint"),
         "debug/remove-breakpoint" => Some("Remove Breakpoint"),
         "debug/add-watch" => Some("Add Watch"),
         "debug/edit-watch" => Some("Edit Watch"),
         "debug/delete-watch" => Some("Delete Watch"),
         "debug/quick-evaluate-expression" => Some("Quick Evaluate Expression"),
-        "debug/jump-to-tool" => Some("Debug"),
+        "debug/jump-to-tool" => Some("Jump to Debug Tool"),
         "debug/new-tool" => Some("New Debug Tool"),
-        "debug/breakpoints/jump-to-tool" => Some("Breakpoints"),
+        "debug/breakpoints/jump-to-tool" => Some("Jump to Breakpoints Tool"),
         "new-breakpoints-tool" => Some("New Breakpoints Tool"),
-        "debug/console/jump-to-tool" => Some("Debugger Console"),
+        "debug/console/jump-to-tool" => Some("Jump to Debugger Console Tool"),
         "debug/console/new-tool" => Some("New Debugger Console Tool"),
         "debugger/attach-to-process" => Some("Attach to Process..."),
         "confirm" => Some("Enter"),
@@ -645,6 +649,33 @@ mod tests {
     }
 
     #[test]
+    fn debugger_titles_as_fleet_lists_them() {
+        // Batch 13: Go to Action for "breakpoint".
+        assert_eq!(
+            action_title("debug/toggle-enabled-breakpoint"),
+            "Disable Breakpoint"
+        );
+        assert_eq!(action_title("debug/remove-breakpoint"), "Remove Breakpoint");
+        assert_eq!(action_title("debug/toggle-breakpoint"), "Toggle Breakpoint");
+        assert_eq!(
+            action_title("debug/breakpoints/jump-to-tool"),
+            "Jump to Breakpoints Tool"
+        );
+        assert_eq!(action_title("new-breakpoints-tool"), "New Breakpoints Tool");
+        assert_eq!(action_title("debug/jump-to-tool"), "Jump to Debug Tool");
+        assert_eq!(
+            action_title("debug/console/jump-to-tool"),
+            "Jump to Debugger Console Tool"
+        );
+        // No action is titled as a bare tool ("Breakpoints").
+        for id in ACTION_IDS {
+            assert_ne!(action_title(id), "Breakpoints", "{id}");
+        }
+        // DebugRestart is WEEP's own, not in the table.
+        assert!(action_for("debug/restart").is_none());
+    }
+
+    #[test]
     fn chords_per_platform() {
         assert_eq!(
             presentable_on("ctrl-shift-f", Platform::Windows),
@@ -668,6 +699,9 @@ mod tests {
         assert_eq!(presentable_on("cmd--", Platform::Mac), "⌘-");
         assert_eq!(presentable_on("f4", Platform::Mac), "F4");
         assert_eq!(presentable_on("cmd-k cmd-s", Platform::Mac), "⌘K, ⌘S");
+        // The Run & Debug popup's buttons (batch 13: "Run ↩", "Debug ⌥↩").
+        assert_eq!(presentable_on("enter", Platform::Mac), "↩");
+        assert_eq!(presentable_on("alt-enter", Platform::Mac), "⌥↩");
     }
 
     #[test]

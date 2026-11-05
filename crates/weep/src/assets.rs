@@ -53,11 +53,17 @@ bundle!(
     "icons/weep/circle.svg",
     "icons/weep/exclamation.svg",
     "icons/weep/run-gutter.svg",
+    // M8 (batch 13): the toolbar's Run & Debug button, outlined as Fleet draws it.
+    "icons/weep/run-outline.svg",
     // M8: the Debug tool's watch rows (Fleet's `debugger-nodes/watch`).
     "icons/weep/watch.svg",
+    // M8: the floating debug panel's pause, restart, step over and last
+    // button, drawn to batch 13's shot (`debug_panel.rs`).
+    "icons/weep/debug-pause.svg",
+    "icons/weep/debug-restart.svg",
+    "icons/weep/debug-step-over.svg",
+    "icons/weep/debug-output.svg",
     // M8: the gutter's execution arrows (the top frame, a caller frame).
-    "icons/weep/execution-point.svg",
-    "icons/weep/execution-frame.svg",
     "icons/weep/file-rust.svg",
     "icons/weep/file-toml.svg",
     "icons/weep/file-json.svg",

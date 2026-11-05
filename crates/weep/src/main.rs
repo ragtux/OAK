@@ -364,6 +364,8 @@ fn main() {
             find::bind_keys(cx);
             // M8: the Debug, Breakpoints and Debugger Console tools' keys.
             debug_tool::bind_keys(cx);
+            // M8: the Run & Debug popup's Alt+Enter (batch 13).
+            run_popup::bind_keys(cx);
             let preset = cx
                 .global::<settings::AppSettings>()
                 .settings

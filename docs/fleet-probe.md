@@ -1048,11 +1048,19 @@ regenerated between the Fleet and the WEEP run.
 | attach dialog | "Attach to Process", the field's placeholder "Enter host:port or search process", a group header "LLDB", rows "pid name" (no command line), no count | name, command line, the pid right-aligned, the count at the title's right |
 | type hints | rust-analyzer's inlay hints (`: Vec<Point>`, `: String`, `: i32`, `&Point`) | none (M7 left them for later) |
 
-What WEEP's run also showed: lldb-dap cannot evaluate Rust expressions
-("Expression evaluation in Rust not supported. Falling back to default
-language" on `total * 2`; a plain variable works), and the hover value popup
-fires on words in comments (`debugger` in line 1's comment). Fleet's Rust
-evaluation is unprobed (its watch step missed).
+What WEEP's run also showed: the scene's click on the variables landed on
+the second frame (`<fn() as FnOnce>::call_once`), so the watch `total * 2`
+failed there with "Expression evaluation in Rust not supported. Falling back
+to default language…" (the warning only ever starts a failure). In `main`,
+lldb-dap's watch and repl contexts do evaluate arithmetic and paths through
+their Objective C++ fallback (`total * 2` = 28, `points[0].x` = 1); the hover
+context reads paths only; method calls (`points.len()`), tuple fields
+(`pair.0` comes back as a double 0) and an Option payload's fields fail.
+`weep-dap` now walks the variables tree for paths LLDB misreads and keeps one
+line of LLDB's error (the twenty-first pass's agent A, `crates/weep-dap/src/
+eval.rs`). The hover value popup also fired on a word in a comment
+(`debugger` in line 1's). Fleet's Rust evaluation is unprobed (its watch step
+missed).
 
 ## What the shots showed
 

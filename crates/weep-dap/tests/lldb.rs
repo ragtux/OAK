@@ -55,6 +55,33 @@ const RUST_SOURCE: &str = r#"fn main() {
 }
 "#;
 
+/// 0-based line of `RUST_EVAL_SOURCE`'s `println!`.
+const RUST_EVAL_LINE: usize = 8;
+
+/// The fixture's `misc/debuggee.rs` (batch 13) with a tuple, a reference
+/// and an `Option` beside its `points`, `label` and `total`.
+const RUST_EVAL_SOURCE: &str = r#"fn main() {
+    let points = vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+    let label = String::from("points");
+    let pair = (7, "seven");
+    let first = &points[0];
+    let maybe = Some(Point { x: 5, y: 6 });
+    let total = sum(&points);
+    let _ = (&pair, first, &maybe);
+    println!("{label}: {total}");
+}
+
+#[derive(Debug)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn sum(points: &[Point]) -> i32 {
+    points.iter().map(|p| p.x * p.y).sum()
+}
+"#;
+
 fn adapter() -> Option<AdapterCommand> {
     let found = AdapterCommand::find_lldb();
     if found.is_none() {
@@ -84,10 +111,14 @@ fn build_c() -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
 }
 
 fn build_rust() -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
+    build_rust_from(RUST_SOURCE)
+}
+
+fn build_rust_from(text: &str) -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let source = root.join("main.rs");
-    std::fs::write(&source, RUST_SOURCE).unwrap();
+    std::fs::write(&source, text).unwrap();
     let program = root.join("main");
     let status = Command::new("rustc")
         .args(["-g", "-C", "opt-level=0", "-o"])
@@ -543,6 +574,91 @@ fn rust_breakpoint_and_formatted_values() {
     assert_eq!(code, 0);
     s.terminated();
     s.print_log("rust");
+}
+
+#[test]
+fn rust_expressions_through_lldb() {
+    let Some(adapter) = adapter() else { return };
+    let Some((_dir, source, program)) = build_rust_from(RUST_EVAL_SOURCE) else {
+        return;
+    };
+    let formatters = !weep_dap::rust_init_commands().is_empty();
+    let mut s = Session::start(
+        &adapter,
+        launch(&program, &[]),
+        vec![(source.clone(), vec![line(RUST_EVAL_LINE)])],
+    );
+    let (reason, thread) = s.stopped();
+    assert_eq!(reason, "breakpoint");
+    let frame = s.top_frame(thread);
+    assert_eq!(frame.line, RUST_EVAL_LINE);
+    let mut eval = |expression: &str, context: EvalContext| {
+        let id = s.client.evaluate(expression, Some(frame.id), context);
+        let result = s.response(id).map(|r| match r {
+            Response::Evaluate {
+                result,
+                type_name,
+                variables_reference,
+            } => (result, type_name, variables_reference),
+            other => panic!("{other:?}"),
+        });
+        eprintln!("{expression} ({context:?}): {result:?}");
+        result
+    };
+    use EvalContext::{Hover, Repl, Watch};
+
+    // LLDB's evaluator (Objective C++) does arithmetic; hover, a variable
+    // path only, is retried as a watch.
+    assert_eq!(eval("total * 2", Watch).unwrap().0, "28");
+    assert_eq!(eval("total * 2", Hover).unwrap().0, "28");
+    assert!(eval("total * 2", Repl).unwrap().0.ends_with("= 28"));
+    for context in [Watch, Hover] {
+        let (value, type_name, _) = eval("total", context).unwrap();
+        assert_eq!((value.as_str(), type_name.as_deref()), ("14", Some("int")));
+        assert_eq!(eval("points[0].x", context).unwrap().0, "1");
+        // `.` through a reference: hover's path refuses it, the tree has it.
+        assert_eq!(eval("first.x", context).unwrap().0, "1");
+        // A tuple field: the evaluator would answer 0 (a float `.0`).
+        let (value, type_name, _) = eval("pair.0", context).unwrap();
+        assert_eq!((value.as_str(), type_name.as_deref()), ("7", Some("int")));
+        let (value, _, children) = eval("maybe.0", context).unwrap();
+        assert!(children > 0, "maybe.0 = {value}");
+        let (value, _, children) = eval("&points[0]", context).unwrap();
+        assert!(value.starts_with("0x"), "{value}");
+        assert!(children > 0);
+        if formatters {
+            assert_eq!(eval("label", context).unwrap().0, "\"points\"");
+            assert!(value.ends_with("{x:1, y:2}"), "{value}");
+        }
+    }
+    assert_eq!(eval("pair.0", Repl).unwrap().0, "(int) pair.0 = 7");
+
+    // Failures are LLDB's one error line, the fallback warning dropped.
+    let one_line = |e: &str| !e.contains('\n') && !e.contains("Falling back") && !e.is_empty();
+    for context in [Watch, Hover, Repl] {
+        let e = eval("points.len()", context).unwrap_err();
+        assert!(one_line(&e), "{e}");
+        let e = eval("nope * 2", context).unwrap_err();
+        assert_eq!(e, "use of undeclared identifier 'nope'");
+        let e = eval("maybe.x", context).unwrap_err();
+        assert!(one_line(&e) && e.contains('x'), "{e}");
+        let e = eval("pair.5", context).unwrap_err();
+        assert!(one_line(&e), "{e}");
+    }
+
+    // lldb-dap's evaluateName of a Vec's element ("[0]->[0]") is dropped.
+    let locals = s.locals(frame.id);
+    let points = locals.iter().find(|v| v.name == "points").expect("points");
+    assert_eq!(points.evaluate_name.as_deref(), Some("points"));
+    let id = s.client.variables(points.variables_reference);
+    if let Response::Variables { variables, .. } = s.ok(id) {
+        assert!(
+            variables.iter().all(|v| v.evaluate_name.is_none()),
+            "{variables:?}"
+        );
+    }
+    s.client.stop();
+    s.terminated();
 }
 
 #[test]

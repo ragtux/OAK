@@ -1,14 +1,21 @@
-//! The Debugger Console tool (M8): the active session's console, its
-//! debuggee's output and the expressions typed into it, in the terminal's
-//! mono font, with an input field at the bottom whose Enter sends the text
-//! to `DebugSession::evaluate_in_console` (Up and Down walk the typed
-//! history). No probe of Fleet's console exists yet: the colours are
-//! estimates on Fleet's keys (stdout `text.primary`, stderr and errors
-//! `text.dangerous`, the adapter's own lines and results `text.secondary`,
-//! the input echoed after `> `). The list sticks to its bottom while new
-//! lines arrive, unless scrolled up. Key context: `DebuggerConsole`.
+//! The Debugger Console tool (M8): the active session's console (the
+//! adapter's messages, the "Process finished" line; the build's and the
+//! debuggee's output go to the configuration's run tab) and the
+//! expressions typed into it with their results, in the terminal's
+//! mono font, with an input at the bottom whose Enter sends the text to
+//! `DebugSession::evaluate_in_console` (Up and Down walk the typed history).
+//! Its form is batch 13's (`debug-fleet-breakpoints-tool.png`, the bottom
+//! panel): the lines 32.5 in from the island, wrapped at its width; the
+//! input a 100 px band of `background.secondary` across the island's bottom
+//! with a `text.tertiary` chevron at its left (`metrics::CONSOLE_*`). The
+//! adapter's own lines are `text.primary` (batch 13); the rest are estimates
+//! on Fleet's keys (stdout `text.primary`, stderr and errors
+//! `text.dangerous`, results `text.secondary`, the input echoed after
+//! `> `). The list sticks to its bottom while new lines arrive, unless
+//! scrolled up. Key context: `DebuggerConsole`.
 
 use crate::actions::{PopupDown, PopupUp};
+use crate::assets::icon;
 use crate::debug_tool::Follow;
 use crate::debugger::{ConsoleKind, ConsoleLine, DebugSession};
 use crate::git_tool::tui_list;
@@ -83,9 +90,10 @@ pub fn line_text(line: &ConsoleLine) -> String {
 
 fn line_color(kind: ConsoleKind, theme: &Theme) -> Hsla {
     match kind {
-        ConsoleKind::Stdout | ConsoleKind::Input => theme.text_primary,
+        // Batch 13: the adapter's own lines ("Launching: …") in `text.primary`.
+        ConsoleKind::Stdout | ConsoleKind::Input | ConsoleKind::Console => theme.text_primary,
         ConsoleKind::Stderr | ConsoleKind::Error => theme.text_dangerous,
-        ConsoleKind::Console | ConsoleKind::Result => theme.text_secondary,
+        ConsoleKind::Result => theme.text_secondary,
     }
 }
 
@@ -239,7 +247,7 @@ impl DebugConsole {
     fn render_fleet(
         &mut self,
         rows: Vec<(ConsoleKind, String)>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
@@ -257,19 +265,20 @@ impl DebugConsole {
             self.stick = false;
             self.drawn = rows.len();
         }
-        let focused = self.input.read(cx).is_focused(window);
         let lines: Vec<AnyElement> = rows
             .into_iter()
             .map(|(kind, text)| {
+                // Batch 13: a long line wraps at the island's width.
                 div()
-                    .h(px(line_height))
+                    .min_h(px(line_height))
                     .flex_shrink_0()
-                    .whitespace_nowrap()
                     .text_color(line_color(kind, &theme))
                     .child(SharedString::from(text))
                     .into_any_element()
             })
             .collect();
+        let prompt_top = m.console_prompt_centre - m.icon_size / 2.;
+        let field_top = m.console_prompt_centre - line_height / 2.;
         div()
             .size_full()
             .flex()
@@ -281,9 +290,8 @@ impl DebugConsole {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    // Estimate: the run tool's padding around its output.
-                    .px(px(m.run_tool_pad_x))
-                    .pt(px(m.run_tool_command_top))
+                    .pl(px(m.console_pad_x))
+                    .pr(px(m.console_pad_right))
                     .font_family(theme.mono_font.clone())
                     .text_size(px(font_size))
                     .line_height(px(line_height))
@@ -291,14 +299,34 @@ impl DebugConsole {
                     .flex_col()
                     .children(lines),
             )
+            // The input: a band of `background.secondary` across the
+            // island's bottom, a chevron, the field on its first line.
             .child(
                 div()
                     .flex_shrink_0()
-                    .px(px(m.panel_pad_x))
-                    .py(px(m.panel_pad_x))
+                    .h(px(m.console_input_height))
+                    .relative()
+                    .bg(theme.background_secondary)
                     .child(
-                        crate::search_tool::frame(focused, window, &theme, &m)
-                            .child(div().flex_1().min_w_0().h_full().child(self.input.clone())),
+                        div()
+                            .absolute()
+                            .left(px(m.console_prompt_x))
+                            .top(px(prompt_top))
+                            .child(icon(
+                                "expui/general/chevronRight",
+                                m.icon_size,
+                                theme.text_tertiary,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(m.console_pad_x))
+                            .right(px(m.console_pad_right))
+                            .top(px(field_top))
+                            .h(px(line_height))
+                            .text_size(px(font_size))
+                            .child(self.input.clone()),
                     ),
             )
             .into_any_element()

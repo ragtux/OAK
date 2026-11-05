@@ -77,7 +77,7 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 - Centre: `▣ src  ⎇ tui-skin`, the workspace name and the branch tag (the branch tag is text with
   `⎇`, and its menu is a box).
 - Right: the Smart Mode mark (`ϟ`, or a painted bolt if the font lacks it, in `smart_mode_*`
-  colours), `▶` run, `⌕` search, the notification mark (`●` with a count when unread) and `≡`
+  colours), `▷` run (Fleet's outlined triangle, the same while debugging), `⌕` search, the notification mark (`●` with a count when unread) and `≡`
   settings. Each is one cell with a cell of gap, and a hover fills the cell.
 
 ### Tabs (the island's top edge)
@@ -97,17 +97,18 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   line status (1 cell), fold (1 cell: `▾` open on hover or at a fold head, `▸` folded, always
   shown when folded), then 1 cell of space before the text. Current line number in
   `line_number_current`.
-- **Breakpoints and the execution point (M8):** the first cell holds, by precedence, the
-  execution arrow (`▶` in `execution_point` for the top frame, `▷` in `execution_point_caller`
-  for a caller frame), a breakpoint (`●` in `breakpoint`, `○` disabled, `●` in
-  `breakpoint_unverified` when the session could not bind it), the run icon, the hint. A click
-  on that cell toggles the line's breakpoint. The execution point's line fills its whole row of
-  cells with `debug_current_frame` (half strength for a caller frame).
+- **Breakpoints and the execution point (M8):** the first cell holds, by precedence, a
+  breakpoint (`●` in `breakpoint`, `○` disabled, `●` in `breakpoint_unverified` when the
+  session could not bind it), the run icon, the hint. A click on that cell toggles the line's
+  breakpoint; a right click on a breakpoint opens its menu (Remove Breakpoint, Disable or Enable
+  Breakpoint, a rule, View All Breakpoints) as a boxed menu at the cell. The execution point's
+  line fills its whole row of cells with `debug_current_frame` (half strength for a caller
+  frame) over the current line's fill; no arrow, as in Fleet.
 - **Line status (git):** in its cell, a bar a third of a cell wide at the cell's left for added
   (`git_added_bg`) and modified lines, and a `▁`-like wedge at the row's bottom edge for deleted
   lines; hover widens it to the full cell, and the status popup is a box.
 - **Current line:** the whole row of cells filled (`current_line`/`current_line_focused`), gutter
-  included.
+  included (the Fleet skin's 6 px inset and rounded left end have no cell form).
 - **Caret:** `editor.caretShape` drawn on cells: bar = a stroke twice the line width at the
   cell's left edge, the full row; block = the cell filled in `editor_caret` with its char redrawn
   in the background colour; underline = the cell's bottom fifth. Blink as Fleet.
@@ -159,6 +160,10 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   rule joining the frame (`┬ │ ┴`), showing the file's lines with line numbers on the grid.
 - The bottom edge carries key hints: ` ↵ open  ⇥ preview  esc close `. Empty: `Nothing found`
   centred in `text_tertiary`.
+- The run popup (Run & Debug): no tabs, `Run & Debug` in the top edge; the configuration at
+  run.json's caret first; the selected row ends in `[ Run ↩ ] [ Debug ⌥↩ ] ⋯` (Debug on `cargo`
+  rows, as Fleet's "Run ↩" and "Debug ⌥↩" buttons; the platform's chords off macOS); the
+  bottom edge's hints ` ↩ run  ⌥↩ debug  esc close `.
 
 ### Completion, parameter info, documentation
 - Completion: a box at the caret's cell, one row below it (above when there's no room), no
@@ -248,7 +253,11 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 ### Run tool
 - A tab per run in the panel's top edge (` ▶ name ` running in `text_positive`, ` ■ name ` when
   done; the exit code set into the bottom edge). Row 1: the command line in `text_secondary`,
-  then a rule, then the output on the grid; `[ ↻ Rerun ] [ ■ Stop ]` right-aligned on row 1.
+  then a rule, then the output on the grid (stderr in the terminal's ANSI red);
+  `[ ▶ Rerun ] [ ■ Stop ]` right-aligned on row 1.
+- A debug session's tab (M8) is the same tool: row 1 the build's command line, the output its
+  build's text, the adapter's command line (`text_secondary`) and the debuggee's output; the
+  state in the rule (`running`, `exit 0`, `stopped`, `failed`); Rerun restarts the session.
 
 ### Settings
 - A tab with two regions split by a vertical rule: the page list on the left (rows, the
@@ -265,17 +274,40 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   target's frame turns `drag_border_highlight`; a split target fills its half in `drag_bg`.
 
 ### Floating debug panel, quick evaluate, attach to process (M8)
-- The floating debug panel: a three-row box at the top centre of the active editor, `⋮` (the
-  drag handle, dragged by whole cells) then ` ▶ ` resume (` ‖ ` pause while running) ` ↪ ` step
-  over ` ↧ ` step into ` ↥ ` step out ` ■ ` stop, each three cells, filled on hover; resume in
-  `text_positive`, stop in `text_dangerous`, the disabled ones in `text_disabled`.
-- Quick evaluate (and the value on hover): a box on the row under the expression (above it
-  without room): a row per value, `▸`/`▾` and `name = value` indented two cells a level, the
+- The floating debug panel: a three-row box at the top right of the active editor (one cell in
+  from its edge), Fleet's eight buttons, each three cells: ` ▶ ` resume ` ‖ ` pause ` ↩ `
+  restart ` ■ ` stop ` ↪ ` step over ` ↓ ` step into ` ↑ ` step out ` □ ` (Fleet's unprobed last
+  button, inert), filled on hover; resume in `text_positive`, stop in `text_dangerous`, the ones
+  that cannot act now in `text_disabled`. No handle: it does not move. The status badge goes
+  to the row under the box.
+- Quick evaluate (and the value on hover, which shows only a value, never an error, and only
+  for code): a box on the row under the expression (above it without room): a row per value, `▸`/`▾` and `name = value` indented two cells a level, the
   type right-aligned in `text_tertiary`; under a rule `[ Add to Watches ]`; ` ↵ expand  esc
   close ` in the bottom edge while it has the keyboard (its frame then `border_focused`).
-- Attach to process: a Goto box, ` Attach to Process ` in the top edge and the count at its
-  end, `› query` on row 1, a rule, then ` name  dim/command line  pid` rows; ` ↵ attach  esc
-  close ` in the bottom edge.
+- Attach to process: a Goto box of fixed height, ` Attach to Process ` in the top edge, `› query`
+  on row 1, a rule, the `LLDB` header in `text_secondary`, then ` pid name` rows with the
+  name's matched chars coloured; ` ↵ attach  esc close ` in the bottom edge.
+
+### Debug, Breakpoints and Debugger Console tools (M8)
+- Debug tool: Fleet's column of three sections on whole rows, each under a section rule with
+  its title set in. `── Processes ──` carries the session toolbar at its right end, the
+  floating panel's eight three-cell buttons ` ▶  ‖  ↩  ■  ↪  ↓  ↑  □ ` (resume in `icon_green`,
+  stop in `icon_red`, the ones that cannot act now in `text_disabled`, `□` inert), then a row
+  per session ` ● debug fixture`, the dot red while stopped, green while running, dim
+  otherwise, the active session filled. `── Threads & Frames ──` takes Fleet's share (31.5 %)
+  of the rows under Processes: a thread row `▾ 1: tid=3212558 "main"` (`▸` folded), its frames
+  two cells further in as names only, the selected frame filled; the debuggee's state (running,
+  exited, failed) as a dim row while not stopped. `── Variables ── [ Add Watch ]`: the watches
+  (`○`) and the scopes, `▸ ▾` chevrons, two cells a level, `name = {type} value`. Each list
+  scrolls on its own, its bar on the island's right frame line; the selected row is filled
+  in `list_bg_focused` in the section with the keyboard (Tab moves it), `list_bg_selected`
+  elsewhere.
+- Breakpoints tool: the title row ` Breakpoints 1` with `[x]` (`[-]` when some are off) at its
+  right end, then a row per breakpoint ` ● debuggee.rs:7 misc` (the folder in
+  `text_secondary`; `○` disabled, `●` in `breakpoint_unverified` when unbound) with its own
+  `[x]` at the right.
+- Debugger Console: the lines on the grid, a rule, and the field as the last row (`› expression▏`
+  while focused).
 
 ## Checking it
 

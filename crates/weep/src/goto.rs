@@ -62,6 +62,16 @@ pub enum GotoMode {
     Workspaces,
 }
 
+/// What a `goto/*` chord does to the open panel. Batch 13: Go to Action's
+/// chord on the Actions tab closes it, as the chord of the list shown does.
+/// Another list's chord shows that list with an empty field (estimate: not
+/// probed in Fleet).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reopen {
+    Close,
+    Switch,
+}
+
 /// The tab chips across the top, in Fleet's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
@@ -155,6 +165,15 @@ impl GotoMode {
             GotoMode::Tools => "Search tools",
             GotoMode::TextSearch => "Search in files",
             GotoMode::Workspaces => "Search workspaces",
+        }
+    }
+
+    /// What a `goto/*` chord for `asked` does while the panel shows `self`.
+    pub fn reopen(self, asked: GotoMode) -> Reopen {
+        if self == asked {
+            Reopen::Close
+        } else {
+            Reopen::Switch
         }
     }
 
@@ -422,6 +441,26 @@ impl GotoPanel {
             self.input
                 .update(cx, |i, cx| i.set_placeholder(mode.placeholder(), cx));
             self.refilter(cx);
+        }
+    }
+
+    pub fn mode(&self) -> GotoMode {
+        self.mode
+    }
+
+    pub fn replace_mode(&self) -> bool {
+        self.search.replace_mode
+    }
+
+    /// Another list's `goto/*` chord while open: that list, the field
+    /// emptied ([`Reopen::Switch`]).
+    pub fn switch_to(&mut self, mode: GotoMode, cx: &mut Context<Self>) {
+        self.input.update(cx, |i, cx| i.set_text("", cx));
+        self.selected = 0;
+        if self.mode == mode {
+            self.refilter(cx);
+        } else {
+            self.set_mode(mode, cx);
         }
     }
 
@@ -2371,5 +2410,21 @@ impl GotoPanel {
                 .child(boxed),
         )
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chord_closes_its_own_list_and_switches_to_another() {
+        // Batch 13: Go to Action's chord on the Actions tab closes the panel.
+        assert_eq!(GotoMode::Actions.reopen(GotoMode::Actions), Reopen::Close);
+        assert_eq!(GotoMode::Files.reopen(GotoMode::Files), Reopen::Close);
+        // Estimate: another list's chord shows that list.
+        assert_eq!(GotoMode::Actions.reopen(GotoMode::Files), Reopen::Switch);
+        assert_eq!(GotoMode::Everything.reopen(GotoMode::Files), Reopen::Switch);
+        assert_eq!(GotoMode::Tools.reopen(GotoMode::Actions), Reopen::Switch);
     }
 }

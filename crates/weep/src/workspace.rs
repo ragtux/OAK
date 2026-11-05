@@ -992,6 +992,12 @@ impl Workspace {
                 EditorEvent::ContextMenu(position) => {
                     this.editor_context_menu(&editor, *position, cx)
                 }
+                // M8: the gutter's breakpoint menu (editor.rs, B).
+                EditorEvent::BreakpointMenu {
+                    position,
+                    path,
+                    line,
+                } => this.breakpoint_context_menu(&editor, *position, path, *line, cx),
                 EditorEvent::Saved => this.refresh_git(cx),
                 EditorEvent::ShowDiff => {
                     let path = editor.read(cx).path(cx);
@@ -2166,6 +2172,16 @@ impl Workspace {
             self.terminal_jump_to_tool(&TerminalJumpToTool, window, cx);
             return;
         }
+        // M8: a debugger tool already open stays in the panel the user put it in.
+        let side = match tool {
+            Tool::Debug | Tool::Breakpoints | Tool::DebuggerConsole => self
+                .panels
+                .iter()
+                .position(|p| p.tools.iter().any(|t| t.tool == tool))
+                .map(|ix| Side::ALL[ix])
+                .unwrap_or(side),
+            _ => side,
+        };
         let panel = self.panel_mut(side);
         let ix = match panel.tools.iter().position(|t| t.tool == tool) {
             Some(ix) => ix,
@@ -2850,13 +2866,18 @@ impl Workspace {
             let label = self.tool_tab_label(*tab, cx);
             let is_run = tab.tool == Tool::Run;
             let is_terminal = tab.tool == Tool::Terminal || is_run;
+            // The icon, whether it failed, whether it runs (M8, batch 13).
             let run_icon = is_run.then(|| {
                 self.run_view(tab.instance)
                     .map(|v| {
                         let v = v.read(cx);
-                        (crate::run_popup::kind_icon(v.kind()), v.failed())
+                        (
+                            crate::run_popup::kind_icon(v.kind()),
+                            v.failed(cx),
+                            v.running(cx),
+                        )
                     })
-                    .unwrap_or((Tool::Run.icon(), false))
+                    .unwrap_or((Tool::Run.icon(), false, false))
             });
             let tooltip = if is_run {
                 self.run_view(tab.instance).map(|v| {
@@ -2942,7 +2963,8 @@ impl Workspace {
                     menu_entity.update(cx, |this, cx| this.panel_tab_menu(side, ix, position, cx));
                 })
                 .when(is_terminal, |d| {
-                    let (path, failed) = run_icon.unwrap_or((Tool::Terminal.icon(), false));
+                    let (path, failed, running) =
+                        run_icon.unwrap_or((Tool::Terminal.icon(), false, false));
                     d.child(
                         div()
                             .size(px(m.icon_size))
@@ -2950,15 +2972,41 @@ impl Workspace {
                             .relative()
                             .mr(px(m.panel_tab_icon_gap))
                             .child(icon(path, m.icon_size, theme.icon_secondary))
-                            .when(failed, |d| {
+                            // M8 (batch 13): a green dot while it runs.
+                            .when(running, |d| {
                                 d.child(
                                     div()
                                         .absolute()
-                                        .right(px(-m.zoom))
-                                        .bottom(px(-m.zoom))
+                                        .right_0()
+                                        .bottom_0()
+                                        .size(px(m.run_tab_running_dot))
+                                        .rounded_full()
+                                        .bg(theme.icon_green),
+                                )
+                            })
+                            .when(failed && !running, |d| {
+                                // The red disc with its "!" in the island's colour.
+                                let bar = m.run_tab_badge / 7.;
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .right_0()
+                                        .bottom_0()
                                         .size(px(m.run_tab_badge))
                                         .rounded_full()
-                                        .bg(theme.icon_red),
+                                        .bg(theme.icon_red)
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .justify_center()
+                                        .gap(px(bar * 0.75))
+                                        .child(
+                                            div()
+                                                .w(px(bar))
+                                                .h(px(bar * 2.5))
+                                                .bg(theme.island_background),
+                                        )
+                                        .child(div().size(px(bar)).bg(theme.island_background)),
                                 )
                             }),
                     )
@@ -3276,9 +3324,9 @@ impl Workspace {
                 .flatten()
                 .map(|v| {
                     let v = v.read(cx);
-                    if v.running() {
+                    if v.running(cx) {
                         ("▶", theme.text_positive)
-                    } else if v.failed() {
+                    } else if v.failed(cx) {
                         ("■", theme.text_dangerous)
                     } else {
                         ("■", theme.text_tertiary)
@@ -4339,7 +4387,6 @@ impl Render for Workspace {
                 unread_notifications: self.notifications.read(cx).unread(),
                 smart,
                 smart_card_open,
-                debug: self.debug_indicator(cx),
             },
             &theme,
             &m,
@@ -4425,6 +4472,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::debug_force_step_into))
             .on_action(cx.listener(Self::debug_step_out))
             .on_action(cx.listener(Self::debug_stop))
+            .on_action(cx.listener(Self::debug_restart))
             .on_action(cx.listener(Self::debugger_attach_to_process))
             .on_action(cx.listener(Self::debug_quick_evaluate))
             .on_action(cx.listener(Self::debug_jump_to_tool))

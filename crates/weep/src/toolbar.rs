@@ -83,28 +83,6 @@ pub struct ToolbarState {
     /// (the button then fills with the state's colour).
     pub smart: SmartIndicator,
     pub smart_card_open: bool,
-    /// M8: a debug session is live (the Run & Debug button shows it).
-    pub debug: Option<DebugIndicator>,
-}
-
-/// What the Run & Debug button shows while a debug session is live
-/// (estimate: unprobed): the debug icon in place of the run triangle, in
-/// `icon.background.green` while the debuggee runs and in the primary icon
-/// colour on a `ghostButton` pressed wash while it is stopped; the tooltip
-/// names the state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DebugIndicator {
-    Running,
-    Paused,
-}
-
-impl DebugIndicator {
-    fn tooltip(self) -> &'static str {
-        match self {
-            DebugIndicator::Running => "Run & Debug (debugging)",
-            DebugIndicator::Paused => "Run & Debug (paused)",
-        }
-    }
 }
 
 /// What the lightning button shows (thirteenth pass): the icon in the
@@ -358,37 +336,13 @@ fn render_fleet(
                     },
                 ))
         })
-        .child(match state.debug {
-            None => icon_button("run", "expui/run/run", theme, m)
+        // Run & Debug: Fleet's outlined triangle, the same while a debug
+        // session runs or is stopped (batch 13: the button never changed).
+        .child(
+            icon_button("run", "weep/run-outline", theme, m)
                 .tooltip(Tooltip::text("Run & Debug"))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(RunAndDebug), cx)),
-            // M8: a live debug session (estimate, see `DebugIndicator`).
-            Some(debug) => div()
-                .id("run")
-                .size(px(m.toolbar_button))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(4. * m.zoom))
-                .cursor_pointer()
-                .occlude()
-                .when(debug == DebugIndicator::Paused, |d| {
-                    d.bg(theme.ghost_pressed)
-                })
-                .hover(|s| s.bg(theme.ghost_hovered))
-                .active(|s| s.bg(theme.ghost_pressed))
-                .tooltip(Tooltip::text(debug.tooltip()))
-                .on_click(|_, window, cx| window.dispatch_action(Box::new(RunAndDebug), cx))
-                .child(icon(
-                    "expui/run/debug",
-                    m.icon_size,
-                    match debug {
-                        DebugIndicator::Running => theme.icon_green,
-                        DebugIndicator::Paused => theme.icon_primary,
-                    },
-                )),
-        })
+        )
         .child(
             icon_button("search", "expui/general/search", theme, m)
                 .tooltip(Tooltip::text("Search Everywhere"))
@@ -773,26 +727,11 @@ fn render_tui(
         .child(smart)
         .child(
             tui_cell_button("run", 1, cell, theme)
-                // M8: a live debug session turns the mark green, `‖` while
-                // stopped (estimate).
-                .text_color(match state.debug {
-                    Some(DebugIndicator::Running) => theme.icon_green,
-                    _ => mark,
-                })
-                .when(state.debug == Some(DebugIndicator::Paused), |d| {
-                    d.bg(theme.ghost_pressed)
-                })
-                .tooltip(Tooltip::text(
-                    state
-                        .debug
-                        .map(DebugIndicator::tooltip)
-                        .unwrap_or("Run & Debug"),
-                ))
+                .text_color(mark)
+                .tooltip(Tooltip::text("Run & Debug"))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(RunAndDebug), cx))
-                .child(match state.debug {
-                    Some(DebugIndicator::Paused) => "‖",
-                    _ => "▶",
-                }),
+                // Fleet's outlined triangle, unchanged while debugging (batch 13).
+                .child("▷"),
         )
         .child(
             tui_cell_button("search", 1, cell, theme)

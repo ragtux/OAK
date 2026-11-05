@@ -12,6 +12,7 @@
 //! made before the configuration is sent wait in a queue: breakpoints go
 //! out with the configuration, the rest right after it.
 
+use crate::eval::{self, EvalRequest, Walk};
 use crate::protocol::{self, Pending};
 use crate::transport::{self, Incoming, Wake};
 use crate::{AdapterCommand, EvalContext, Event, RequestId, Response, SourceBreakpoint, Start};
@@ -407,6 +408,21 @@ impl Client {
                 self.disconnect();
             }
             Pending::Disconnect => {}
+            Pending::Evaluate(request) => {
+                if let Some(id) = id {
+                    self.evaluated(id, request, error, body, events);
+                }
+            }
+            Pending::WalkScopes(walk) => {
+                if let Some(id) = id {
+                    self.walked(id, walk, true, error, body, events);
+                }
+            }
+            Pending::WalkVariables(walk) => {
+                if let Some(id) = id {
+                    self.walked(id, walk, false, error, body, events);
+                }
+            }
             pending => {
                 if let Some(id) = id {
                     let result = match error {
@@ -574,14 +590,188 @@ impl Client {
         )
     }
 
+    /// Evaluates `expression` in the frame, answered by
+    /// [`Response::Evaluate`] (or one line of error). Rust through LLDB
+    /// (see `eval.rs`): a path with a tuple field (`pair.0`, which LLDB's
+    /// evaluator misreads) is looked up in the variables tree; a path the
+    /// adapter cannot evaluate is retried there; a failed `hover` of
+    /// anything else is retried in `watch` (the expression evaluator, for
+    /// a selection's `total * 2`); a failure is LLDB's one error line.
     pub fn evaluate(
         &mut self,
         expression: &str,
         frame_id: Option<i64>,
         context: EvalContext,
     ) -> RequestId {
+        if let (Some(path), Some(frame_id)) = (eval::rust_path(expression), frame_id) {
+            if eval::has_tuple_field(&path) {
+                let walk = Walk::new(expression, context, path);
+                return self.request(
+                    "scopes",
+                    json!({"frameId": frame_id}),
+                    Pending::WalkScopes(walk),
+                );
+            }
+        }
         let args = protocol::evaluate_arguments(expression, frame_id, context);
-        self.request("evaluate", args, Pending::Evaluate)
+        let request = EvalRequest {
+            expression: expression.to_string(),
+            frame_id,
+            context,
+            retried: false,
+        };
+        self.request("evaluate", args, Pending::Evaluate(request))
+    }
+
+    /// The answer to an `evaluate`: the owner's, or a fallback's request.
+    fn evaluated(
+        &mut self,
+        id: RequestId,
+        request: EvalRequest,
+        error: Option<String>,
+        body: &Value,
+        events: &mut Vec<Event>,
+    ) {
+        let Some(error) = error else {
+            let response = protocol::response(&Pending::Evaluate(request), body);
+            events.push(Event::Response {
+                id,
+                result: Ok(response),
+            });
+            return;
+        };
+        let cleaned = eval::clean_error(&error);
+        if self.phase == Phase::Configured {
+            if let (Some(path), Some(frame_id)) =
+                (eval::rust_path(&request.expression), request.frame_id)
+            {
+                let mut walk = Walk::new(&request.expression, request.context, path);
+                walk.error = Some(cleaned);
+                self.write(
+                    Some(id),
+                    "scopes",
+                    json!({"frameId": frame_id}),
+                    Pending::WalkScopes(walk),
+                );
+                return;
+            }
+            if request.context == EvalContext::Hover && !request.retried {
+                let args = protocol::evaluate_arguments(
+                    &request.expression,
+                    request.frame_id,
+                    EvalContext::Watch,
+                );
+                let request = EvalRequest {
+                    retried: true,
+                    ..request
+                };
+                self.write(Some(id), "evaluate", args, Pending::Evaluate(request));
+                return;
+            }
+        }
+        events.push(Event::Response {
+            id,
+            result: Err(cleaned),
+        });
+    }
+
+    /// One step of an evaluation through the variables tree: the frame's
+    /// scopes, a scope's variables, or a variable's children.
+    fn walked(
+        &mut self,
+        id: RequestId,
+        mut walk: Walk,
+        scopes: bool,
+        error: Option<String>,
+        body: &Value,
+        events: &mut Vec<Event>,
+    ) {
+        let fail = |walk: &Walk, segment: &str, events: &mut Vec<Event>| {
+            events.push(Event::Response {
+                id,
+                result: Err(walk.not_found(segment)),
+            });
+        };
+        let segment = walk.path.first().cloned().unwrap_or_default();
+        if let Some(e) = error {
+            let message = walk.error.clone().unwrap_or_else(|| eval::clean_error(&e));
+            events.push(Event::Response {
+                id,
+                result: Err(message),
+            });
+            return;
+        }
+        if scopes {
+            // The frame's scopes, registers aside: searched in order.
+            walk.scopes = body
+                .get("scopes")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(protocol::scope).collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s.variables_reference > 0 && !s.name.contains("Register"))
+                .map(|s| s.variables_reference)
+                .collect();
+            return self.walk_next_scope(id, walk, events);
+        }
+        let variables: Vec<crate::Variable> = body
+            .get("variables")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(protocol::variable).collect())
+            .unwrap_or_default();
+        let Some(found) = variables
+            .into_iter()
+            .find(|v| eval::child_matches(&v.name, &segment))
+        else {
+            if walk.at_root && !walk.scopes.is_empty() {
+                return self.walk_next_scope(id, walk, events);
+            }
+            return fail(&walk, &segment, events);
+        };
+        walk.path.remove(0);
+        if walk.path.is_empty() {
+            events.push(Event::Response {
+                id,
+                result: Ok(Response::Evaluate {
+                    result: walk.result_text(&found.value, found.type_name.as_deref()),
+                    type_name: found.type_name,
+                    variables_reference: found.variables_reference,
+                }),
+            });
+            return;
+        }
+        walk.at_root = false;
+        walk.scopes.clear();
+        walk.parent_type = found.type_name.clone();
+        if found.variables_reference <= 0 || self.phase != Phase::Configured {
+            let next = walk.path[0].clone();
+            return fail(&walk, &next, events);
+        }
+        self.write(
+            Some(id),
+            "variables",
+            json!({"variablesReference": found.variables_reference}),
+            Pending::WalkVariables(walk),
+        );
+    }
+
+    /// Reads the next scope's variables for the walk's first segment.
+    fn walk_next_scope(&mut self, id: RequestId, mut walk: Walk, events: &mut Vec<Event>) {
+        if walk.scopes.is_empty() || self.phase != Phase::Configured {
+            let segment = walk.path.first().cloned().unwrap_or_default();
+            events.push(Event::Response {
+                id,
+                result: Err(walk.not_found(&segment)),
+            });
+            return;
+        }
+        let reference = walk.scopes.remove(0);
+        self.write(
+            Some(id),
+            "variables",
+            json!({"variablesReference": reference}),
+            Pending::WalkVariables(walk),
+        );
     }
 
     /// `continue`. The answer ([`Response::Ack`]) means the debuggee runs

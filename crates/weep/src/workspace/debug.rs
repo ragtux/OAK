@@ -2,15 +2,20 @@
 //! (`.fleet/run.json`). A `cargo` row is built first with cargo's JSON
 //! messages (`weep-run`'s `cargo` module picks the executable: a
 //! `cargo run` row's binary, a `cargo test` row's test executable from
-//! `cargo test --no-run`), its build output streamed into the session's
-//! Debugger Console; then the executable is launched under lldb-dap with
-//! the row's arguments, environment and directory. A `command` row's
-//! program is launched directly. A stop opens the frame's file at its line
-//! and shows the Debug tool in the bottom panel.
+//! `cargo test --no-run`), its build output streamed into the session's run
+//! tab (batch 13: a bottom-panel run tool tab named after the
+//! configuration, with the adapter's command line after the build); then
+//! the executable is launched under lldb-dap with the row's arguments,
+//! environment and directory. A `command` row's program is launched
+//! directly. The Debug tool opens in the right panel as the session starts
+//! (batch 13), wherever the user put it otherwise; a session's first stop
+//! opens the frame's file at its line and focuses the Debug tool (batch 13:
+//! its tab selectedFocused on the stop).
 //!
 //! The `debug/*` actions the workspace answers: `debug/debug-in-context`
 //! (the configuration at the caret in run.json, else the last debugged),
-//! resume, pause, the steps and stop on the active session, and the
+//! resume, pause, the steps, restart (`DebugRestart`, WEEP's own: Fleet's
+//! Restart button has no known id) and stop on the active session, and the
 //! jump-to-tool / new-tool actions of the Debug, Breakpoints and Debugger
 //! Console tools. The breakpoint and watch actions belong to the editor
 //! and the tools (their key contexts); `debugger/attach-to-process` opens
@@ -22,9 +27,8 @@
 
 use super::*;
 use crate::debugger::{DebugSession, DebugSessionEvent, Debugger, SessionState};
-use crate::toolbar::DebugIndicator;
 use gpui::{EntityId, Subscription};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use weep_dap::{AdapterCommand, LaunchRequest, Start};
 use weep_run::cargo::DebugBuild;
 use weep_run::RunConfig;
@@ -38,6 +42,8 @@ pub(super) struct DebugState {
     sessions: HashMap<EntityId, Subscription>,
     /// The next id for a `debug/new-tool` tab.
     next_tab: usize,
+    /// Sessions whose first stop has focused the Debug tool.
+    stopped_once: HashSet<EntityId>,
 }
 
 /// What Fleet's notification says when no adapter is installed (estimate:
@@ -96,6 +102,12 @@ impl Workspace {
         self.remember_run(&config.name);
         self.debug.last = Some(config.name.clone());
         let session = self.new_debug_session(config.name.clone(), cx);
+        self.start_debug_run_tab(
+            session.clone(),
+            config.name.clone(),
+            config.kind.clone(),
+            cx,
+        );
         match build {
             Some(build) => {
                 session.update(cx, |s, cx| s.build_then_start(build, adapter, cx));
@@ -132,7 +144,8 @@ impl Workspace {
         } else {
             format!("{name} ({pid})")
         };
-        let session = self.new_debug_session(label, cx);
+        let session = self.new_debug_session(label.clone(), cx);
+        self.start_debug_run_tab(session.clone(), label, "attach".into(), cx);
         session.update(cx, |s, cx| s.start(&adapter, Start::Attach { pid }, cx));
         self.reveal_debug_tool(cx);
     }
@@ -161,13 +174,43 @@ impl Workspace {
             s.set_root(&root);
             s
         });
-        let subscription = cx.subscribe(&session, Self::on_debug_session_event);
-        self.debug
-            .sessions
-            .insert(session.entity_id(), subscription);
-        debugger.update(cx, |d, cx| d.add(session.clone(), cx));
-        cx.notify();
+        self.follow_debug_session(&session, cx);
         session
+    }
+
+    /// The session listed by the Debugger and followed for its stops (again,
+    /// after the Debug tool's close dropped it, for a restart from its run tab).
+    fn follow_debug_session(&mut self, session: &Entity<DebugSession>, cx: &mut Context<Self>) {
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.debug.sessions.entry(session.entity_id())
+        {
+            e.insert(cx.subscribe(session, Self::on_debug_session_event));
+        }
+        let debugger = Debugger::global(cx);
+        if !debugger.read(cx).sessions().contains(session) {
+            debugger.update(cx, |d, cx| d.add(session.clone(), cx));
+        }
+        cx.notify();
+    }
+
+    /// Restarts a session (its run tab's Rerun, `DebugRestart`): stopped and
+    /// started again from the same build or launch, the tools on it.
+    pub(super) fn restart_debug_session(
+        &mut self,
+        session: Entity<DebugSession>,
+        cx: &mut Context<Self>,
+    ) {
+        self.follow_debug_session(&session, cx);
+        let debugger = Debugger::global(cx);
+        debugger.update(cx, |d, cx| {
+            if let Some(ix) = d.sessions().iter().position(|s| *s == session) {
+                d.set_active(ix, cx);
+            }
+        });
+        // Its next stop focuses the Debug tool again.
+        self.debug.stopped_once.remove(&session.entity_id());
+        session.update(cx, |s, cx| s.restart(cx));
+        self.reveal_debug_tool(cx);
     }
 
     fn on_debug_session_event(
@@ -190,18 +233,28 @@ impl Workspace {
                     let s = session.read(cx);
                     s.frames.get(s.current_frame).cloned()
                 };
+                let first = self.debug.stopped_once.insert(session.entity_id());
                 if let Some(path) = frame.as_ref().and_then(|f| f.path.clone()) {
                     if path.is_file() {
                         let frame = frame.as_ref().expect("checked");
                         self.open_path(path, false, cx);
                         if let Some(editor) = self.active_editor().cloned() {
-                            let (line, column) = (frame.line, frame.column);
-                            editor.update(cx, |e, cx| e.goto(line, column, cx));
+                            // Estimate (batch 13, one shot): Fleet's caret at
+                            // the stopped line's first column (6:1), not the
+                            // frame's.
+                            let line = frame.line;
+                            editor.update(cx, |e, cx| e.goto(line, 0, cx));
                         }
-                        self.focus_active_editor(cx);
                     }
                 }
-                self.reveal_debug_tool(cx);
+                // Batch 13: on the first stop the Debug tool's tab is the
+                // focused one; otherwise the focus stays where it was (the
+                // editor unfocused under its wash; estimates from one shot).
+                if let Some((side, ix)) = self.reveal_debug_tool(cx) {
+                    if first {
+                        self.focus_tool_tab_later(side, ix, cx);
+                    }
+                }
                 cx.notify();
             }
             DebugSessionEvent::Ended => {
@@ -218,10 +271,16 @@ impl Workspace {
         }
     }
 
-    /// Shows the Debug tool in the bottom panel without taking the focus
-    /// (estimate: Fleet shows it as the session starts and on a stop).
-    fn reveal_debug_tool(&mut self, cx: &mut Context<Self>) {
-        let side = Side::Bottom;
+    /// Shows the Debug tool without taking the focus: in the panel holding
+    /// one, else in the right panel (batch 13; Fleet shows it as the
+    /// session starts and on a stop). Returns where it is.
+    fn reveal_debug_tool(&mut self, cx: &mut Context<Self>) -> Option<(Side, usize)> {
+        let side = self
+            .panels
+            .iter()
+            .position(|p| p.tools.iter().any(|t| t.tool == Tool::Debug))
+            .map(|ix| Side::ALL[ix])
+            .unwrap_or_else(|| workbench::tool_side(Tool::Debug));
         let panel = self.panel_mut(side);
         let ix = match panel.tools.iter().position(|t| t.tool == Tool::Debug) {
             Some(ix) => ix,
@@ -234,6 +293,17 @@ impl Workspace {
         panel.open = true;
         self.save_layout();
         cx.notify();
+        Some((side, ix))
+    }
+
+    /// Focuses the Debug tool once the frame is drawn (a session's event
+    /// has no window at hand).
+    fn focus_tool_tab_later(&mut self, side: Side, ix: usize, cx: &mut Context<Self>) {
+        if self.panel(side).tools.get(ix).map(|t| t.tool) != Some(Tool::Debug) {
+            return;
+        }
+        let handle = self.debug_views.debug.read(cx).focus_handle(cx);
+        self.focus_later(handle, cx);
     }
 
     /// A Debug tool tab closed: with none left, the ended sessions go.
@@ -254,21 +324,7 @@ impl Workspace {
             .map(|s| s.entity_id())
             .collect();
         self.debug.sessions.retain(|id, _| alive.contains(id));
-    }
-
-    /// The toolbar's Run & Debug button: whether a session is live, and
-    /// whether one is stopped.
-    pub(super) fn debug_indicator(&self, cx: &App) -> Option<DebugIndicator> {
-        let debugger = Debugger::global(cx);
-        let live = debugger.read(cx).live(cx);
-        if live.is_empty() {
-            return None;
-        }
-        if live.iter().any(|s| s.read(cx).state.is_stopped()) {
-            Some(DebugIndicator::Paused)
-        } else {
-            Some(DebugIndicator::Running)
-        }
+        self.debug.stopped_once.retain(|id| alive.contains(id));
     }
 
     /// The session the stepping actions act on: the active one when it is
@@ -377,6 +433,23 @@ impl Workspace {
         self.with_session(cx, |s, cx| s.stop(cx));
     }
 
+    /// `DebugRestart` (the Processes row's and the floating panel's Restart,
+    /// batch 13): the live session the steps act on, else the active one
+    /// even when it has ended.
+    pub(super) fn debug_restart(
+        &mut self,
+        _: &DebugRestart,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self
+            .command_session(cx)
+            .or_else(|| Debugger::global(cx).read(cx).active());
+        if let Some(session) = session {
+            self.restart_debug_session(session, cx);
+        }
+    }
+
     /// `debug/quick-evaluate-expression` (bound in the Editor context, it
     /// bubbles here): the value popup at the active editor's expression.
     pub(super) fn debug_quick_evaluate(
@@ -407,27 +480,24 @@ impl Workspace {
     /// The jump-to-tool actions: the tool's tab (made when there is none),
     /// shown and focused.
     fn jump_to_debug_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
-        let side = self
-            .panels
-            .iter()
-            .position(|p| p.tools.iter().any(|t| t.tool == tool))
-            .map(|ix| Side::ALL[ix])
-            .unwrap_or(Side::Bottom);
-        self.choose_tool(side, tool, window, cx);
+        // `choose_tool` keeps a tab where the user put it.
+        self.choose_tool(workbench::tool_side(tool), tool, window, cx);
     }
 
-    /// The new-tool actions: another tab of the tool in the bottom panel
-    /// (every tab of a tool shows the same view).
+    /// The new-tool actions: another tab of the tool in its default panel
+    /// (the right one for Debug and Breakpoints, batch 13; every tab of a
+    /// tool shows the same view).
     fn new_debug_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
         self.debug.next_tab += 1;
         let instance = self.debug.next_tab;
-        let panel = self.panel_mut(Side::Bottom);
+        let side = workbench::tool_side(tool);
+        let panel = self.panel_mut(side);
         panel.tools.push(ToolTab { tool, instance });
         panel.active = panel.tools.len() - 1;
         panel.open = true;
         self.chooser = None;
-        let ix = self.panel(Side::Bottom).active;
-        self.focus_tool_tab(Side::Bottom, ix, window, cx);
+        let ix = self.panel(side).active;
+        self.focus_tool_tab(side, ix, window, cx);
         self.save_layout();
         cx.notify();
     }

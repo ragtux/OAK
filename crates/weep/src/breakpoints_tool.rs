@@ -1,9 +1,17 @@
-//! The Breakpoints tool (M8): every line breakpoint of the app's
-//! `BreakpointStore`, grouped by file. A file's row is its icon and its
-//! path relative to the workspace root; under it one row per breakpoint,
-//! `line N: <the line's text>` with a check box that enables or disables it.
-//! No probe of Fleet's tool exists yet: the rows reuse the Files tree's
-//! metrics and the Git tool's check box, and the empty text is an estimate.
+//! The Breakpoints tool (M8), as Fleet 1.48 shows it (batch 13,
+//! `debug-fleet-breakpoints-tool.png`): a title row "Breakpoints" with the
+//! count in `text.secondary` and a check box at its right that enables or
+//! disables them all, then one row per line breakpoint of the app's
+//! `BreakpointStore`: the breakpoint's dot, `debuggee.rs:7` (the file's
+//! name and the 1-based line), the folder in `text.secondary` (`misc`,
+//! relative to the workspace root) and the breakpoint's own check box at the
+//! row's right. Sizes are `metrics::BREAKPOINTS_*` (`theme.rs`).
+//!
+//! Batch 13 showed one breakpoint in one file, so the order of several
+//! (file by file, in line order), a disabled or unbound breakpoint's dot
+//! (the gutter's ring and grey) and the empty tool's words are estimates;
+//! no other group (exception breakpoints) exists in WEEP. A row's tooltip
+//! is the line's text.
 //!
 //! Keys (context `BreakpointsTool`): arrows move, Space toggles the check
 //! box (`debug/toggle-enabled-breakpoint`), Delete or Backspace removes
@@ -13,12 +21,12 @@
 use crate::actions::{
     DebugRemoveBreakpoint, DebugToggleEnabledBreakpoint, PopupConfirm, PopupDown, PopupUp,
 };
-use crate::assets::{file_icon, icon};
-use crate::breakpoints::{BreakpointStore, LineBreakpoint};
-use crate::debug_tool::{relative_path, DebugViewEvent};
+use crate::breakpoints::{BreakpointStore, LineBreakpoint, Look};
+use crate::debug_tool::{relative_path, section_title, DebugViewEvent};
 use crate::git_tool::{checkbox, tui_list, CheckState};
 use crate::skin::{self, Cell, FrameBars, RowScroll, Skin};
 use crate::theme::{Metrics, Theme};
+use crate::tooltip::Tooltip;
 use gpui::{
     div, prelude::*, px, AnyElement, App, Context, ElementId, EventEmitter, FocusHandle, Focusable,
     Render, ScrollHandle, SharedString, Subscription, Window,
@@ -29,63 +37,87 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 /// A line's text from an open document, when the file is open (the
-/// workspace sets it; lines on disk otherwise).
+/// workspace sets it; lines on disk otherwise): the rows' tooltips.
 pub type LineSource = Rc<dyn Fn(&Path, usize, &App) -> Option<String>>;
 
-/// One row of the tool.
+/// One breakpoint's row.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BpRow {
-    File {
-        path: PathBuf,
-        label: String,
-    },
-    Line {
-        path: PathBuf,
-        line: usize,
-        enabled: bool,
-        /// `Some(false)`: the running session could not bind it.
-        verified: Option<bool>,
-        text: String,
-    },
+pub struct BpRow {
+    pub path: PathBuf,
+    pub line: usize,
+    pub enabled: bool,
+    /// `Some(false)`: the running session could not bind it.
+    pub verified: Option<bool>,
+    /// `debuggee.rs:7`: the file's name and the 1-based line.
+    pub name: String,
+    /// The file's folder relative to the root (`misc`), empty at the root.
+    pub folder: String,
 }
 
-/// A breakpoint's row text: `line 12: let x = 1;`, 1-based, the line trimmed.
-pub fn breakpoint_label(line: usize, text: &str) -> String {
-    let text = text.trim();
-    if text.is_empty() {
-        format!("line {}", line + 1)
-    } else {
-        format!("line {}: {text}", line + 1)
+impl BpRow {
+    fn look(&self) -> Look {
+        LineBreakpoint {
+            enabled: self.enabled,
+            verified: self.verified,
+            ..LineBreakpoint::at(self.line)
+        }
+        .look()
     }
 }
 
-/// The rows for `files`: a file row, then its breakpoints in line order.
+/// The rows for `files`: file by file, each file's breakpoints in line order.
 pub fn bp_rows<'a>(
     files: impl IntoIterator<Item = (&'a Path, &'a [LineBreakpoint])>,
     root: &Path,
-    mut line_text: impl FnMut(&Path, usize) -> Option<String>,
 ) -> Vec<BpRow> {
     let mut rows = Vec::new();
     for (path, list) in files {
-        if list.is_empty() {
-            continue;
-        }
-        rows.push(BpRow::File {
-            path: path.to_path_buf(),
-            label: relative_path(path, root),
-        });
+        let file = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let folder = path
+            .parent()
+            .map(|p| relative_path(p, root))
+            .unwrap_or_default();
+        let mut list = list.to_vec();
+        list.sort_by_key(|b| b.line);
         for b in list {
-            let text = line_text(path, b.line).unwrap_or_default();
-            rows.push(BpRow::Line {
+            rows.push(BpRow {
                 path: path.to_path_buf(),
                 line: b.line,
                 enabled: b.enabled,
                 verified: b.verified,
-                text: breakpoint_label(b.line, &text),
+                name: format!("{file}:{}", b.line + 1),
+                folder: folder.clone(),
             });
         }
     }
     rows
+}
+
+/// The title row's check box: on when every breakpoint is, the dash when
+/// some are.
+pub fn all_state(rows: &[BpRow]) -> CheckState {
+    let on = rows.iter().filter(|r| r.enabled).count();
+    if on == 0 {
+        CheckState::Off
+    } else if on == rows.len() {
+        CheckState::All
+    } else {
+        CheckState::Some
+    }
+}
+
+/// `d` with a border `w` wide on every side.
+fn ring(mut d: gpui::Div, w: gpui::Pixels) -> gpui::Div {
+    let w: gpui::AbsoluteLength = w.into();
+    let b = &mut d.style().border_widths;
+    b.top = Some(w);
+    b.right = Some(w);
+    b.bottom = Some(w);
+    b.left = Some(w);
+    d
 }
 
 /// Estimate: the words of an empty tool.
@@ -139,9 +171,12 @@ impl BreakpointsTool {
         self.tui_bars.clone()
     }
 
-    /// Line `line` of `path` as it stands on disk, the file read again when
-    /// its modification time moved.
-    fn disk_line(&mut self, path: &Path, line: usize) -> Option<String> {
+    /// Line `line` of `path` from its open document, else as it stands on
+    /// disk (the file read again when its modification time moved).
+    fn line_text(&mut self, path: &Path, line: usize, cx: &App) -> Option<String> {
+        if let Some(text) = self.line_source.as_ref().and_then(|s| s(path, line, cx)) {
+            return Some(text);
+        }
         let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
         let fresh = self.disk.get(path).is_some_and(|(t, _)| *t == mtime);
         if !fresh {
@@ -156,24 +191,9 @@ impl BreakpointsTool {
     fn rows(&mut self, cx: &App) -> Vec<BpRow> {
         let store = BreakpointStore::global(cx);
         let store = store.read(cx);
-        let files: Vec<(PathBuf, Vec<LineBreakpoint>)> = store
-            .files()
-            .map(|(p, b)| (p.to_path_buf(), b.to_vec()))
-            .collect();
-        let source = self.line_source.clone();
-        let root = self.root.clone();
-        let rows = bp_rows(
-            files.iter().map(|(p, b)| (p.as_path(), b.as_slice())),
-            &root,
-            |path, line| {
-                source
-                    .as_ref()
-                    .and_then(|s| s(path, line, cx))
-                    .or_else(|| self.disk_line(path, line))
-            },
-        );
+        let rows = bp_rows(store.files(), &self.root);
         // Lines of files no longer listed are not kept.
-        self.disk.retain(|p, _| files.iter().any(|(f, _)| f == p));
+        self.disk.retain(|p, _| rows.iter().any(|r| &r.path == p));
         rows
     }
 
@@ -200,14 +220,10 @@ impl BreakpointsTool {
     }
 
     fn open(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let line = match self.rows(cx).get(ix) {
-            Some(BpRow::Line { path, line, .. }) => Some((path.clone(), *line)),
-            _ => None,
-        };
-        if let Some((path, line)) = line {
+        if let Some(row) = self.rows(cx).get(ix).cloned() {
             cx.emit(DebugViewEvent::Open {
-                path,
-                line,
+                path: row.path,
+                line: row.line,
                 focus: true,
             });
         }
@@ -219,28 +235,15 @@ impl BreakpointsTool {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(BpRow::Line {
-            path,
-            line,
-            enabled,
-            ..
-        }) = self.selected_row(cx)
-        {
-            set_enabled(&path, line, !enabled, cx);
+        if let Some(row) = self.selected_row(cx) {
+            set_enabled(&row.path, row.line, !row.enabled, cx);
         }
     }
 
-    /// Delete: the selected breakpoint, or every one of the selected file.
     fn remove(&mut self, _: &DebugRemoveBreakpoint, _: &mut Window, cx: &mut Context<Self>) {
-        let store = BreakpointStore::global(cx);
-        match self.selected_row(cx) {
-            Some(BpRow::Line { path, line, .. }) => {
-                store.update(cx, |s, cx| s.remove(&path, line, cx));
-            }
-            Some(BpRow::File { path, .. }) => {
-                store.update(cx, |s, cx| s.set_file(&path, Vec::new(), cx));
-            }
-            None => {}
+        if let Some(row) = self.selected_row(cx) {
+            let store = BreakpointStore::global(cx);
+            store.update(cx, |s, cx| s.remove(&row.path, row.line, cx));
         }
     }
 
@@ -257,6 +260,17 @@ impl BreakpointsTool {
 fn set_enabled(path: &Path, line: usize, enabled: bool, cx: &mut App) {
     let store = BreakpointStore::global(cx);
     store.update(cx, |s, cx| s.set_enabled(path, line, enabled, cx));
+}
+
+/// The title's check box: enables every breakpoint unless all are on, then
+/// disables them all.
+fn set_all(rows: &[BpRow], cx: &mut App) {
+    let enable = all_state(rows) != CheckState::All;
+    for r in rows {
+        if r.enabled != enable {
+            set_enabled(&r.path, r.line, enable, cx);
+        }
+    }
 }
 
 impl Render for BreakpointsTool {
@@ -312,53 +326,99 @@ impl BreakpointsTool {
             self.reveal = false;
             self.scroll.scroll_to_item(self.selected);
         }
+        let all = all_state(&rows);
+        let all_rows = rows.clone();
+        let header = div()
+            .flex_shrink_0()
+            .mt(px(m.breakpoints_top))
+            .h(px(m.breakpoints_header))
+            .mx(px(m.panel_pad_x))
+            .pl(px(m.debug_section_pad_x))
+            .pr(px(m.git_checkbox_right))
+            .flex()
+            .items_center()
+            .child(section_title("Breakpoints", &theme, &m))
+            .child(
+                div()
+                    .ml(px(m.breakpoints_count_gap))
+                    .text_color(theme.text_secondary)
+                    .child(SharedString::from(rows.len().to_string())),
+            )
+            .child(div().flex_1())
+            .child(
+                checkbox("bp-check-all", all, &theme, &m).on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    set_all(&all_rows, cx);
+                }),
+            );
         let children: Vec<AnyElement> = rows
             .into_iter()
             .enumerate()
             .map(|(ix, row)| {
                 let selected = ix == self.selected;
                 let click = entity.clone();
-                let inner = div()
-                    .size_full()
-                    .pl(px(m.tree_pad_left))
-                    .pr(px(m.tree_pad_left))
-                    .flex()
-                    .items_center()
-                    .gap(px(m.tree_icon_gap))
-                    .rounded(px(m.tree_row_radius))
-                    .cursor_pointer()
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .when(selected && focused, |d| d.bg(theme.list_bg_focused))
-                    .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
-                    .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)));
-                let inner = match row {
-                    BpRow::File { label, .. } => {
-                        let name = Path::new(&label)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        inner
-                            .child(icon(file_icon(&name), m.icon_size, theme.icon_secondary))
+                let d = px(m.breakpoints_dot);
+                let dot = div().size(d).rounded_full().map(|dot| match row.look() {
+                    Look::Enabled => dot.bg(theme.breakpoint),
+                    Look::Unverified => dot.bg(theme.breakpoint_unverified),
+                    // Estimate: the gutter's ring.
+                    Look::Disabled => ring(dot, d * 0.15).border_color(theme.breakpoint),
+                });
+                let tooltip = self
+                    .line_text(&row.path, row.line, cx)
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty());
+                let (path, line, enabled) = (row.path.clone(), row.line, row.enabled);
+                div()
+                    .id(ElementId::NamedInteger("bp-row".into(), ix as u64))
+                    .h(px(m.tree_row_height))
+                    .flex_shrink_0()
+                    .py(px(m.tree_row_inset))
+                    .on_click(move |e, window, cx| {
+                        let count = e.click_count();
+                        click.update(cx, |this, cx| this.click(ix, count, window, cx));
+                    })
+                    .when_some(tooltip, |d, text| d.tooltip(Tooltip::text(text)))
+                    .child(
+                        div()
+                            .size_full()
+                            .pl(px(m.debug_row_pad))
+                            .pr(px(m.git_checkbox_right))
+                            .flex()
+                            .items_center()
+                            .gap(px(m.debug_chevron_gap))
+                            .rounded(px(m.tree_row_radius))
+                            .cursor_pointer()
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .when(selected && focused, |d| d.bg(theme.list_bg_focused))
+                            .when(selected && !focused, |d| d.bg(theme.list_bg_selected))
+                            .when(!selected, |d| d.hover(|s| s.bg(theme.list_bg_hovered)))
+                            // The dot centred in the chevron's 16 px box.
                             .child(
                                 div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(theme.list_text)
-                                    .child(SharedString::from(label)),
+                                    .size(px(m.icon_size))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(dot),
                             )
-                    }
-                    BpRow::Line {
-                        path,
-                        line,
-                        enabled,
-                        verified,
-                        text,
-                    } => {
-                        let toggle_path = path.clone();
-                        inner
-                            // Estimate: a breakpoint sits one tree level in.
-                            .pl(px(m.tree_pad_left + m.tree_indent))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(theme.list_text)
+                                    .child(SharedString::from(row.name)),
+                            )
+                            .child(
+                                div()
+                                    .ml(px(m.breakpoints_folder_gap - m.debug_chevron_gap))
+                                    .min_w_0()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_color(theme.list_text_secondary)
+                                    .child(SharedString::from(row.folder)),
+                            )
                             .child(
                                 checkbox(
                                     ElementId::NamedInteger("bp-check".into(), ix as u64),
@@ -372,49 +432,37 @@ impl BreakpointsTool {
                                 )
                                 .on_click(move |_, _, cx| {
                                     cx.stop_propagation();
-                                    set_enabled(&toggle_path, line, !enabled, cx);
+                                    set_enabled(&path, line, !enabled, cx);
                                 }),
-                            )
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(if !enabled || verified == Some(false) {
-                                        theme.text_tertiary
-                                    } else {
-                                        theme.list_text
-                                    })
-                                    .child(SharedString::from(text)),
-                            )
-                    }
-                };
-                div()
-                    .id(ElementId::NamedInteger("bp-row".into(), ix as u64))
-                    .h(px(m.tree_row_height))
-                    .flex_shrink_0()
-                    .py(px(m.tree_row_inset))
-                    .on_click(move |e, window, cx| {
-                        let count = e.click_count();
-                        click.update(cx, |this, cx| this.click(ix, count, window, cx));
-                    })
-                    .child(inner)
+                            ),
+                    )
                     .into_any_element()
             })
             .collect();
         div()
-            .id("bp-list")
             .size_full()
-            .px(px(m.panel_pad_x))
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
             .flex()
             .flex_col()
-            .children(children)
+            .child(header)
+            .child(
+                div()
+                    .id("bp-list")
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(m.panel_pad_x))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .flex()
+                    .flex_col()
+                    .children(children),
+            )
             .into_any_element()
     }
 
-    /// The tool in the tui skin: a file row `◆ src/main.rs`, then its
-    /// breakpoints `[x] line 12: text` one level in, on whole rows.
+    /// The tool in the tui skin: the title row ` Breakpoints 1` with `[x]`
+    /// (`[-]` when some are off) at its right end, then a row per
+    /// breakpoint ` ● debuggee.rs:7 misc` (`○` disabled, `●` in
+    /// `breakpoint_unverified` when unbound) with its `[x]` at the right.
     fn render_tui(
         &mut self,
         rows: Vec<BpRow>,
@@ -424,7 +472,8 @@ impl BreakpointsTool {
         self.tui_bars.clear();
         let theme = cx.global::<Theme>().clone();
         let cell = Cell::current(cx);
-        let (cols, visible) = self.tui_grid.get();
+        let (cols, grid_rows) = self.tui_grid.get();
+        let visible = grid_rows.saturating_sub(1);
         let focused = self.focus_handle.is_focused(window);
         let entity = cx.entity();
         let total = rows.len();
@@ -439,6 +488,17 @@ impl BreakpointsTool {
         }
         self.tui_scroll.top = self.tui_scroll.top.min(total.saturating_sub(visible));
         let top = self.tui_scroll.top;
+        // A check box's three cells, clickable.
+        let check = |id: ElementId, text: &'static str| {
+            div()
+                .id(id)
+                .w(cell.cols(3))
+                .flex_shrink_0()
+                .text_color(theme.text_secondary)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.list_bg_hovered))
+                .child(text)
+        };
         let body: AnyElement = if rows.is_empty() {
             div()
                 .h(px(cell.h))
@@ -446,6 +506,39 @@ impl BreakpointsTool {
                 .child(SharedString::from(format!(" {EMPTY}")))
                 .into_any_element()
         } else {
+            let all = all_state(&rows);
+            let all_rows = rows.clone();
+            let count = rows.len().to_string();
+            let header = div()
+                .h(px(cell.h))
+                .w(cell.cols(cols))
+                .flex_shrink_0()
+                .flex()
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .child(div().w(px(cell.w)).flex_shrink_0())
+                .child(div().text_color(theme.text_primary).child("Breakpoints "))
+                .child(
+                    div()
+                        .text_color(theme.text_secondary)
+                        .child(SharedString::from(count)),
+                )
+                .child(div().flex_1())
+                .child(
+                    check(
+                        "bp-check-all".into(),
+                        match all {
+                            CheckState::All => "[x]",
+                            CheckState::Some => "[-]",
+                            CheckState::Off => "[ ]",
+                        },
+                    )
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        set_all(&all_rows, cx);
+                    }),
+                )
+                .child(div().w(px(cell.w)).flex_shrink_0());
             let children: Vec<AnyElement> = rows
                 .into_iter()
                 .enumerate()
@@ -454,7 +547,17 @@ impl BreakpointsTool {
                 .map(|(ix, row)| {
                     let selected = ix == self.selected;
                     let click = entity.clone();
-                    let d = div()
+                    let (glyph, color) = match row.look() {
+                        Look::Enabled => ("●", theme.breakpoint),
+                        Look::Unverified => ("●", theme.breakpoint_unverified),
+                        Look::Disabled => ("○", theme.breakpoint),
+                    };
+                    let room = cols.saturating_sub(3 + 5);
+                    let name = skin::fit_text(&row.name, room);
+                    let folder_room = room.saturating_sub(Cell::text_cols(&name) + 1);
+                    let folder = skin::fit_text(&row.folder, folder_room);
+                    let (path, line, enabled) = (row.path.clone(), row.line, row.enabled);
+                    div()
                         .id(ElementId::NamedInteger("bp-row".into(), (ix - top) as u64))
                         .h(px(cell.h))
                         .w(cell.cols(cols))
@@ -469,80 +572,63 @@ impl BreakpointsTool {
                         .on_click(move |e, window, cx| {
                             let count = e.click_count();
                             click.update(cx, |this, cx| this.click(ix, count, window, cx));
-                        });
-                    match row {
-                        BpRow::File { label, .. } => {
-                            let (glyph, color) = skin::file_glyph(&label, &theme);
-                            d.child(div().w(px(cell.w)).flex_shrink_0())
-                                .child(
-                                    div()
-                                        .w(px(cell.w))
-                                        .flex_shrink_0()
-                                        .text_color(color)
-                                        .child(glyph),
-                                )
-                                .child(div().w(px(cell.w)).flex_shrink_0())
-                                .child(
-                                    div()
-                                        .text_color(theme.list_text)
-                                        .child(skin::fit_text(&label, cols.saturating_sub(3))),
-                                )
-                        }
-                        BpRow::Line {
-                            path,
-                            line,
-                            enabled,
-                            verified,
-                            text,
-                        } => d
-                            .child(div().w(cell.cols(3)).flex_shrink_0())
-                            .child(
+                        })
+                        .child(div().w(px(cell.w)).flex_shrink_0())
+                        .child(
+                            div()
+                                .w(cell.cols(2))
+                                .flex_shrink_0()
+                                .text_color(color)
+                                .child(glyph),
+                        )
+                        .child(
+                            div()
+                                .text_color(theme.list_text)
+                                .child(SharedString::from(name)),
+                        )
+                        .when(!folder.is_empty(), |d| {
+                            d.child(
                                 div()
-                                    .id(ElementId::NamedInteger(
-                                        "bp-check".into(),
-                                        (ix - top) as u64,
-                                    ))
-                                    .w(cell.cols(3))
-                                    .flex_shrink_0()
-                                    .text_color(theme.text_secondary)
-                                    .hover(|s| s.bg(theme.list_bg_hovered))
-                                    .on_click(move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        set_enabled(&path, line, !enabled, cx);
-                                    })
-                                    .child(skin::checkbox(enabled)),
+                                    .text_color(theme.list_text_secondary)
+                                    .child(SharedString::from(format!(" {folder}"))),
                             )
-                            .child(div().w(px(cell.w)).flex_shrink_0())
-                            .child(
-                                div()
-                                    .text_color(if !enabled || verified == Some(false) {
-                                        theme.text_tertiary
-                                    } else {
-                                        theme.list_text
-                                    })
-                                    .child(skin::fit_text(&text, cols.saturating_sub(7))),
-                            ),
-                    }
-                    .into_any_element()
+                        })
+                        .child(div().flex_1())
+                        .child(
+                            check(
+                                ElementId::NamedInteger("bp-check".into(), (ix - top) as u64),
+                                skin::checkbox(enabled),
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                set_enabled(&path, line, !enabled, cx);
+                            }),
+                        )
+                        .child(div().w(px(cell.w)).flex_shrink_0())
+                        .into_any_element()
                 })
                 .collect();
-            tui_list(
-                "bp-list",
-                &entity,
-                |this: &mut BreakpointsTool| &mut this.tui_scroll,
-                top,
-                total,
-                cols,
-                visible,
-                div()
-                    .flex()
-                    .flex_col()
-                    .children(children)
-                    .into_any_element(),
-                cell,
-                &self.tui_bars,
-            )
-            .into_any_element()
+            div()
+                .flex()
+                .flex_col()
+                .child(header)
+                .child(tui_list(
+                    "bp-list",
+                    &entity,
+                    |this: &mut BreakpointsTool| &mut this.tui_scroll,
+                    top,
+                    total,
+                    cols,
+                    visible,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(children)
+                        .into_any_element(),
+                    cell,
+                    &self.tui_bars,
+                ))
+                .into_any_element()
         };
         div()
             .size_full()
@@ -564,65 +650,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn labels_are_one_based_and_trimmed() {
-        assert_eq!(
-            breakpoint_label(0, "    let x = 1;  "),
-            "line 1: let x = 1;"
-        );
-        assert_eq!(breakpoint_label(9, "   "), "line 10");
-    }
-
-    #[test]
-    fn rows_group_by_file() {
-        let a = PathBuf::from("/w/src/main.rs");
+    fn rows_name_the_file_and_line_with_the_folder() {
+        let a = PathBuf::from("/w/misc/debuggee.rs");
         let b = PathBuf::from("/elsewhere/lib.rs");
+        let c = PathBuf::from("/w/main.rs");
         let mut off = LineBreakpoint::at(4);
         off.enabled = false;
-        let la = vec![LineBreakpoint::at(1), off];
+        let la = vec![off, LineBreakpoint::at(6)];
         let lb = vec![LineBreakpoint::at(0)];
+        let lc = vec![LineBreakpoint::at(2)];
         let empty: Vec<LineBreakpoint> = Vec::new();
-        let c = PathBuf::from("/w/none.rs");
+        let none = PathBuf::from("/w/none.rs");
         let files = vec![
             (a.as_path(), la.as_slice()),
-            (c.as_path(), empty.as_slice()),
+            (none.as_path(), empty.as_slice()),
             (b.as_path(), lb.as_slice()),
+            (c.as_path(), lc.as_slice()),
         ];
-        let rows = bp_rows(files, Path::new("/w"), |path, line| {
-            (path.ends_with("main.rs")).then(|| format!("  code {line}"))
-        });
+        let rows = bp_rows(files, Path::new("/w"));
+        let short: Vec<(&str, &str, bool)> = rows
+            .iter()
+            .map(|r| (r.name.as_str(), r.folder.as_str(), r.enabled))
+            .collect();
         assert_eq!(
-            rows,
+            short,
             vec![
-                BpRow::File {
-                    path: a.clone(),
-                    label: "src/main.rs".into()
-                },
-                BpRow::Line {
-                    path: a.clone(),
-                    line: 1,
-                    enabled: true,
-                    verified: None,
-                    text: "line 2: code 1".into()
-                },
-                BpRow::Line {
-                    path: a.clone(),
-                    line: 4,
-                    enabled: false,
-                    verified: None,
-                    text: "line 5: code 4".into()
-                },
-                BpRow::File {
-                    path: b.clone(),
-                    label: "/elsewhere/lib.rs".into()
-                },
-                BpRow::Line {
-                    path: b.clone(),
-                    line: 0,
-                    enabled: true,
-                    verified: None,
-                    text: "line 1".into()
-                },
+                ("debuggee.rs:5", "misc", false),
+                ("debuggee.rs:7", "misc", true),
+                ("lib.rs:1", "/elsewhere", true),
+                ("main.rs:3", "", true),
             ]
         );
+        assert_eq!(rows[1].path, a);
+        assert_eq!(rows[1].line, 6);
+        assert_eq!(rows[0].look(), Look::Disabled);
+        assert!(all_state(&rows) == CheckState::Some);
+        assert!(all_state(&rows[1..]) == CheckState::All);
+        assert!(all_state(&rows[..1]) == CheckState::Off);
     }
 }

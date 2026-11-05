@@ -7,16 +7,25 @@
 //! and routes the `debug/*` actions here.
 //!
 //! A session's life: `Starting` (a `cargo` row's build streams into the
-//! console first, then the adapter starts and gets every file's enabled
-//! breakpoints), `Running` once the adapter reports the configuration done,
-//! `Stopped` on a stop (threads, the stopped thread's stack, frame 0's
-//! scopes and the first cheap scope's variables are asked in turn, and the
-//! watches re-evaluated), back to `Running` on resume or a step, and
-//! `Exited` when the debuggee ends or the adapter goes (`Failed` when it
-//! never started). The client is drained on the foreground through a wake
-//! channel, as `workspace/smart.rs` drains rust-analyzer. What needs no gpui
-//! (the event and response handling) is in plain methods returning
-//! [`Effects`], tested below.
+//! session's run tab first, then the adapter starts and gets every file's
+//! enabled breakpoints), `Running` once the adapter reports the
+//! configuration done, `Stopped` on a stop (threads, the stopped thread's
+//! stack and frame 0's scopes are asked in turn, the scopes left collapsed
+//! as Fleet shows them, batch 13, and the watches re-evaluated), back to
+//! `Running` on resume or a step, and `Exited` when the debuggee ends or the
+//! adapter goes (`Failed` when it never started). [`DebugSession::restart`]
+//! stops it and starts the same build or launch again in the same entity.
+//! The client is drained on the foreground through a wake channel, as
+//! `workspace/smart.rs` drains rust-analyzer. What needs no gpui (the event
+//! and response handling) is in plain methods returning [`Effects`], tested
+//! below.
+//!
+//! Two texts (batch 13): [`DebugSession::output`] is the session's run tab
+//! (Fleet puts the build in a bottom-panel tab named after the
+//! configuration: the `cargo build` line, the build's output, then the
+//! adapter's command line; the debuggee's stdout and stderr follow there,
+//! an estimate); [`DebugSession::console`] is the Debugger Console's: the
+//! adapter's own messages, typed expressions and their values, errors.
 //!
 //! Lines are 0-based.
 
@@ -67,6 +76,38 @@ impl SessionState {
     }
 }
 
+/// One line of a session's run tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunLine {
+    pub kind: RunLineKind,
+    pub text: SharedString,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RunLineKind {
+    /// A process's command line (the build's, the adapter's), in
+    /// `text.secondary`; each after the first opens a new block.
+    Command,
+    Stdout,
+    /// In the terminal's ANSI red (batch 13: cargo's "Finished" line).
+    Stderr,
+}
+
+/// How the session was started, to start it again ([`DebugSession::restart`]).
+#[derive(Clone, Debug)]
+enum Origin {
+    Build(weep_run::cargo::DebugBuild, AdapterCommand),
+    Start(AdapterCommand, Start),
+}
+
+/// The adapter's command line as the run tab prints it.
+fn adapter_line(adapter: &AdapterCommand) -> String {
+    std::iter::once(adapter.program.display().to_string())
+        .chain(adapter.args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// One line of the Debugger Console.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsoleLine {
@@ -76,9 +117,10 @@ pub struct ConsoleLine {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConsoleKind {
-    /// The debuggee's stdout.
+    /// The debuggee's stdout (batch 13: now in the run tab, [`RunLine`];
+    /// kept for the views' match).
     Stdout,
-    /// The debuggee's stderr.
+    /// The debuggee's stderr (likewise).
     Stderr,
     /// The adapter's own messages.
     Console,
@@ -218,6 +260,17 @@ fn split_output(partial: &mut String, text: &str) -> Vec<String> {
     lines
 }
 
+/// The debuggee's own output goes to the run tab (estimate: Fleet's run tab
+/// carries the adapter's process; its Debugger Console showed only the
+/// adapter's messages, batch 13).
+fn output_kind(category: OutputCategory) -> Option<RunLineKind> {
+    match category {
+        OutputCategory::Stdout => Some(RunLineKind::Stdout),
+        OutputCategory::Stderr => Some(RunLineKind::Stderr),
+        OutputCategory::Console | OutputCategory::Other => None,
+    }
+}
+
 fn console_kind(category: OutputCategory) -> ConsoleKind {
     match category {
         OutputCategory::Stdout => ConsoleKind::Stdout,
@@ -256,6 +309,9 @@ pub struct DebugSession {
     pub expanded: HashSet<i64>,
     pub watches: Vec<Watch>,
     pub console: Vec<ConsoleLine>,
+    /// The session's run tab: command lines, the build's and the
+    /// debuggee's output.
+    pub output: Vec<RunLine>,
     /// Attached to a running process rather than launched (`debugger/attach-to-process`).
     pub attached: bool,
     client: Option<Client>,
@@ -285,12 +341,18 @@ pub struct DebugSession {
     last_error: Option<String>,
     /// Output not yet ended by a newline, per kind.
     partial: Vec<(ConsoleKind, String)>,
+    /// The run tab's stdout and stderr not yet ended by a newline.
+    output_partial: [String; 2],
     /// A stop whose frames have not arrived: their arrival is the Stopped event.
     reveal: bool,
     /// [`DebugSession::finish`] ran: later events change nothing.
     ended: bool,
     /// A `cargo` row's build, before the adapter starts.
     build: Option<weep_run::Run>,
+    /// What [`DebugSession::restart`] starts again.
+    origin: Option<Origin>,
+    /// A restart waits for the stop to end the session.
+    restart_pending: bool,
     _pump: Option<Task<()>>,
     _build_pump: Option<Task<()>>,
     _breakpoints: Option<Subscription>,
@@ -323,6 +385,7 @@ impl DebugSession {
             expanded: HashSet::new(),
             watches: Vec::new(),
             console: Vec::new(),
+            output: Vec::new(),
             attached: false,
             client: None,
             pending: HashMap::new(),
@@ -336,9 +399,12 @@ impl DebugSession {
             started_threads: Vec::new(),
             last_error: None,
             partial: Vec::new(),
+            output_partial: [String::new(), String::new()],
             reveal: false,
             ended: false,
             build: None,
+            origin: None,
+            restart_pending: false,
             _pump: None,
             _build_pump: None,
             _breakpoints: None,
@@ -384,6 +450,10 @@ impl DebugSession {
         if self.state.is_over() {
             return;
         }
+        if self.origin.is_none() {
+            self.origin = Some(Origin::Start(adapter.clone(), start.clone()));
+        }
+        self.push_output(RunLineKind::Command, adapter_line(adapter));
         self.attached = matches!(start, Start::Attach { .. });
         self.follow_breakpoints(cx);
         let store = BreakpointStore::global(cx);
@@ -424,15 +494,16 @@ impl DebugSession {
     }
 
     /// Builds a `cargo` row with cargo's JSON messages, the build's text in
-    /// the console, then launches the picked executable under `adapter`.
+    /// the run tab, then launches the picked executable under `adapter`.
     pub fn build_then_start(
         &mut self,
         build: weep_run::cargo::DebugBuild,
         adapter: AdapterCommand,
         cx: &mut Context<Self>,
     ) {
+        self.origin = Some(Origin::Build(build.clone(), adapter.clone()));
         self.follow_breakpoints(cx);
-        self.push_line(ConsoleKind::Console, build.command.display.clone());
+        self.push_output(RunLineKind::Command, build.command.display.clone());
         let (tx, mut rx) = unbounded::<()>();
         let run = match weep_run::Run::spawn(&build.command, move || {
             let _ = tx.unbounded_send(());
@@ -461,8 +532,11 @@ impl DebugSession {
                                         artifacts.push(a)
                                     }
                                     Some(_) => {}
-                                    None => this.push_line(ConsoleKind::Console, line),
+                                    None => this.push_output(RunLineKind::Stdout, line),
                                 }
+                            }
+                            weep_run::Event::Stderr(line) => {
+                                this.push_output(RunLineKind::Stderr, line)
                             }
                             weep_run::Event::Exited(code) => {
                                 this.build = None;
@@ -507,8 +581,8 @@ impl DebugSession {
             Ok(picked) => {
                 if !picked.others.is_empty() {
                     // estimate: Fleet's wording unknown; cargo would run them all.
-                    self.push_line(
-                        ConsoleKind::Console,
+                    self.push_output(
+                        RunLineKind::Stdout,
                         format!(
                             "Debugging {}; not debugged: {}",
                             picked.artifact.label(),
@@ -530,13 +604,15 @@ impl DebugSession {
         }
     }
 
-    /// The session could not start: the message in the console, the state
-    /// `Failed`, and the session over.
+    /// The session could not start: the message in the console and the run
+    /// tab (estimate: Fleet's run tab for a failed start unprobed), the
+    /// state `Failed`, and the session over.
     pub fn fail(&mut self, message: String, cx: &mut Context<Self>) {
         if self.state.is_over() {
             return;
         }
         self.push_line(ConsoleKind::Error, message.clone());
+        self.push_output(RunLineKind::Stderr, message.clone());
         self.state = SessionState::Failed(message);
         let effects = self.finish();
         self.apply(effects, cx);
@@ -677,6 +753,16 @@ impl DebugSession {
             }
             self.pending.clear();
             cx.emit(DebugSessionEvent::Changed);
+            if std::mem::take(&mut self.restart_pending) {
+                // A restart's stop: the same start again, no Ended; on the
+                // next turn, out of the pump that delivered the end.
+                cx.spawn(async move |this, cx| {
+                    let _ = this.update(cx, |this, cx| this.relaunch(cx));
+                })
+                .detach();
+                cx.notify();
+                return;
+            }
             cx.emit(DebugSessionEvent::Ended);
         }
         if effects.stopped {
@@ -768,6 +854,14 @@ impl DebugSession {
                 Effects::default()
             }
             Event::Output { category, text } => {
+                if let Some(kind) = output_kind(category) {
+                    let partial =
+                        &mut self.output_partial[usize::from(kind == RunLineKind::Stderr)];
+                    for line in split_output(partial, &text) {
+                        self.push_output(kind, line);
+                    }
+                    return Effects::default();
+                }
                 let kind = console_kind(category);
                 let partial = match self.partial.iter_mut().find(|(k, _)| *k == kind) {
                     Some((_, p)) => p,
@@ -967,26 +1061,10 @@ impl DebugSession {
                 if self.frame_id() != Some(frame_id) {
                     return Effects::default();
                 }
+                // Collapsed, nothing fetched until one is expanded (batch 13:
+                // Fleet shows Local, Static, Global, Registers closed on a stop).
                 self.scopes = scopes;
-                // Locals: lldb-dap lists Locals, Globals, Registers and marks
-                // only Registers cheap, so the first scope, not the first cheap one.
-                match self
-                    .scopes
-                    .iter()
-                    .find(|s| s.name == "Locals" && s.variables_reference != 0)
-                    .or_else(|| self.scopes.iter().find(|s| s.variables_reference != 0))
-                {
-                    Some(scope) => {
-                        let reference = scope.variables_reference;
-                        self.expanded.insert(reference);
-                        if self.children.contains_key(&reference) {
-                            Effects::default()
-                        } else {
-                            Effects::ask(Ask::Variables(reference))
-                        }
-                    }
-                    None => Effects::default(),
-                }
+                Effects::default()
             }
             (
                 Pending::Variables(_),
@@ -1090,6 +1168,15 @@ impl DebugSession {
     }
 
     fn flush_partial(&mut self) {
+        for (ix, kind) in [RunLineKind::Stdout, RunLineKind::Stderr]
+            .into_iter()
+            .enumerate()
+        {
+            let rest = std::mem::take(&mut self.output_partial[ix]);
+            if !rest.is_empty() {
+                self.push_output(kind, rest);
+            }
+        }
         let rest: Vec<(ConsoleKind, String)> = self
             .partial
             .drain(..)
@@ -1097,6 +1184,17 @@ impl DebugSession {
             .collect();
         for (kind, text) in rest {
             self.push_line(kind, text);
+        }
+    }
+
+    fn push_output(&mut self, kind: RunLineKind, text: String) {
+        self.output.push(RunLine {
+            kind,
+            text: text.into(),
+        });
+        if self.output.len() > CONSOLE_LIMIT {
+            let over = self.output.len() - CONSOLE_LIMIT;
+            self.output.drain(..over);
         }
     }
 
@@ -1182,6 +1280,83 @@ impl DebugSession {
                 let effects = self.finish();
                 self.apply(effects, cx);
             }
+        }
+    }
+
+    /// Stops the session and starts the same build or launch again in this
+    /// entity (Fleet's Restart, between Pause and Stop; batch 13). An ended
+    /// session starts again at once.
+    pub fn restart(&mut self, cx: &mut Context<Self>) {
+        if self.origin.is_none() {
+            return;
+        }
+        if self.state.is_over() {
+            self.relaunch(cx);
+            return;
+        }
+        self.restart_pending = true;
+        self.stop(cx);
+    }
+
+    fn relaunch(&mut self, cx: &mut Context<Self>) {
+        let Some(origin) = self.origin.clone() else {
+            return;
+        };
+        self.reset();
+        match origin {
+            Origin::Build(build, adapter) => self.build_then_start(build, adapter, cx),
+            Origin::Start(adapter, start) => self.start(&adapter, start, cx),
+        }
+        cx.emit(DebugSessionEvent::Changed);
+        cx.notify();
+    }
+
+    /// Back to a fresh session before a restart: the watches and the
+    /// breakpoint subscription stay, the texts start over (estimate: as the
+    /// run tool's Rerun clears its output).
+    fn reset(&mut self) {
+        if let Some(mut client) = self.client.take() {
+            client.kill();
+        }
+        if let Some(build) = self.build.take() {
+            build.kill();
+        }
+        self.state = SessionState::Starting;
+        self.threads.clear();
+        self.current_thread = None;
+        self.clear_frames();
+        for w in &mut self.watches {
+            w.value = None;
+        }
+        self.console.clear();
+        self.output.clear();
+        self.pending.clear();
+        for (_, tx) in self.evals.drain() {
+            let _ = tx.send(Err("the debug session restarted".into()));
+        }
+        self.initial.clear();
+        self.verified.clear();
+        self.breakpoint_ids.clear();
+        self.unsent.clear();
+        self.started_threads.clear();
+        self.last_error = None;
+        self.partial.clear();
+        self.output_partial = [String::new(), String::new()];
+        self.reveal = false;
+        self.ended = false;
+        self.restart_pending = false;
+        self._pump = None;
+        self._build_pump = None;
+    }
+
+    /// The session ended badly: it never started, the debuggee exited with
+    /// a non-zero code, or it ended without one (stopped): the run tab's
+    /// icon takes the error badge (batch 13: after Stop).
+    pub fn failed(&self) -> bool {
+        match self.state {
+            SessionState::Failed(_) => true,
+            SessionState::Exited(code) => code != Some(0),
+            _ => false,
         }
     }
 
@@ -1508,7 +1683,7 @@ mod tests {
             category: OutputCategory::Stdout,
             text: "hel".into(),
         });
-        assert!(s.console.is_empty());
+        assert!(s.output.is_empty());
         s.on_event(Event::Output {
             category: OutputCategory::Stdout,
             text: "lo\r\nworld\n!".into(),
@@ -1517,29 +1692,90 @@ mod tests {
             category: OutputCategory::Stderr,
             text: "bad\n".into(),
         });
+        s.on_event(Event::Output {
+            category: OutputCategory::Console,
+            text: "Launched process 1\n".into(),
+        });
+        // The debuggee's stdout and stderr in the run tab, the adapter's
+        // messages in the Debugger Console (batch 13).
         let texts: Vec<_> = s
-            .console
+            .output
             .iter()
             .map(|l| (l.kind, l.text.to_string()))
             .collect();
         assert_eq!(
             texts,
             vec![
-                (ConsoleKind::Stdout, "hello".into()),
-                (ConsoleKind::Stdout, "world".into()),
-                (ConsoleKind::Stderr, "bad".into()),
+                (RunLineKind::Stdout, "hello".into()),
+                (RunLineKind::Stdout, "world".into()),
+                (RunLineKind::Stderr, "bad".into()),
             ]
+        );
+        assert_eq!(
+            s.console,
+            vec![ConsoleLine {
+                kind: ConsoleKind::Console,
+                text: "Launched process 1".into()
+            }]
         );
         s.on_event(Event::Exited(0));
         let e = s.on_event(Event::Terminated);
         assert!(e.ended);
         assert_eq!(s.state, SessionState::Exited(Some(0)));
+        assert!(!s.failed());
+        assert_eq!(s.output.last().unwrap().text.as_ref(), "!");
         let texts: Vec<_> = s.console.iter().map(|l| l.text.to_string()).collect();
-        assert_eq!(&texts[3..], &["!", "Process finished with exit code 0"]);
+        assert_eq!(&texts[1..], &["Process finished with exit code 0"]);
     }
 
     #[test]
-    fn a_stop_asks_threads_frames_scopes_variables_and_watches() {
+    fn the_end_decides_the_error_badge() {
+        let mut s = DebugSession::new("x".into());
+        assert!(!s.failed());
+        s.on_event(Event::Exited(9));
+        s.on_event(Event::Terminated);
+        assert!(s.failed(), "a non-zero exit (Stop kills the debuggee)");
+        let mut s = DebugSession::new("x".into());
+        running(&mut s);
+        s.on_event(Event::Terminated);
+        assert!(s.failed(), "ended without an exit code");
+    }
+
+    #[test]
+    fn a_reset_starts_the_session_over_but_keeps_the_watches() {
+        let mut s = DebugSession::new("x".into());
+        s.watches.push(Watch {
+            expression: "a".into(),
+            value: Some(Err("no".into())),
+        });
+        s.push_output(RunLineKind::Command, "cargo build".into());
+        s.push_line(ConsoleKind::Console, "hi".into());
+        running(&mut s);
+        s.on_event(Event::Exited(1));
+        s.on_event(Event::Terminated);
+        assert!(s.state.is_over() && s.ended);
+        s.reset();
+        assert_eq!(s.state, SessionState::Starting);
+        assert!(!s.ended && s.output.is_empty() && s.console.is_empty());
+        assert_eq!(s.watches.len(), 1);
+        assert_eq!(s.watches[0].value, None);
+        // Events count again after the reset.
+        running(&mut s);
+        assert_eq!(s.state, SessionState::Running);
+    }
+
+    #[test]
+    fn the_adapters_command_line() {
+        let adapter = AdapterCommand {
+            name: "lldb-dap".into(),
+            program: PathBuf::from("/usr/bin/lldb-dap"),
+            args: vec!["--x".into()],
+        };
+        assert_eq!(adapter_line(&adapter), "/usr/bin/lldb-dap --x");
+    }
+
+    #[test]
+    fn a_stop_asks_threads_frames_scopes_and_watches() {
         let mut s = DebugSession::new("x".into());
         assert_eq!(s.state, SessionState::Starting);
         running(&mut s);
@@ -1599,8 +1835,10 @@ mod tests {
                 ],
             }),
         );
-        assert_eq!(e.asks, vec![Ask::Variables(8)]);
-        assert!(s.expanded.contains(&8));
+        // The scopes arrive collapsed and nothing is fetched (batch 13).
+        assert_eq!(e, Effects::default());
+        assert_eq!(s.scopes.len(), 2);
+        assert!(s.expanded.is_empty());
         s.on_response(
             Pending::Variables(8),
             Ok(Response::Variables {

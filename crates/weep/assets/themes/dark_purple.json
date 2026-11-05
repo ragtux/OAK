@@ -680,6 +680,9 @@
     },
     "ai.generated": {
       "backgroundColor": "#3E3973"
+    },
+    "debug.currentFrame": {
+      "backgroundColor": "#D7325133"
     }
   }
 }

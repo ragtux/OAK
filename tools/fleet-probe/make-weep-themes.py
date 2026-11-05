@@ -30,7 +30,7 @@ ATTRS = ["editor.text.scheme","editor.selection","editor.selection.focused","edi
   "markup.code.block","markup.href","link","link.hovered","problem.error","problem.warning",
   "problem.info","problem.unused","problem.deprecated","diff.added","diff.deleted","diff.modified",
   "diff.added.word","diff.deleted.word","diff.modified.word","target.match","target.match.word",
-  "snippet","snippet.selected","ai.generated"]
+  "snippet","snippet.selected","ai.generated","debug.currentFrame"]
 for f in sorted(src.glob("*.resolved.json")):
     name = f.name.replace(".resolved.json", "")
     r = json.load(open(f))

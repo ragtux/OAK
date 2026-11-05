@@ -14,10 +14,17 @@
 //! carries no field for it. What can be told without gpui is in plain
 //! functions: [`expression_at`] and [`eval_rows`].
 //!
-//! Batch 13 has not run, so every size is an estimate (`theme.rs`,
-//! `QUICK_EVAL_*`, and the documentation popup's `SMART_POPUP_*`); the
-//! colours are Fleet's keys: `popup.*` for the frame, `text.*` for the
-//! row, `link.text.default` for the link.
+//! Only code is evaluated: an identifier inside a comment or a string (by
+//! the document's highlight spans) is none ([`in_code`]). The pointer's
+//! popup shows only a value, never the debugger's error; the action's
+//! shows the error too. Both show lldb's answer on one line, its warnings
+//! and diagnostics' clutter dropped ([`clean_value`], [`clean_error`]).
+//!
+//! Batch 13 missed Fleet's quick evaluate and hover (its scene's
+//! coordinates hit nothing), so every size is still an estimate
+//! (`theme.rs`, `QUICK_EVAL_*`, and the documentation popup's
+//! `SMART_POPUP_*`); the colours are Fleet's keys: `popup.*` for the frame,
+//! `text.*` for the row, `link.text.default` for the link.
 
 use super::*;
 use crate::debugger::{DebugSession, EvalContext, SessionState, Variable};
@@ -102,6 +109,21 @@ pub fn expression_at(line: &str, col: usize) -> Option<Range<usize>> {
     Some(start..end)
 }
 
+/// Whether byte `byte` of the text is code: not inside a comment or a
+/// string by the highlight `spans` (sorted, not overlapping, as the
+/// document keeps them). A text without spans (no grammar) is all code.
+pub fn in_code(spans: &[weep_syntax::Span], byte: usize) -> bool {
+    let after = spans.partition_point(|s| s.range.start <= byte);
+    let Some(span) = after.checked_sub(1).map(|i| &spans[i]) else {
+        return true;
+    };
+    if byte >= span.range.end {
+        return true;
+    }
+    let a = span.attribute;
+    !(a == "comment" || a.starts_with("comment.") || a == "string" || a.starts_with("string."))
+}
+
 /// The text quick evaluate sends for a selection: trimmed, `None` when
 /// only whitespace is selected.
 pub fn selection_expression(selected: &str) -> Option<String> {
@@ -171,7 +193,7 @@ pub fn eval_rows(
 impl EditorView {
     /// The selection, else the expression at the caret: its text and its
     /// char range.
-    pub fn eval_expression_at_caret(&mut self, cx: &App) -> Option<(String, Range<usize>)> {
+    pub fn eval_expression_at_caret(&mut self, cx: &mut App) -> Option<(String, Range<usize>)> {
         let range = self.selection_range(cx);
         if !range.is_empty() {
             let text = self.selected_text(cx);
@@ -181,20 +203,31 @@ impl EditorView {
         self.eval_expression_at(caret, cx)
     }
 
-    /// The expression at a char offset (the pointer's), with its range.
-    pub fn eval_expression_at(&self, offset: usize, cx: &App) -> Option<(String, Range<usize>)> {
-        let buffer = &self.document.read(cx).buffer;
-        let offset = offset.min(buffer.len_chars());
-        let at = buffer.offset_to_point(offset);
-        let line = buffer.line(at.row);
-        let cols = expression_at(&line, at.column)?;
-        let text: String = line
-            .chars()
-            .skip(cols.start)
-            .take(cols.end - cols.start)
-            .collect();
-        let base = buffer.line_to_char(at.row);
-        Some((text, base + cols.start..base + cols.end))
+    /// The expression at a char offset (the pointer's), with its range:
+    /// only in code, never in a comment or a string (the highlight spans
+    /// say which, rust-analyzer's semantic tokens over tree-sitter's: a
+    /// `{name}` the server marks inside a format string counts as code).
+    pub fn eval_expression_at(
+        &self,
+        offset: usize,
+        cx: &mut App,
+    ) -> Option<(String, Range<usize>)> {
+        self.document.update(cx, |doc, _| {
+            let buffer = &doc.buffer;
+            let offset = offset.min(buffer.len_chars());
+            let at = buffer.offset_to_point(offset);
+            let line = buffer.line(at.row);
+            let cols = expression_at(&line, at.column)?;
+            let text: String = line
+                .chars()
+                .skip(cols.start)
+                .take(cols.end - cols.start)
+                .collect();
+            let base = buffer.line_to_char(at.row);
+            let range = base + cols.start..base + cols.end;
+            let byte = buffer.char_to_byte(range.start);
+            in_code(doc.spans(), byte).then_some((text, range))
+        })
     }
 
     /// The char under a window position, `None` outside the text (as the
@@ -334,7 +367,13 @@ impl QuickEvaluate {
         let evaluate = cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
+                // The pointer's popup shows a value or nothing: a word the
+                // debugger cannot evaluate is no error the user asked for.
+                let failed = result.is_err();
                 this.result = Some(result);
+                if failed && this.from_mouse {
+                    cx.emit(QuickEvaluateEvent::Close);
+                }
                 cx.notify();
             });
         });
@@ -457,13 +496,90 @@ impl QuickEvaluate {
     }
 }
 
-/// A value's text after its name: `= value`, the error for a failed one.
+/// A value's text after its name: `= value`, on one line.
 fn value_text(var: &Variable) -> String {
-    var.value.replace('\n', " ")
+    clean_value(&var.value)
+}
+
+/// lldb's lines that are no part of an answer: its warnings and notes
+/// ("warning: Expression evaluation in Rust not supported. Falling back to
+/// default language.", batch 13).
+fn is_lldb_noise(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("warning:") || t.starts_with("note:")
+}
+
+/// A line of the source excerpt under a clang diagnostic (`   1 | can`,
+/// `     | ^~~`).
+fn is_excerpt_line(line: &str) -> bool {
+    line.trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit())
+        .trim_start()
+        .starts_with('|')
+}
+
+/// An evaluated value as one line: lldb's warnings dropped, the console's
+/// `(type) $0 = ` result prefix dropped, the rest joined by spaces.
+pub fn clean_value(value: &str) -> String {
+    let kept: Vec<&str> = value
+        .lines()
+        .filter(|l| !is_lldb_noise(l))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let joined = if kept.is_empty() {
+        value.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        kept.join(" ")
+    };
+    strip_result_prefix(&joined).to_string()
+}
+
+/// `(int) $0 = 28` -> `28`; anything else unchanged.
+fn strip_result_prefix(text: &str) -> &str {
+    let Some(rest) = text.strip_prefix('(') else {
+        return text;
+    };
+    let Some(close) = rest.find(") $") else {
+        return text;
+    };
+    let after = &rest[close + 3..];
+    let digits = after.len() - after.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    match after[digits..].strip_prefix(" = ") {
+        Some(value) if digits > 0 => value,
+        _ => text,
+    }
+}
+
+/// A failed evaluation's message as one line: the first line that says
+/// something, without lldb's warnings, the source excerpt, `error: ` and
+/// the `<user expression 0>:1:1: ` place (`use of undeclared identifier
+/// 'can'`).
+pub fn clean_error(message: &str) -> String {
+    // weep-dap already cleans the client's answers (`weep_dap::clean_error`);
+    // this pass also drops the clang excerpt and lldb's notes, for errors
+    // that reach the view another way.
+    let first = message
+        .lines()
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && !is_lldb_noise(t) && !is_excerpt_line(t))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cleaned = weep_dap::clean_error(&first);
+    if cleaned.is_empty() {
+        message.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        cleaned
+    }
 }
 
 impl Render for QuickEvaluate {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The pointer's popup waits for a value (no "Collecting data…" on
+        // every word the pointer rests on, no error).
+        if self.from_mouse && !matches!(self.result, Some(Ok(_))) {
+            return div().into_any_element();
+        }
         let Some(anchor) = self.anchor(window, cx) else {
             return div().into_any_element();
         };
@@ -525,7 +641,7 @@ impl Render for QuickEvaluate {
                         .min_w_0()
                         .truncate()
                         .text_color(theme.text_dangerous)
-                        .child(SharedString::from(message.replace('\n', " "))),
+                        .child(SharedString::from(clean_error(message))),
                 )
                 .into_any_element()],
             Some(Ok(_)) => rows
@@ -723,7 +839,7 @@ impl QuickEvaluate {
         let lines: Vec<(String, Option<String>, Option<i64>)> = match &self.result {
             None => vec![("Collecting data…".into(), None, None)],
             Some(Err(e)) => vec![(
-                format!("{} = {}", self.expression, e.replace('\n', " ")),
+                format!("{} = {}", self.expression, clean_error(e)),
                 None,
                 None,
             )],
@@ -1073,5 +1189,52 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn rust_spans(src: &str) -> Vec<weep_syntax::Span> {
+        weep_syntax::Highlighter::new().highlight(weep_syntax::Language::Rust, src.as_bytes())
+    }
+
+    #[test]
+    fn comments_and_strings_are_not_code() {
+        let src = "//! Fixture: a debugger test\nfn main() {\n    let label = \"points\"; // label\n    println!(\"{label}\");\n}\n";
+        let spans = rust_spans(src);
+        let at = |needle: &str, nth: usize| src.match_indices(needle).nth(nth).unwrap().0;
+        // `debugger` in line 1's `//!` comment (batch 13's stray popup).
+        assert!(!in_code(&spans, at("debugger", 0)));
+        assert!(in_code(&spans, at("label", 0)));
+        assert!(!in_code(&spans, at("points", 0)));
+        assert!(!in_code(&spans, at("label", 1)));
+        // Inside the format string without the server's tokens: a string.
+        assert!(!in_code(&spans, at("label", 2)));
+        // No spans (no grammar): everything is code.
+        assert!(in_code(&[], 3));
+    }
+
+    #[test]
+    fn lldb_answers_on_one_line() {
+        assert_eq!(
+            clean_value(
+                "warning: Expression evaluation in Rust not supported. Falling back to default language.\n28"
+            ),
+            "28"
+        );
+        assert_eq!(clean_value("(int) $0 = 28"), "28");
+        assert_eq!(clean_value("{\n  x = 1\n  y = 2\n}"), "{ x = 1 y = 2 }");
+        assert_eq!(clean_value("(1, 2)"), "(1, 2)");
+        assert_eq!(clean_value("\"points\""), "\"points\"");
+        assert_eq!(
+            clean_error(
+                "<user expression 0>:1:1: use of undeclared identifier 'can'\n    1 | can\n      | ^~~"
+            ),
+            "use of undeclared identifier 'can'"
+        );
+        assert_eq!(
+            clean_error(
+                "warning: Expression evaluation in Rust not supported. Falling back to default language.\nerror: <user expression 1>:1:7: invalid operands\n"
+            ),
+            "invalid operands"
+        );
+        assert_eq!(clean_error("no debug session"), "no debug session");
     }
 }

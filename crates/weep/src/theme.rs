@@ -188,10 +188,19 @@ pub mod metrics {
     pub const SCROLLBAR_MARK_WIDTH: f32 = 12.;
     pub const SCROLLBAR_MARK_HEIGHT: f32 = 2.;
     /// The gutter's fold chevron box starts 40 from the island's left edge and
-    /// the breakpoint hint circle (10 px) at 21.3 (batch 5).
+    /// the breakpoint hint circle at 21.3 (batch 5).
+    /// M8, batch 13: the hint and a breakpoint are 11.2 across (a 22.4 px
+    /// chord at 2x through the centre, both ways), centred 27 from the
+    /// island's edge (403 with the island at 376), on the row's middle.
     pub const FOLD_CHEVRON_X: f32 = 40.;
     pub const BREAKPOINT_HINT_X: f32 = 21.3;
-    pub const BREAKPOINT_HINT_SIZE: f32 = 10.;
+    pub const BREAKPOINT_HINT_SIZE: f32 = 11.2;
+    /// M8, batch 13: the current line's wash, and the execution point's over
+    /// it, start 6 in from the editor island's left edge (764 px at 2x with
+    /// the island at 752), their left corners rounded 4 (the edge's coverage
+    /// fits a radius of 8 px at 2x), and run square to the island's right.
+    pub const CURRENT_LINE_LEFT: f32 = 6.;
+    pub const CURRENT_LINE_RADIUS: f32 = 4.;
     /// The tree's git badge (eighth pass): a 16 px box at the row's right
     /// end (its centre 14.3 from the row's edge) holding a 6.67 px dot for a
     /// change or a glyph (`+` added, `?` untracked, 8–9 px tall; a 13 px
@@ -326,6 +335,13 @@ pub mod metrics {
     pub const RUN_POPUP_MORE_WIDTH: f32 = 24.67;
     pub const RUN_POPUP_MORE_RIGHT: f32 = 3.33;
     pub const RUN_POPUP_BUTTON_GAP: f32 = 8.;
+    /// M8 (batch 13, macOS): the selected cargo row's "Run ↩" and "Debug ⌥↩"
+    /// (51.5 and 82 wide there, 4 apart, the last ending where Run alone
+    /// did): 4 in on either side, the chord one Inter space (3.67 at 13 px)
+    /// after the label, in `button.secondary.text.hint`.
+    pub const RUN_POPUP_BUTTON_PAD_X: f32 = 4.;
+    pub const RUN_POPUP_BUTTON_CHORD_GAP: f32 = 3.67;
+    pub const RUN_POPUP_BUTTONS_GAP: f32 = 4.;
     /// The run tool's body: the command line's row 12.67 under the tab
     /// row's bottom padding (its ink at 528 on a 511 body top), the output
     /// 11.33 under it, both 8 in from the island's edge (mono text at the
@@ -337,9 +353,16 @@ pub mod metrics {
     pub const RUN_TOOL_BUTTON: f32 = 28.;
     pub const RUN_TOOL_BUTTON_TOP: f32 = 9.67;
     pub const RUN_TOOL_BUTTON_RIGHT: f32 = 16.;
-    /// The failed badge on a run tab's icon (estimate: an 8 px red dot at
-    /// the icon's bottom right).
-    pub const RUN_TAB_BADGE: f32 = 8.;
+    /// M8 (batch 13): a later command line (a debug session's adapter after
+    /// its build) 54 under the last output row (its ink at 660 after the
+    /// build's last row's at 584).
+    pub const RUN_TOOL_BLOCK_GAP: f32 = 54.;
+    /// The failed badge on a run tab's icon (batch 13: a 7 px
+    /// `icon.background.red` disc with a dark "!", flush with the icon's
+    /// bottom right) and, while it runs, a 5 px `icon.background.green` dot
+    /// in the same corner.
+    pub const RUN_TAB_BADGE: f32 = 7.;
+    pub const RUN_TAB_RUNNING_DOT: f32 = 5.;
     /// The branch tag's menu (ninth pass): 0.67 under the toolbar; its left
     /// about 20 left of the click (the tag's icon, estimate).
     pub const BRANCH_MENU_GAP: f32 = 0.67;
@@ -673,11 +696,14 @@ pub mod metrics {
     /// 12 (the 1 px line with 5.5 above and below), the shortcut in
     /// `text.secondary` right-aligned; the width follows the longest row
     /// (the tree's menu 230.67, the editor's 232, a tab's 170.67, the main
-    /// menu 139), with 24 between a label and its shortcut (estimate).
+    /// menu 139), with 40 between a label and its shortcut: batch 13's
+    /// breakpoint menu (M8) was 205.5 wide for "Remove Breakpoint" (119.9 in
+    /// Inter 13) and its 16 px ⌫, which leaves 40, and 40 also gives batch 7's
+    /// editor menu its 232 from "Reformat Code" and "Alt+Shift+F" (24 gave 216).
     pub const MENU_ROW_HEIGHT: f32 = 28.;
     pub const MENU_ROW_PAD_X: f32 = 8.;
     pub const MENU_MIN_WIDTH: f32 = 140.;
-    pub const MENU_SHORTCUT_GAP: f32 = 24.;
+    pub const MENU_SHORTCUT_GAP: f32 = 40.;
     pub const MENU_SEPARATOR_PAD: f32 = 5.5;
     /// Confirm dialogs (batch 7, estimates): 420 wide, 16 px padding, 24 px
     /// buttons 8 apart, the title 13 px semibold on a 20 line, 8 to the message.
@@ -803,19 +829,97 @@ pub mod metrics {
     /// The Files tree's keyboard-highlight rectangle (`files.keyboardNavigation`
     /// highlight): 1 px of `tree.focusBorder` (estimate).
     pub const TREE_HIGHLIGHT_BORDER: f32 = 1.;
+    // M8 (D): the Debug and Breakpoints tools and the Debugger Console
+    // (`debug_tool.rs`, `breakpoints_tool.rs`, `debug_console.rs`), batch 13
+    // (Fleet 1.48: the right panel's island at 912-1272, its content 76
+    // down after the tab band; the bottom panel's island at 376).
+    /// The Debug tool's sections: a title row 37.5 tall (13 px semibold
+    /// `text.primary`, its ink 8 in from the island: the panel's 6 and 2),
+    /// 2.5 under the section's top; sections split by a 2 px line in the
+    /// window's colour (`background.primary`) inset 6 each side, 5 above the
+    /// next section (Processes' title centred 97.25, the splitters at
+    /// 159.5 and 354, Threads & Frames' title 188, Variables' 382.25).
+    pub const DEBUG_SECTION_HEADER: f32 = 37.5;
+    pub const DEBUG_SECTION_TOP: f32 = 2.5;
+    pub const DEBUG_SECTION_PAD_X: f32 = 2.;
+    pub const DEBUG_SPLITTER: f32 = 2.;
+    pub const DEBUG_SPLITTER_GAP: f32 = 5.;
+    /// Processes: 17.5 under its last session row to the splitter.
+    pub const DEBUG_PROCESSES_BOTTOM: f32 = 17.5;
+    /// Threads & Frames' share of the height under Processes (192.5 of
+    /// 610.5 here; estimate: that it is a share and not a row count). A
+    /// ratio, so not in [`Metrics`] (read as `metrics::DEBUG_FRAMES_SHARE`).
+    pub const DEBUG_FRAMES_SHARE: f32 = 0.315;
+    /// The Processes toolbar: 20 px buttons (the floating panel's hover wash,
+    /// 40 px at 2x) on a 28 pitch, 16 px icons; the last one's right edge 8
+    /// in from the island's (2 inside the panel's padding).
+    pub const DEBUG_TOOLBAR_BUTTON: f32 = 20.;
+    pub const DEBUG_TOOLBAR_GAP: f32 = 8.;
+    /// The trees' rows (26 pitch, 24 wash inset 6 as the Files tree): the
+    /// chevron's 16 px box 6 into the wash, the text 4 after it (944), a
+    /// level 24 further (the frames' text at 968); a session's icon in the
+    /// chevron's place with a 5 px state dot at its bottom-right corner.
+    pub const DEBUG_ROW_PAD: f32 = 6.;
+    pub const DEBUG_INDENT: f32 = 24.;
+    pub const DEBUG_CHEVRON_GAP: f32 = 4.;
+    pub const DEBUG_BADGE: f32 = 5.;
+    /// Add Watch: a 24 px `button.secondary`, 8 of padding, its right edge 9
+    /// from the island's (3 inside the panel's padding), 83.5 wide.
+    pub const DEBUG_ADD_WATCH_PAD_X: f32 = 8.;
+    pub const DEBUG_ADD_WATCH_RIGHT: f32 = 3.;
+    /// The Breakpoints tool: a 26 px title row 2 under the content's top
+    /// ("Breakpoints" 13 px semibold, the count 5 after it in `text.secondary`,
+    /// the check box at the right as the rows'), then the rows: a 10 px
+    /// breakpoint dot centred in the chevron's 16 px box, the name, the
+    /// folder 5 after it in `text.secondary`.
+    pub const BREAKPOINTS_TOP: f32 = 2.;
+    pub const BREAKPOINTS_HEADER: f32 = 26.;
+    pub const BREAKPOINTS_COUNT_GAP: f32 = 5.;
+    pub const BREAKPOINTS_DOT: f32 = 10.;
+    pub const BREAKPOINTS_FOLDER_GAP: f32 = 5.;
+    /// The Debugger Console: its lines 32.5 in from the island, from the
+    /// tab band's bottom, wrapped (estimate: 8 of right padding); the input
+    /// a 100 px band of `background.secondary` across the island's bottom,
+    /// a `text.tertiary` chevron (its 16 px box 7.75 in) on its first line,
+    /// centred 16.75 under the band's top.
+    pub const CONSOLE_PAD_X: f32 = 32.5;
+    pub const CONSOLE_PAD_RIGHT: f32 = 8.;
+    pub const CONSOLE_INPUT_HEIGHT: f32 = 100.;
+    pub const CONSOLE_PROMPT_X: f32 = 7.75;
+    pub const CONSOLE_PROMPT_CENTRE: f32 = 16.75;
     // M8: the floating debug panel and quick evaluate (`debug_panel.rs`,
-    // `editor/debug.rs`). Batch 13 has not run: every value is an estimate.
-    /// The panel's top edge below the active editor's (estimate: the find
-    /// bar's own offset from the editor's top is of this order).
-    pub const DEBUG_PANEL_TOP: f32 = 8.;
-    /// Padding around the buttons (estimate).
-    pub const DEBUG_PANEL_PAD: f32 = 4.;
-    /// One icon button, square (estimate: a notch under the toolbar's 28,
-    /// as IntelliJ's floating toolbar is more compact than its main one).
-    pub const DEBUG_PANEL_BUTTON: f32 = 24.;
-    pub const DEBUG_PANEL_GAP: f32 = 2.;
-    /// The drag handle's width before the buttons (estimate).
-    pub const DEBUG_PANEL_HANDLE: f32 = 12.;
+    // `editor/debug.rs`). The panel is batch 13's (debug-fleet-stopped and
+    // -floating-panel-hover, 2x shots): its box 1336-1784 x 154-210 px on
+    // an editor island whose right edge is 1808 and whose text area starts
+    // at 154 (the island's top 74 plus the 40 px tab bar), so 224 x 28.
+    /// The panel's top edge on the editor area's top, its right edge 12 in
+    /// from the island's (batch 13: 1784 against 1808 px).
+    pub const DEBUG_PANEL_TOP: f32 = 0.;
+    pub const DEBUG_PANEL_RIGHT: f32 = 12.;
+    /// Padding inside the 1 px border (batch 13: the first hover box 4 in
+    /// from the outer edge on every side).
+    pub const DEBUG_PANEL_PAD: f32 = 3.;
+    /// One button's hover box, square, and the gap between two (batch 13:
+    /// a 40 x 40 px `ghostButton.off.background.hovered` box, the icons'
+    /// centres 56 px apart).
+    pub const DEBUG_PANEL_BUTTON: f32 = 20.;
+    pub const DEBUG_PANEL_GAP: f32 = 8.;
+    /// The panel's corners and the hover box's (batch 13: the border's
+    /// curve spans 8 px, the hover box's 6).
+    pub const DEBUG_PANEL_RADIUS: f32 = 4.;
+    pub const DEBUG_PANEL_BUTTON_RADIUS: f32 = 3.;
+    /// The status badge moves under the panel, this far below its bottom
+    /// edge before the badge's own 6 (batch 13: the badge's box at 238 px,
+    /// the panel's bottom at 210).
+    pub const DEBUG_PANEL_STATUS_GAP: f32 = 8.;
+    /// The attach dialog's group header ("LLDB"): smaller than the rows
+    /// (batch 13, debug-fleet-attach: its caps 59 x 18 px against the rows'
+    /// 13 px digits 21 px tall; Inter at 11.67 matches).
+    pub const ATTACH_HEADER_FONT: f32 = 11.67;
+    /// The attach dialog's rows 6 in from the frame's outer edges on both
+    /// sides, inside its 1 px border (batch 13: the selected row 612-1948
+    /// px in a 600-1960 frame).
+    pub const ATTACH_ROWS_PAD_X: f32 = 5.;
     /// Quick evaluate: a row of the value tree, the indent per level and
     /// the rows shown before it scrolls (estimates: the Goto row less its
     /// pitch gap, the Files tree's indent).
@@ -930,6 +1034,8 @@ scaled_metrics!(
     fold_chevron_x = FOLD_CHEVRON_X,
     breakpoint_hint_x = BREAKPOINT_HINT_X,
     breakpoint_hint_size = BREAKPOINT_HINT_SIZE,
+    current_line_left = CURRENT_LINE_LEFT,
+    current_line_radius = CURRENT_LINE_RADIUS,
     line_status_x = LINE_STATUS_X,
     line_status_width = LINE_STATUS_WIDTH,
     line_status_hover_width = LINE_STATUS_HOVER_WIDTH,
@@ -1004,13 +1110,18 @@ scaled_metrics!(
     run_popup_more_width = RUN_POPUP_MORE_WIDTH,
     run_popup_more_right = RUN_POPUP_MORE_RIGHT,
     run_popup_button_gap = RUN_POPUP_BUTTON_GAP,
+    run_popup_button_pad_x = RUN_POPUP_BUTTON_PAD_X,
+    run_popup_button_chord_gap = RUN_POPUP_BUTTON_CHORD_GAP,
+    run_popup_buttons_gap = RUN_POPUP_BUTTONS_GAP,
     run_tool_pad_x = RUN_TOOL_PAD_X,
     run_tool_command_top = RUN_TOOL_COMMAND_TOP,
     run_tool_output_gap = RUN_TOOL_OUTPUT_GAP,
     run_tool_button = RUN_TOOL_BUTTON,
     run_tool_button_top = RUN_TOOL_BUTTON_TOP,
     run_tool_button_right = RUN_TOOL_BUTTON_RIGHT,
+    run_tool_block_gap = RUN_TOOL_BLOCK_GAP,
     run_tab_badge = RUN_TAB_BADGE,
+    run_tab_running_dot = RUN_TAB_RUNNING_DOT,
     branch_menu_gap = BRANCH_MENU_GAP,
     branch_menu_offset_x = BRANCH_MENU_OFFSET_X,
     git_field_top = GIT_FIELD_TOP,
@@ -1289,12 +1400,42 @@ scaled_metrics!(
     notifications_pad_x = NOTIFICATIONS_PAD_X,
     notifications_empty_height = NOTIFICATIONS_EMPTY_HEIGHT,
     notifications_icon_gap = NOTIFICATIONS_ICON_GAP,
+    // M8 (D): the Debug and Breakpoints tools, the Debugger Console.
+    debug_section_header = DEBUG_SECTION_HEADER,
+    debug_section_top = DEBUG_SECTION_TOP,
+    debug_section_pad_x = DEBUG_SECTION_PAD_X,
+    debug_splitter = DEBUG_SPLITTER,
+    debug_splitter_gap = DEBUG_SPLITTER_GAP,
+    debug_processes_bottom = DEBUG_PROCESSES_BOTTOM,
+    debug_toolbar_button = DEBUG_TOOLBAR_BUTTON,
+    debug_toolbar_gap = DEBUG_TOOLBAR_GAP,
+    debug_row_pad = DEBUG_ROW_PAD,
+    debug_indent = DEBUG_INDENT,
+    debug_chevron_gap = DEBUG_CHEVRON_GAP,
+    debug_badge = DEBUG_BADGE,
+    debug_add_watch_pad_x = DEBUG_ADD_WATCH_PAD_X,
+    debug_add_watch_right = DEBUG_ADD_WATCH_RIGHT,
+    breakpoints_top = BREAKPOINTS_TOP,
+    breakpoints_header = BREAKPOINTS_HEADER,
+    breakpoints_count_gap = BREAKPOINTS_COUNT_GAP,
+    breakpoints_dot = BREAKPOINTS_DOT,
+    breakpoints_folder_gap = BREAKPOINTS_FOLDER_GAP,
+    console_pad_x = CONSOLE_PAD_X,
+    console_pad_right = CONSOLE_PAD_RIGHT,
+    console_input_height = CONSOLE_INPUT_HEIGHT,
+    console_prompt_x = CONSOLE_PROMPT_X,
+    console_prompt_centre = CONSOLE_PROMPT_CENTRE,
     // M8: the floating debug panel and quick evaluate.
     debug_panel_top = DEBUG_PANEL_TOP,
+    debug_panel_right = DEBUG_PANEL_RIGHT,
     debug_panel_pad = DEBUG_PANEL_PAD,
     debug_panel_button = DEBUG_PANEL_BUTTON,
     debug_panel_gap = DEBUG_PANEL_GAP,
-    debug_panel_handle = DEBUG_PANEL_HANDLE,
+    debug_panel_radius = DEBUG_PANEL_RADIUS,
+    debug_panel_button_radius = DEBUG_PANEL_BUTTON_RADIUS,
+    debug_panel_status_gap = DEBUG_PANEL_STATUS_GAP,
+    attach_header_font = ATTACH_HEADER_FONT,
+    attach_rows_pad_x = ATTACH_ROWS_PAD_X,
     quick_eval_row = QUICK_EVAL_ROW,
     quick_eval_indent = QUICK_EVAL_INDENT,
     quick_eval_max_rows = QUICK_EVAL_MAX_ROWS,
@@ -1540,25 +1681,24 @@ pub struct Theme {
     pub parameter_info_match_text: Hsla,
     pub rename_current_border: Hsla,
     pub rename_entries_bg: Hsla,
-    /// The breakpoint hint on the hovered gutter row: Fleet's red at 28 %
-    /// (read off the `fold` scene's hover shot; no theme key names it, so
-    /// `icon.background.red` with the opacity is an estimate).
+    /// The breakpoint hint on the hovered gutter row: Fleet's red at 30.5 %
+    /// (batch 13's gutter hover; no theme key names it, so
+    /// `icon.background.red` with the opacity is a fit).
     pub breakpoint_hint: Hsla,
     /// M8: breakpoints and the execution point in the gutter.
     /// A line breakpoint, filled (and a disabled one's ring): the hint's
-    /// `icon.background.red` at full strength (estimate: no theme key names
-    /// the breakpoint and no probe has shot one).
+    /// `icon.background.red` at full strength (batch 13: (225, 71, 94) in
+    /// sRGB, the key's #E1465E).
     pub breakpoint: Hsla,
     /// A breakpoint the running session could not bind: `icon.secondary`
     /// (estimate: IntelliJ greys an unbound breakpoint).
     pub breakpoint_unverified: Hsla,
-    /// `debug.currentFrame`: the execution point's line, its background.
+    /// `debug.currentFrame`: the execution point's line, its background
+    /// (`RedTint_20`, #D7325133), painted over the current line's wash when
+    /// the caret is on it. Batch 13: Fleet's (74, 43, 50) in sRGB is it over
+    /// `editor.currentLine.background.default` (the editor unfocused), its
+    /// (60, 39, 62) over `.focused`; Fleet draws no arrow.
     pub debug_current_frame: Hsla,
-    /// The execution arrow over the breakpoint column: `icon.primary` for
-    /// the top frame, `icon.secondary` for a caller selected in the frames
-    /// list (estimate: no key names the arrow).
-    pub execution_point: Hsla,
-    pub execution_point_caller: Hsla,
     /// `settings.modified.indicator`: the Settings tool's bar beside a row
     /// whose value WEEP's file sets (the shot read `#BD8128`; no key gives
     /// that, so the named key stands in, an estimate).
@@ -1624,6 +1764,9 @@ pub struct Theme {
     pub button_secondary_bg_pressed: Hsla,
     pub button_secondary_border: Hsla,
     pub button_secondary_text: Hsla,
+    /// M8: a chord inside a secondary button (batch 13: the Run & Debug
+    /// popup's "↩" and "⌥↩").
+    pub button_secondary_text_hint: Hsla,
     pub toggle_on_bg: Hsla,
     pub toggle_on_bg_hovered: Hsla,
     pub toggle_on_border: Hsla,
@@ -1896,14 +2039,15 @@ impl Theme {
             settings_modified: c("settings.modified.indicator", Color::rgb(0xCD, 0xA2, 0x61)),
             shortcut_overlay_bg: to_hsla(Color::rgb(0xB8, 0xB9, 0xB9)),
             shortcut_overlay_text: to_hsla(Color::rgb(0x09, 0x09, 0x09)),
-            breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.28),
+            // M8, batch 13: (85, 38, 47) on the island in sRGB (the mac shot
+            // through its display profile; the sixth pass read #55262F),
+            // `icon.background.red` at 30.5 %.
+            breakpoint_hint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)).opacity(0.305),
             // M8: breakpoints and the execution point.
             breakpoint: c("icon.background.red", Color::rgb(0xE1, 0x46, 0x5E)),
             breakpoint_unverified: c("icon.secondary", Color::rgb(0x7A, 0x7F, 0x86)),
             debug_current_frame: selection_attr("debug.currentFrame")
                 .unwrap_or_else(|| to_hsla(Color::rgb(0xD7, 0x32, 0x51).with_alpha(0x33))),
-            execution_point: c("icon.primary", text_primary),
-            execution_point_caller: c("icon.secondary", Color::rgb(0x7A, 0x7F, 0x86)),
             problems_success_bg: c(
                 "problemsWidget.tag.success.background",
                 Color::rgb(0x1F, 0x39, 0x2D),
@@ -2166,6 +2310,10 @@ impl Theme {
             ),
             button_secondary_border: c("button.secondary.border.default", transparent),
             button_secondary_text: c("button.secondary.text.default", text_primary),
+            button_secondary_text_hint: c(
+                "button.secondary.text.hint",
+                text_primary.with_alpha(0x85),
+            ),
             toggle_on_bg: c(
                 "toggleButton.on.background.default",
                 Color::rgb(0x08, 0x70, 0xE4),

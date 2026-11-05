@@ -7,18 +7,21 @@
 //! Modules: `transport` (the `Content-Length` framing on worker threads),
 //! `protocol` (the JSON both ways, 0-based lines to 1-based and back),
 //! `client` (the session: handshake, requests, events), `adapters` (where
-//! lldb-dap is, and the Rust formatters' `initCommands`).
+//! lldb-dap is, and the Rust formatters' `initCommands`), `eval` (Rust
+//! expressions through LLDB: what lldb-dap answers, the fallbacks).
 //!
 //! Lines and columns in this API are 0-based (WEEP's); the client converts
 //! to the protocol's 1-based ones (`linesStartAt1`).
 
 mod adapters;
 mod client;
+mod eval;
 pub mod protocol;
 pub mod transport;
 
 pub use adapters::{find_on_path, rust_init_commands, rust_init_commands_for};
 pub use client::Client;
+pub use eval::{clean_error, rust_path};
 
 use std::path::PathBuf;
 
