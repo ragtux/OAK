@@ -119,8 +119,10 @@ seventeenth passes) and corrected the find bar, the replace row, the fold mark's
 click, rendered spaces, the wrap rule, the find bar's Tab order and focus
 ring, its current match on reopening, when it pushes the text down, the text
 it hides, the status badge under it and the fields' focus border (1 px on
-whole device pixels), its width, the query's font and the toggles' glyphs.
-Still open from them: one wrap column more than Fleet, the Outline and VerticalThin carets, and the
+whole device pixels), its width, the query's font, the toggles' glyphs and the
+soft wrap's width. Still open from them: the Outline and VerticalThin carets, the
+gutter's width at larger font sizes, the status badge's cut-out over wrapped
+text (square corners, a shaded word), and the
 sticky lines (the fixture has no Rust file longer than the window). Left for later: the smooth caret (`editor.caretSmoothAnimation`
 is read, not animated), an "in selection" button on the find bar (the mode
 engages by itself when the bar opens on a multi-line selection; whether

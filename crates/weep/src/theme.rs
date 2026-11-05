@@ -553,6 +553,13 @@ pub mod metrics {
     /// Soft-wrapped continuation rows start at the text origin (estimate: not
     /// probed; batch 5 left soft wrap, whitespace and the guides for a scene each).
     pub const WRAP_INDENT: f32 = 0.;
+    /// Soft wrap keeps this much of the text area free at its right: Fleet
+    /// wraps the 300-column line at 104 columns in an 896 px island (62 of
+    /// gutter, 7.8 a column) and at 105 in an 897 px one, and at 90 at 16 px
+    /// with the island at 1324, where a two-column reserve would leave 89:
+    /// a fixed 15-16 px (not the thumb's 6; seventeenth pass), here its
+    /// middle, as 16 lands on the step and loses it to rounding.
+    pub const WRAP_RESERVE: f32 = 15.5;
     /// A centred editor (`editor.centerEditorHorizontally`) keeps this many
     /// columns of text width (estimate).
     pub const CENTERED_COLUMNS: f32 = 120.;
@@ -1107,6 +1114,7 @@ scaled_metrics!(
     find_bar_separator_height = FIND_BAR_SEPARATOR_HEIGHT,
     text_button_pad_x = TEXT_BUTTON_PAD_X,
     wrap_indent = WRAP_INDENT,
+    wrap_reserve = WRAP_RESERVE,
     centered_columns = CENTERED_COLUMNS,
     scrollbar_thumb = SCROLLBAR_THUMB,
     scrollbar_thumb_min = SCROLLBAR_THUMB_MIN,

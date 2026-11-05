@@ -146,6 +146,8 @@ pub struct TextMetrics {
     pub whitespace_dot: f32,
     pub sticky_shadow: f32,
     pub wrap_indent: f32,
+    /// Soft wrap's free width at the text area's right.
+    pub wrap_reserve: f32,
     pub centered_columns: f32,
     /// The tui skin's cell while that skin is on: the editor then sits on
     /// its grid (`on_grid`), and this is the frame's cached skin.
@@ -385,6 +387,7 @@ impl TextMetrics {
             whitespace_dot: m.whitespace_dot,
             sticky_shadow: m.sticky_shadow,
             wrap_indent: m.wrap_indent,
+            wrap_reserve: m.wrap_reserve,
             centered_columns: m.centered_columns,
             cell: None,
         };
@@ -437,6 +440,7 @@ impl TextMetrics {
         self.code_vision_gap = w;
         self.sticky_shadow = 0.;
         self.wrap_indent = snap_to(self.wrap_indent, w);
+        self.wrap_reserve = 0.;
         self.blame_width = col(TUI_BLAME_COLS);
         self.blame_text_x = 0.;
         self.blame_bar_x = 0.;
@@ -1829,7 +1833,7 @@ impl EditorView {
         }
         let width = self.last_bounds.size.width
             - px(self.tm.gutter_width)
-            - px(self.tm.scrollbar_thumb)
+            - px(self.tm.wrap_reserve)
             - self.text_offset();
         Some(((width / space).floor() as usize).max(8))
     }
