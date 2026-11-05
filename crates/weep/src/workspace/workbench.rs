@@ -284,10 +284,12 @@ impl Workspace {
             return;
         }
         let menu = cx.new(|cx| ContextMenu::new(entries, position, return_focus, cx));
+        cx.set_global(crate::tooltip::MenuShown(true));
         cx.subscribe(&menu, |this, menu, _: &MenuEvent, cx| {
             // Activated or dismissed: the menu goes either way.
             if this.menu.as_ref() == Some(&menu) {
                 this.menu = None;
+                cx.set_global(crate::tooltip::MenuShown(false));
                 cx.notify();
             }
         })
@@ -680,6 +682,7 @@ impl Workspace {
             on_select: Some(Rc::new(move |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
             })),
+            icon: None,
         });
         self.open_menu(vec![entry], position, None, cx);
     }

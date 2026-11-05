@@ -578,32 +578,41 @@ configurations.
   (`editor.showFloatingDebugPanel`); `quick-evaluate-expression` and the
   value on hover while stopped. Both skins.
 - Done (2026-11-05, the rest of the list, three agents; `docs/fleet-probe.md`,
-  twenty-third pass, lists the estimates): conditions, log messages and hit
-  counts (`hitCondition`) edited in the Breakpoints tool's properties under
-  its list; exception breakpoints: the adapter's `exceptionBreakpointFilters`
-  and WEEP's own "Rust: on panic" (a function breakpoint on `rust_panic`),
-  listed with check boxes in the Breakpoints tool, kept per workspace, sent
-  with `setExceptionBreakpoints` / `setFunctionBreakpoints`; a panic stop
-  reads "Panic: <message>" (the message from the panic report) and selects
-  the first frame of the user's code; `debug/drop-frame` (Backspace/Delete
-  in the frames list: `restartFrame` where the adapter has it, else LLDB's
-  `thread return`, which returns to the caller after the call rather than
-  re-running it); expanded variables kept across stops (by their names'
-  path under the function); library frames dimmed; `runInTerminal` answered
-  with a Terminal tab (WEEP never asks for it: Fleet has no run.json key,
-  and Xcode's lldb-dap launcher cannot be attached to on macOS);
-  `debug/quick-evaluate-expression-with-click` (Alt+click while stopped;
-  elsewhere Alt+click still adds a caret); Run and Debug on a right click on
-  run.json's gutter run icons; undo brings back a deleted line's breakpoint
-  and move-line carries breakpoints with their text.
-- Probes: batch 13 as the `debug` scene, run on both (twentieth to
-  twenty-second passes). Fleet's quick evaluate, the run icon's clicks,
-  Alt+click while stopped, the breakpoint properties and a panic stop are
-  still unprobed.
+  twenty-third pass): conditions, log messages and hit counts (`hitCondition`)
+  and exception breakpoints (the adapter's `exceptionBreakpointFilters`, WEEP's
+  own "Rust: on panic" as a function breakpoint on `rust_panic`, off by
+  default) in the store, the protocol and `layout.json`; a panic stop reads
+  "Panic: <message>" and selects the first frame of the user's code;
+  `debug/drop-frame` (Backspace/Delete in the frames list: `restartFrame`
+  where the adapter has it, else LLDB's `thread return`, which returns to the
+  caller after the call rather than re-running it); expanded variables kept
+  across stops (by their names' path under the function); `runInTerminal`
+  answered with a Terminal tab (WEEP never asks for it: Fleet has no run.json
+  key, and Xcode's lldb-dap launcher cannot be attached to on macOS); undo
+  brings back a deleted line's breakpoint and move-line carries breakpoints
+  with their text.
+- Done (2026-11-05, twenty-fourth pass, `debug-rest` scene, run on both):
+  the gutter run icon as Fleet's: a click opens Run '<name>' (⇧⌘R) / Debug
+  '<name>' (⌥⌘R) with the "⇧Click on icon to Run, ⌥Click to Debug" hint,
+  Shift+click runs, Alt+click debugs, a right click does nothing; Alt+click
+  in the editor always adds a caret (Fleet has no quick evaluate on a click,
+  and `debug/quick-evaluate-expression-with-click` is not offered, so WEEP
+  binds none); the Breakpoints tool lists line breakpoints only, as Fleet's
+  (the properties pane and the exception group stay in the code behind
+  `SHOW_BREAKPOINT_EXTRAS`), with a row menu (Remove Breakpoint ⌫, Disable
+  Breakpoint); Fleet's empty tool for Breakpoints and Debug (`empty_state.rs`,
+  the Debug tool's "Run & Debug ⌘R" button), the Debug tool back to it once
+  every session has ended; no dimmed library frames; no tooltip over an open
+  menu.
+- Probes: batch 13 as the `debug` scene (twentieth to twenty-second passes)
+  and batch 13b as `debug-rest` (twenty-fourth). Fleet 1.48's quick evaluate
+  shows nothing for Rust (Go to Action or ⌥⌘E), so WEEP's popup stays an
+  estimate.
 
 Left for later: redo bringing back a breakpoint an undo deleted; Rust
-`fn main` / test run icons in source files (the run icon menu exists only in
-run.json); adapters for other languages (none installed here, and Fleet's
+`fn main` / test run icons in source files (Fleet shows them from Smart
+Mode's runnables, with a generated configuration such as "run debuggee";
+WEEP's menu exists only in run.json); adapters for other languages (none installed here, and Fleet's
 run.json keys for them are unknown); `java.debugger.*` (Java, likely never).
 
 ### Later or never

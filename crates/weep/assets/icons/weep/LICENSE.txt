@@ -3,6 +3,7 @@ grid, the terminal, the collaboration mark, the git branch, the logo, the
 file-type monograms, the gutter's run triangle, the toolbar's outlined one, the status badge's check, the find bar's up and down arrows and its
 Aa, W and .* toggles, the Debug tool's watch glasses, the floating debug panel's
 pause bars, restart and step-over arrows and its last button's box, the
+empty Debug tool's bug, the
 problems widget's sliders and its error mark (a circle and an exclamation,
 painted in two colours). Drawn on the same 16-unit grid with 1 px strokes as the
 expui set beside them, so the two mix in one toolbar. `weep.ico`, the Windows

@@ -437,16 +437,39 @@ pub fn gutter_menu_rows(breakpoint: &LineBreakpoint) -> [GutterMenuRow; 4] {
     ]
 }
 
+/// The rows of the menu a right click on a Breakpoints tool row opens
+/// (twenty-fourth pass, `rest8-fleet-bp-row-right.png`): the gutter menu's
+/// first two, no separator and no View All.
+pub fn tool_menu_rows(breakpoint: &LineBreakpoint) -> [GutterMenuRow; 2] {
+    let [remove, toggle, ..] = gutter_menu_rows(breakpoint);
+    [remove, toggle]
+}
+
 /// The menu for the breakpoint on `line` of `path` (none without one): its
 /// rows act on that breakpoint, not on the carets' lines. Fleet shows the
 /// remove chord (⌫) beside "Remove Breakpoint" and no other.
 pub fn gutter_menu(path: &Path, line: usize, cx: &App) -> Vec<MenuEntry> {
+    menu_with(path, line, gutter_menu_rows, cx)
+}
+
+/// The Breakpoints tool's row menu for the breakpoint on `line` of `path`:
+/// the gutter menu's rows without the separator and View All.
+pub fn tool_menu(path: &Path, line: usize, cx: &App) -> Vec<MenuEntry> {
+    menu_with(path, line, tool_menu_rows, cx)
+}
+
+fn menu_with<const N: usize>(
+    path: &Path,
+    line: usize,
+    rows: fn(&LineBreakpoint) -> [GutterMenuRow; N],
+    cx: &App,
+) -> Vec<MenuEntry> {
     let Some(breakpoint) =
         BreakpointStore::try_global(cx).and_then(|s| s.read(cx).at(path, line).cloned())
     else {
         return Vec::new();
     };
-    gutter_menu_rows(&breakpoint)
+    rows(&breakpoint)
         .into_iter()
         .map(|row| {
             let path = path.to_path_buf();
@@ -457,6 +480,7 @@ pub fn gutter_menu(path: &Path, line: usize, cx: &App) -> Vec<MenuEntry> {
                     action: Box::new(PopupCancel),
                     enabled: true,
                     on_select: Some(f),
+                    icon: None,
                 })
             };
             match row {
@@ -481,6 +505,7 @@ pub fn gutter_menu(path: &Path, line: usize, cx: &App) -> Vec<MenuEntry> {
                     action: Box::new(DebugBreakpointsJumpToTool),
                     enabled: true,
                     on_select: None,
+                    icon: None,
                 }),
             }
         })
@@ -894,8 +919,17 @@ mod tests {
             ]
         );
         assert_eq!(gutter_menu_rows(&b)[2], GutterMenuRow::Separator);
+        // The Breakpoints tool's rows: the first two only.
+        assert_eq!(
+            tool_menu_rows(&b).map(GutterMenuRow::label),
+            ["Remove Breakpoint", "Disable Breakpoint"]
+        );
         b.enabled = false;
         assert_eq!(labels(&b)[1], "Enable Breakpoint");
+        assert_eq!(
+            tool_menu_rows(&b).map(GutterMenuRow::label),
+            ["Remove Breakpoint", "Enable Breakpoint"]
+        );
     }
 
     /// The new line of each of `lines` (rows of `before`) after `edits` turned

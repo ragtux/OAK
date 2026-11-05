@@ -206,7 +206,6 @@ action_table! {
     "debug/delete-watch" => DebugDeleteWatch, DEBUG_TOOL;
     "debug/drop-frame" => DebugDropFrame, DEBUG_TOOL;
     "debug/quick-evaluate-expression" => DebugQuickEvaluateExpression, EDITOR;
-    "debug/quick-evaluate-expression-with-click" => DebugQuickEvaluateExpressionWithClick, EDITOR;
     "debug/jump-to-tool" => DebugJumpToTool, WORKSPACE;
     "debug/new-tool" => DebugNewTool, WORKSPACE;
     "debug/breakpoints/jump-to-tool" => DebugBreakpointsJumpToTool, WORKSPACE;
@@ -415,10 +414,6 @@ pub fn action_title(id: &str) -> String {
         // Estimate: IntelliJ's title (Fleet's unprobed).
         "debug/drop-frame" => Some("Drop Frame"),
         "debug/quick-evaluate-expression" => Some("Quick Evaluate Expression"),
-        // Estimate: no Fleet shot names it; IntelliJ's gesture is Alt+click.
-        "debug/quick-evaluate-expression-with-click" => {
-            Some("Quick Evaluate Expression with Click")
-        }
         "debug/jump-to-tool" => Some("Jump to Debug Tool"),
         "debug/new-tool" => Some("New Debug Tool"),
         "debug/breakpoints/jump-to-tool" => Some("Jump to Breakpoints Tool"),

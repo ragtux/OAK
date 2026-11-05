@@ -63,6 +63,8 @@ bundle!(
     "icons/weep/debug-restart.svg",
     "icons/weep/debug-step-over.svg",
     "icons/weep/debug-output.svg",
+    // M8: the empty Debug tool's bug, drawn to the twenty-fourth pass's shot.
+    "icons/weep/bug.svg",
     // M8: the gutter's execution arrows (the top frame, a caller frame).
     "icons/weep/file-rust.svg",
     "icons/weep/file-toml.svg",

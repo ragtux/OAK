@@ -103,7 +103,11 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
   breakpoint; a right click on a breakpoint opens its menu (Remove Breakpoint, Disable or Enable
   Breakpoint, a rule, View All Breakpoints) as a boxed menu at the cell. The execution point's
   line fills its whole row of cells with `debug_current_frame` (half strength for a caller
-  frame) over the current line's fill; no arrow, as in Fleet.
+  frame) over the current line's fill; no arrow, as in Fleet. A click on the run icon opens a
+  boxed menu on the row under it, its frame on the icon's column: ` ▶ Run 'name'  ⇧⌘R `,
+  ` ● Debug 'name'  ⌥⌘R ` (glyphs in `icon_green`), then the hint `⇧Click on icon to Run,
+  ⌥Click to Debug` as a dim row; Shift+click runs, Alt+click debugs, a right click on the run
+  icon does nothing.
 - **Line status (git):** in its cell, a bar a third of a cell wide at the cell's left for added
   (`git_added_bg`) and modified lines, and a `▁`-like wedge at the row's bottom edge for deleted
   lines; hover widens it to the full cell, and the status popup is a box.
@@ -309,14 +313,21 @@ as UI), tmux and vim (status line, command line), Neovide (a grid editor on a GP
 - Breakpoints tool: the title row ` Breakpoints 1` with `[x]` (`[-]` when some are off) at its
   right end, then a row per breakpoint ` ● debuggee.rs:7 misc` (the folder in
   `text_secondary`; `○` disabled, `●` in `breakpoint_unverified` when unbound) with its own
-  `[x]` at the right; then ` Exception Breakpoints 7` and a row per filter ` ◆ Rust: on panic
-  [x]` (`◇` off). A selected line breakpoint's properties take the last five rows:
-  `── debuggee.rs:7 ──`, ` [x] Enabled`, then the ` condition` / ` log` / ` hit count` fields
-  (labels in an 11-cell column) on `input_bg`. The `BreakpointsTool` key context covers the
-  list only; the fields sit under `BreakpointProperties`.
-- Debug tool: a library frame (no source, a source outside the workspace, or the adapter's
-  `subtle` hint) in `text_secondary`; a panic stop's status row `Panic: <message>` in
-  `text_dangerous`.
+  `[x]` at the right. A right click on a row opens a boxed menu: Remove Breakpoint `⌫`,
+  Disable/Enable Breakpoint. Exception breakpoints and the properties are hidden
+  (`SHOW_BREAKPOINT_EXTRAS`, as Fleet shows neither); when on, ` Exception Breakpoints 7` and
+  a row per filter ` ◆ Rust: on panic [x]` (`◇` off) follow the line breakpoints, and a
+  selected line breakpoint's properties take the last five rows: `── debuggee.rs:7 ──`,
+  ` [x] Enabled`, then the ` condition` / ` log` / ` hit count` fields (labels in an 11-cell
+  column) on `input_bg`. The `BreakpointsTool` key context covers the list only; the fields
+  sit under `BreakpointProperties`.
+- Debug tool: every frame in the list's text colour (Fleet dims no library frame); a panic
+  stop's status row `Panic: <message>` in `text_dangerous`.
+- Empty tool (Breakpoints with none, Debug with no live session): on the tool's grid, a block
+  28 cells wide (cols−2 when narrower), centred both ways, rows left-aligned: the icon glyph in
+  `icon_primary` (`○` Breakpoints, `¤` Debug), a blank row, the title in `text_primary`, the
+  description wrapped on words in `text_tertiary` (Fleet's line breaks), then for Debug a
+  blank row and `[ Run & Debug ⌘R ]` (the chord in `button_secondary_text_hint`).
 - Debugger Console: the lines on the grid (first `Console is in 'commands' mode, prefix
   expressions with '?'.`, a blank row, `Launching: <program>`), each typed line a block as in
   Fleet's: a `─` rule in `separator` before it (and after it, before plain lines), the input

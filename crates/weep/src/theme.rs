@@ -121,6 +121,26 @@ pub mod metrics {
     pub const EMPTY_PANEL_TEXT_LINE: f32 = 16.;
     pub const EMPTY_PANEL_GAP_TEXT: f32 = 10.;
     pub const EMPTY_PANEL_INSET: f32 = 0.15;
+    /// An empty tool (twenty-fourth pass: the Breakpoints tool without
+    /// breakpoints, `rest8-fleet-bp-gutter-alt.png`, and the Debug tool
+    /// without a session, `rest13-fleet-after.png`): the empty panel's 24 px
+    /// icon (the ring's 18 px ink centred in it) and its 20 gap, the title
+    /// 14.67 px semibold (the ink of "Breakpoints" 85.5 wide and of "Debug"
+    /// 46, Inter's 85.05 and 46.6 at 14.67) on the empty panel's 20 line,
+    /// 2.67 (the title's baseline 20 above the text's), the 13 px text on 16
+    /// lines, 12 (the button's top 11.7 under the last line), the 24 px
+    /// button. The block is 191 wide (its left edge 84.5 into the 360 px
+    /// island on both shots; the text wraps between 173.5 and 206), its rows
+    /// left-aligned, centred in the area under the tool's tab row (its
+    /// centre at 425.5 in an island 38..772.5 on both shots).
+    pub const EMPTY_TOOL_WIDTH: f32 = 191.;
+    pub const EMPTY_TOOL_TITLE_SIZE: f32 = 44. / 3.;
+    pub const EMPTY_TOOL_GAP_TITLE: f32 = 8. / 3.;
+    pub const EMPTY_TOOL_GAP_TEXT: f32 = 12.;
+    /// Padding above the centred block: WEEP's first replay (debug-rest)
+    /// put both empty tools 1.5-2 px above Fleet's (Breakpoints' ring top
+    /// 377.5 against 379.5, Debug's icon 350 against 351.5).
+    pub const EMPTY_TOOL_DROP: f32 = 3.5;
     /// Fleet's secondary button ("Open Tool", batch 2): 24 tall, 92.7 wide for
     /// its 63.3 px label: 6 px padding, a 4 px gap, the chevron in a 12 px box.
     /// The radius is an estimate.
@@ -225,6 +245,12 @@ pub mod metrics {
     /// 142-164 row of an island whose left edge is 376, in
     /// `icon.background.green`, in place of the line number.
     pub const RUN_ICON_X: f32 = 21.;
+    /// M8, twenty-fourth pass: a click on the run icon opens its menu with
+    /// the box's top-left corner 1 left of the icon's 16 px box and 0.67
+    /// under it (Fleet's menu at 396 x 126.5 for the icon's ink at
+    /// 400-409 x 112.5-123, the ink 3 into its box as `run-gutter.svg`'s).
+    pub const RUN_ICON_MENU_DX: f32 = 1.;
+    pub const RUN_ICON_MENU_DY: f32 = 0.67;
     /// The file status badge at the editor's top right: a 20 px box 6 under
     /// the editor area's top and 22 in from the island's right edge
     /// (ink 1232.67-1252 x 82-102 on a 1274 island), on a 6 px margin in
@@ -709,6 +735,13 @@ pub mod metrics {
     pub const MENU_MIN_WIDTH: f32 = 140.;
     pub const MENU_SHORTCUT_GAP: f32 = 40.;
     pub const MENU_SEPARATOR_PAD: f32 = 5.5;
+    /// M8, twenty-fourth pass: a hint line closing a menu (the run icon's
+    /// "⇧Click on icon to Run, ⌥Click to Debug") is laid on a row's 28 px
+    /// line, but its box ends 18.5 under its top, then the menu's padding:
+    /// Fleet's menu is 88.5 tall for two rows and the hint (1 + 6 + 56 +
+    /// 18.5 + 6 + 1), the hint's cap centre 12.5 under its top as a row's is
+    /// 13 under its own.
+    pub const MENU_HINT_HEIGHT: f32 = 18.5;
     /// Confirm dialogs (batch 7, estimates): 420 wide, 16 px padding, 24 px
     /// buttons 8 apart, the title 13 px semibold on a 20 line, 8 to the message.
     pub const DIALOG_WIDTH: f32 = 420.;
@@ -1017,6 +1050,11 @@ scaled_metrics!(
     empty_panel_gap_title = EMPTY_PANEL_GAP_TITLE,
     empty_panel_text_line = EMPTY_PANEL_TEXT_LINE,
     empty_panel_gap_text = EMPTY_PANEL_GAP_TEXT,
+    empty_tool_width = EMPTY_TOOL_WIDTH,
+    empty_tool_title_size = EMPTY_TOOL_TITLE_SIZE,
+    empty_tool_gap_title = EMPTY_TOOL_GAP_TITLE,
+    empty_tool_gap_text = EMPTY_TOOL_GAP_TEXT,
+    empty_tool_drop = EMPTY_TOOL_DROP,
     button_height = BUTTON_HEIGHT,
     button_pad_x = BUTTON_PAD_X,
     button_icon_gap = BUTTON_ICON_GAP,
@@ -1071,6 +1109,8 @@ scaled_metrics!(
     line_status_popup_height = LINE_STATUS_POPUP_HEIGHT,
     tooltip_shortcut_gap = TOOLTIP_SHORTCUT_GAP,
     run_icon_x = RUN_ICON_X,
+    run_icon_menu_dx = RUN_ICON_MENU_DX,
+    run_icon_menu_dy = RUN_ICON_MENU_DY,
     file_status_size = FILE_STATUS_SIZE,
     file_status_top = FILE_STATUS_TOP,
     file_status_right = FILE_STATUS_RIGHT,
@@ -1343,6 +1383,7 @@ scaled_metrics!(
     menu_min_width = MENU_MIN_WIDTH,
     menu_shortcut_gap = MENU_SHORTCUT_GAP,
     menu_separator_pad = MENU_SEPARATOR_PAD,
+    menu_hint_height = MENU_HINT_HEIGHT,
     dialog_width = DIALOG_WIDTH,
     dialog_pad = DIALOG_PAD,
     dialog_button_gap = DIALOG_BUTTON_GAP,

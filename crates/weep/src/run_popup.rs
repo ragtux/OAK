@@ -26,6 +26,7 @@ use gpui::{
     deferred, div, point, prelude::*, px, App, BoxShadow, Context, Entity, EventEmitter,
     FocusHandle, Focusable, FontWeight, KeyBinding, Pixels, Point, Render, SharedString, Window,
 };
+use weep_keymap::Platform;
 use weep_run::RunConfig;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,11 +124,35 @@ fn debug_button(kind: &str) -> bool {
     kind == "cargo"
 }
 
-/// A row of the menu a right click on a gutter run icon opens (M8,
-/// estimate: Fleet's click on the icon is unprobed; the rows after
-/// IntelliJ's gutter menu, "Run 'name'" and "Debug 'name'", with the
-/// in-context actions' chords, which act on the configuration at
-/// run.json's caret, where the click puts it).
+/// What a left click on a gutter run icon does (M8, twenty-fourth pass):
+/// Fleet opens the icon's menu; Shift+click runs the configuration and
+/// Alt+click debugs it, straight away. Alt+click on a row WEEP cannot
+/// debug opens the menu as a plain click (it has no Debug row). A right
+/// click on the icon does nothing (the editor never asks).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GutterClick {
+    Menu,
+    Run,
+    Debug,
+}
+
+/// The click on a run icon of a configuration of type `kind`, by its
+/// modifiers (Shift before Alt: estimate, Fleet's Shift+Alt+click unprobed).
+pub fn gutter_click(shift: bool, alt: bool, kind: &str) -> GutterClick {
+    if shift {
+        GutterClick::Run
+    } else if alt && debuggable(kind) {
+        GutterClick::Debug
+    } else {
+        GutterClick::Menu
+    }
+}
+
+/// A row of the menu a click on a gutter run icon opens (twenty-fourth
+/// pass, Fleet 1.48 on macOS: "Run 'run debuggee'" with the green run
+/// icon and ⇧⌘R, "Debug 'run debuggee'" with the green bug and ⌥⌘R, the
+/// in-context actions' chords, which act on the configuration at run.json's
+/// caret, where the click puts it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GutterRunRow {
     Run,
@@ -153,6 +178,34 @@ impl GutterRunRow {
             GutterRunRow::Run => "run/run-in-context",
             GutterRunRow::Debug => "debug/debug-in-context",
         }
+    }
+
+    /// The row's icon, drawn in `icon.background.green` (Fleet's play
+    /// triangle as the gutter's own, and the expui bug), and the tui
+    /// skin's glyph for it.
+    pub fn icon(self) -> (&'static str, &'static str) {
+        match self {
+            GutterRunRow::Run => ("weep/run-gutter", "▶"),
+            GutterRunRow::Debug => ("expui/run/debug", "●"),
+        }
+    }
+}
+
+/// The run icon's menu's closing line (twenty-fourth pass: "⇧Click on icon
+/// to Run, ⌥Click to Debug" in `text.tertiary`), the modifiers spelled as
+/// the platform's chords are ("Shift+Click", "Alt+Click" off macOS:
+/// estimate, Fleet's Windows and Linux menus unprobed). A row WEEP cannot
+/// debug keeps the first half (estimate).
+pub fn gutter_run_hint(debug: bool, platform: Platform) -> String {
+    let click = |modifier: &str| {
+        let chord = crate::keymap::presentable_on(&format!("{modifier}-a"), platform);
+        format!("{}Click", chord.strip_suffix('A').unwrap_or(&chord))
+    };
+    let run = format!("{} on icon to Run", click("shift"));
+    if debug {
+        format!("{run}, {} to Debug", click("alt"))
+    } else {
+        run
     }
 }
 
@@ -918,6 +971,28 @@ mod tests {
     #[test]
     fn the_run_icon_menu() {
         use GutterRunRow::*;
+        // A plain click opens the menu, Shift+click runs, Alt+click debugs
+        // where WEEP can (else the menu, as a plain click).
+        assert_eq!(gutter_click(false, false, "cargo"), GutterClick::Menu);
+        assert_eq!(gutter_click(true, false, "cargo"), GutterClick::Run);
+        assert_eq!(gutter_click(false, true, "cargo"), GutterClick::Debug);
+        assert_eq!(gutter_click(false, true, "command"), GutterClick::Debug);
+        assert_eq!(gutter_click(false, true, "gradle"), GutterClick::Menu);
+        assert_eq!(gutter_click(true, true, "gradle"), GutterClick::Run);
+        assert_eq!(
+            gutter_run_hint(true, Platform::Mac),
+            "⇧Click on icon to Run, ⌥Click to Debug"
+        );
+        assert_eq!(
+            gutter_run_hint(true, Platform::Windows),
+            "Shift+Click on icon to Run, Alt+Click to Debug"
+        );
+        assert_eq!(
+            gutter_run_hint(false, Platform::Linux),
+            "Shift+Click on icon to Run"
+        );
+        assert_eq!(Run.icon().0, "weep/run-gutter");
+        assert_eq!(Debug.icon().0, "expui/run/debug");
         assert_eq!(gutter_run_rows("cargo"), vec![Run, Debug]);
         assert_eq!(gutter_run_rows("command"), vec![Run, Debug]);
         assert_eq!(gutter_run_rows("gradle"), vec![Run]);

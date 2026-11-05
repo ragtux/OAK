@@ -25,6 +25,7 @@ mod diff_view;
 mod document;
 mod drag_ghost;
 mod editor;
+mod empty_state;
 mod file_tree;
 mod find;
 mod git_tool;

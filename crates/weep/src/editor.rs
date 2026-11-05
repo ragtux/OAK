@@ -63,14 +63,16 @@ pub enum EditorEvent {
     /// The line-status popup's Diff button: the workspace opens the Changed
     /// Files tab on this file.
     ShowDiff,
-    /// A click on a run icon in `.fleet/run.json`'s gutter: the workspace
-    /// runs that configuration (its index in the file).
-    RunConfiguration(usize),
-    /// M8: a right click on a run icon: the workspace opens its menu (Run
-    /// and Debug on configuration `config`) at `position`.
-    RunIconMenu {
-        position: Point<Pixels>,
+    /// A left click on a run icon in `.fleet/run.json`'s gutter, on
+    /// configuration `config` (its index in the file), with the click's
+    /// Shift and Alt: the workspace opens the icon's menu with its top-left
+    /// corner at `anchor`, or runs or debugs it straight away
+    /// (`run_popup::gutter_click`; twenty-fourth pass).
+    RunIcon {
         config: usize,
+        anchor: Point<Pixels>,
+        shift: bool,
+        alt: bool,
     },
     /// Escape in the editor while an interline view (the inline usages) is
     /// open: the workspace closes it.
@@ -2756,28 +2758,9 @@ impl EditorView {
                 return;
             }
         }
-        // A run icon's menu: Run and Debug on its configuration (estimate:
-        // Fleet's click on the icon is unprobed, so the left click keeps
-        // running it). The caret goes to the icon's line, so the chords the
-        // rows show (`run/run-in-context`, `debug/debug-in-context`) act
-        // on the same configuration.
-        if let Hit::RunIcon(config) = hit {
-            let row = self
-                .run_rows(cx)
-                .iter()
-                .find(|(_, ix)| *ix == config)
-                .map(|(r, _)| *r);
-            if let Some(row) = row {
-                self.go(cx, |c, b| {
-                    let at = b.line_to_char(row);
-                    c.set_cursor(b, at)
-                });
-                cx.notify();
-            }
-            cx.emit(EditorEvent::RunIconMenu {
-                position: event.position,
-                config,
-            });
+        // A right click on a run icon does nothing (twenty-fourth pass:
+        // Fleet opens its menu on the left click).
+        if let Hit::RunIcon(_) = hit {
             return;
         }
         if let Hit::Text(offset) = hit {
@@ -2911,6 +2894,40 @@ impl EditorView {
 
     // ---- mouse ----------------------------------------------------------
 
+    /// The run icon's box's left edge, from the gutter's left. The tui
+    /// gutter keeps the run icon in its own first cell.
+    fn run_icon_left(&self) -> Pixels {
+        if self.options.run_after_numbers && self.tm.cell.is_none() {
+            px(self.tm.gutter_number_right + 4.)
+        } else {
+            px(self.tm.run_icon_x)
+        }
+    }
+
+    /// Where the menu of the run icon clicked at `position` goes, in window
+    /// coordinates: its top-left corner `run_icon_menu_dx` left of the
+    /// icon's 16 px box and `run_icon_menu_dy` under it (twenty-fourth
+    /// pass); in the tui skin the box's frame on the icon's cell column,
+    /// on the row under the icon's.
+    fn run_icon_menu_anchor(&self, position: Point<Pixels>, cx: &App) -> Point<Pixels> {
+        let bounds = self.last_bounds;
+        let lh = self.line_height();
+        let d = self
+            .map
+            .row_at(position.y - bounds.origin.y + self.scroll_y);
+        let row_top = bounds.origin.y + self.map.top(d) - self.scroll_y;
+        let left = bounds.origin.x + self.text_offset() + self.run_icon_left();
+        if self.tm.cell.is_some() {
+            return point(left, row_top + lh);
+        }
+        let m = cx.global::<Metrics>();
+        let icon = px(self.tm.icon_size);
+        point(
+            left - px(m.run_icon_menu_dx),
+            row_top + (lh + icon) / 2. + px(m.run_icon_menu_dy),
+        )
+    }
+
     /// What a window point lands on: a text offset, a fold chevron, a folded
     /// mark, or a sticky line.
     fn hit(&mut self, position: Point<Pixels>, window: &mut Window, cx: &App) -> Hit {
@@ -2950,12 +2967,7 @@ impl EditorView {
         if on_spot && self.breakpoint_rows(cx).contains(&row) {
             return Hit::Breakpoint(row);
         }
-        // The tui gutter keeps the run icon in its own first cell.
-        let run_left = if self.options.run_after_numbers && self.tm.cell.is_none() {
-            px(self.tm.gutter_number_right + 4.)
-        } else {
-            px(self.tm.run_icon_x)
-        };
+        let run_left = self.run_icon_left();
         if self.options.run_in_gutter
             && seg == 0
             && x_in >= run_left
@@ -3067,8 +3079,32 @@ impl EditorView {
                     self.restart_blink(cx);
                 }
             }
-            Hit::RunIcon(ix) => {
-                cx.emit(EditorEvent::RunConfiguration(ix));
+            Hit::RunIcon(config) => {
+                // The caret goes to the icon's line (unless it is on it), so
+                // the chords the menu's rows show (`run/run-in-context`,
+                // `debug/debug-in-context`) act on the same configuration.
+                let row = self
+                    .run_rows(cx)
+                    .iter()
+                    .find(|(_, ix)| *ix == config)
+                    .map(|(r, _)| *r);
+                if let Some(row) = row {
+                    let on_row = self.with_buffer(cx, |c, b| c.cursor_point(b).row == row);
+                    if !on_row {
+                        self.go(cx, |c, b| {
+                            let at = b.line_to_char(row);
+                            c.set_cursor(b, at)
+                        });
+                        cx.notify();
+                    }
+                }
+                let anchor = self.run_icon_menu_anchor(event.position, cx);
+                cx.emit(EditorEvent::RunIcon {
+                    config,
+                    anchor,
+                    shift,
+                    alt,
+                });
             }
             Hit::Breakpoint(row) => self.toggle_breakpoints(&[row], cx),
             Hit::CodeVision(row, ix) => {
@@ -3099,28 +3135,6 @@ impl EditorView {
                     cx.notify();
                     return;
                 }
-                // M8: Alt+click on an expression while a session is stopped
-                // quick-evaluates it (`debug/quick-evaluate-expression-with-click`,
-                // a gesture with no chord in Fleet's keymaps; estimate after
-                // IntelliJ, unprobed in Fleet): the caret goes onto it and the
-                // keyboard action's popup opens there. Elsewhere, or with no
-                // stopped session, the click adds a caret as below.
-                if alt
-                    && !shift
-                    && clicks < 2
-                    && !event.modifiers.secondary()
-                    && debug::stopped_session(cx).is_some()
-                {
-                    if let Some(at) = self.eval_click_offset(offset, event.position, window, cx) {
-                        self.go(cx, |c, b| c.set_cursor(b, at));
-                        self.goal_column = None;
-                        self.expand_last = None;
-                        self.restart_blink(cx);
-                        cx.notify();
-                        window.dispatch_action(Box::new(DebugQuickEvaluateExpressionWithClick), cx);
-                        return;
-                    }
-                }
                 self.go(cx, |c, b| match clicks {
                     2 => {
                         let range = c.word_range_at(b, offset);
@@ -3136,7 +3150,10 @@ impl EditorView {
                             let anchor = c.selection.anchor;
                             c.select(b, anchor, offset);
                         } else if alt {
-                            // Alt+click: another caret (kept as the primary).
+                            // Alt+click: another caret (kept as the primary),
+                            // also while a debug session is stopped (Fleet
+                            // has no quick evaluate on a click; twenty-fourth
+                            // pass).
                             c.add_caret_at(b, offset);
                         } else {
                             c.set_cursor(b, offset);

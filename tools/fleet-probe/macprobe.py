@@ -281,8 +281,9 @@ def do(s, step, out_dir, prefix):
         if op == "hover":
             time.sleep(float(a[2]) / 1000)
     elif op == "click":
+        # ["click", kind, mods]: mods such as "alt" or "alt+shift" held for the click.
         kind = a[0] if a else "left"
-        macinput("click", kind, *pointer)
+        macinput("click", kind, *a[1:2], *pointer)
     elif op == "drag":
         x1, y1 = at(s, a[0], a[1])
         x2, y2 = at(s, a[2], a[3])

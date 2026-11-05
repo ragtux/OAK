@@ -9,15 +9,20 @@
 //!   dot and its name, the active session selected.
 //! - **Threads & Frames**: a tree, a node per thread (`1: tid=3212558
 //!   "main"`) with the current thread expanded to its frames, names only,
-//!   the selected frame highlighted; library frames (no file, a file
-//!   outside the workspace, or the adapter's `subtle`) dimmed in
-//!   `listItem.text.secondary` (estimate). An exception or panic stop puts
+//!   the selected frame highlighted; every frame in the list's text colour,
+//!   library code too (twenty-fourth pass: Fleet dims none). An exception or
+//!   panic stop puts
 //!   its words above the tree in `text.dangerous`. Backspace and Delete drop
 //!   the selected frame (`debug/drop-frame`).
 //! - **Variables**: an "Add Watch" button at the title's right; below, the
 //!   watches (the inline field while one is typed), then the frame's scopes
 //!   in the adapter's order, collapsed until opened, each variable `name =
 //!   {type} value`.
+//!
+//! Without a session the tool is Fleet's empty tool (`empty_state.rs`,
+//! twenty-fourth pass): the bug, "Debug", "Create new or run existing
+//! configuration to debug your code" and a "Run & Debug" button with the
+//! `run-and-debug` chord that dispatches it.
 //!
 //! Sizes are `metrics::DEBUG_*` (`theme.rs`); selected rows use the list's
 //! colours (`listItem.background.focused` in the section with the keyboard,
@@ -37,12 +42,13 @@ use crate::actions::{
     DebugAddWatch, DebugDeleteWatch, DebugDropFrame, DebugEditWatch, DebugPause,
     DebugRemoveBreakpoint, DebugRestart, DebugResume, DebugStepInto, DebugStepOut, DebugStepOver,
     DebugStop, DebugToggleEnabledBreakpoint, PopupConfirm, PopupDown, PopupLeft, PopupRight,
-    PopupTab, PopupUp,
+    PopupTab, PopupUp, RunAndDebug,
 };
 use crate::assets::icon;
 use crate::breakpoints_tool::BreakpointsTool;
 use crate::debug_console::DebugConsole;
 use crate::debugger::{DebugSession, DebugSessionEvent, Debugger, SessionState, Variable, Watch};
+use crate::empty_state::{EmptyButton, EmptyState};
 use crate::git_tool::tui_list;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap::{action_title, hint_for};
@@ -416,8 +422,6 @@ pub enum FrameRow {
         index: usize,
         name: String,
         depth: usize,
-        /// Library code ([`DebugSession::is_library_frame`]): dimmed.
-        library: bool,
     },
 }
 
@@ -428,13 +432,11 @@ pub fn frame_rows(
     current: Option<i64>,
     frames: &[StackFrame],
     collapsed: &HashSet<i64>,
-    is_library: impl Fn(&StackFrame) -> bool,
 ) -> Vec<FrameRow> {
     let frame_row = |(index, f): (usize, &StackFrame), depth| FrameRow::Frame {
         index,
         name: f.name.clone(),
         depth,
-        library: is_library(f),
     };
     let mut rows = Vec::new();
     let mut shown = false;
@@ -921,6 +923,20 @@ impl DebugTool {
         self.follow.session.clone()
     }
 
+    /// The session the tool draws: none once every session has ended, so
+    /// the tool goes back to its empty state as Fleet's does when the
+    /// debuggee exits (twenty-fourth pass, rest13: the Processes list
+    /// emptied and the empty Debug tool came back).
+    fn shown_session(&self, cx: &App) -> Option<Entity<DebugSession>> {
+        let session = self.session()?;
+        let any_live = Debugger::global(cx)
+            .read(cx)
+            .sessions()
+            .iter()
+            .any(|s| !s.read(cx).state.is_over());
+        any_live.then_some(session)
+    }
+
     fn rows(&self, cx: &App) -> Vec<TreeRow> {
         match &self.follow.session {
             Some(s) => tree_rows(&TreeSource::of(s.read(cx)), self.editing),
@@ -938,13 +954,7 @@ impl DebugTool {
             return (Vec::new(), None);
         };
         let s = session.read(cx);
-        let rows = frame_rows(
-            &s.threads,
-            s.current_thread,
-            &s.frames,
-            &self.collapsed,
-            |f| s.is_library_frame(f),
-        );
+        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &self.collapsed);
         let selected =
             frames_selected(&rows, self.thread_cursor, s.current_thread, s.current_frame);
         (rows, selected)
@@ -1403,14 +1413,21 @@ impl DebugTool {
     }
 }
 
-/// A frame's name: the list's text, library code in its secondary text
-/// (`listItem.text.secondary`; estimate, no probe has seen Fleet dim a
-/// frame), both skins.
-fn frame_color(library: bool, theme: &Theme) -> Hsla {
-    if library {
-        theme.list_text_secondary
-    } else {
-        theme.list_text
+/// The tool without a session (twenty-fourth pass, `rest13-fleet-after.png`):
+/// Fleet's bug, "Debug", its hint and a "Run & Debug" button with the
+/// `run-and-debug` chord that runs it.
+fn no_session(cx: &App) -> EmptyState {
+    EmptyState {
+        icon: "weep/bug",
+        glyph: "¤",
+        title: "Debug",
+        description: "Create new or run existing configuration to debug your code",
+        button: Some(EmptyButton {
+            id: "debug-run-and-debug",
+            label: "Run & Debug",
+            chord: hint_for(cx, "run-and-debug"),
+            on_click: Rc::new(|window, cx| window.dispatch_action(Box::new(RunAndDebug), cx)),
+        }),
     }
 }
 
@@ -1529,16 +1546,8 @@ impl DebugTool {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
         let focused = self.focus_handle.contains_focused(window, cx);
-        let Some(session) = self.session() else {
-            return div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(theme.text_secondary)
-                // Estimate: the empty tool's words.
-                .child("No debug session")
-                .into_any_element();
+        let Some(session) = self.shown_session(cx) else {
+            return no_session(cx).fleet(&theme, &m);
         };
         let processes = self.fleet_processes(&session, focused, &theme, &m, cx);
         let threads = self.fleet_threads(&session, focused, &theme, &m, cx);
@@ -1764,16 +1773,11 @@ impl DebugTool {
             .enumerate()
             .map(|(ix, row)| {
                 let is_selected = selected == Some(ix);
-                let (depth, chevron, label, library) = match &row {
+                let (depth, chevron, label) = match &row {
                     FrameRow::Thread {
                         label, expanded, ..
-                    } => (0, Some(*expanded), label.clone(), false),
-                    FrameRow::Frame {
-                        name,
-                        depth,
-                        library,
-                        ..
-                    } => (*depth, None, name.clone(), *library),
+                    } => (0, Some(*expanded), label.clone()),
+                    FrameRow::Frame { name, depth, .. } => (*depth, None, name.clone()),
                 };
                 let click = entity.clone();
                 let fold = entity.clone();
@@ -1811,10 +1815,11 @@ impl DebugTool {
                             .gap(px(m.debug_chevron_gap))
                             .child(chevron)
                             // Batch 13: a frame's name runs to the wash's
-                            // edge and is cut there, no ellipsis.
+                            // edge and is cut there, no ellipsis; library
+                            // frames are not dimmed (twenty-fourth pass).
                             .child(
                                 div()
-                                    .text_color(frame_color(library, theme))
+                                    .text_color(theme.list_text)
                                     .child(SharedString::from(label)),
                             ),
                     )
@@ -2022,14 +2027,8 @@ impl DebugTool {
                 .child(child)
                 .into_any_element()
         };
-        let Some(session) = self.session() else {
-            return frame(
-                div()
-                    .h(px(cell.h))
-                    .text_color(theme.text_tertiary)
-                    .child(" No debug session")
-                    .into_any_element(),
-            );
+        let Some(session) = self.shown_session(cx) else {
+            return frame(no_session(cx).tui(cell, cols, grid_rows, &theme));
         };
         // A section rule with its title, `right` set into its right end.
         let heading = |title: &'static str, right: Option<AnyElement>| {
@@ -2186,16 +2185,11 @@ impl DebugTool {
         let take = threads_visible.saturating_sub(frame_els.len());
         for (ix, row) in frame_rows.into_iter().enumerate().skip(skip).take(take) {
             let selected = frame_selected == Some(ix);
-            let (indent, chevron, label, library) = match &row {
+            let (indent, chevron, label) = match &row {
                 FrameRow::Thread {
                     label, expanded, ..
-                } => (0, if *expanded { "▾" } else { "▸" }, label.clone(), false),
-                FrameRow::Frame {
-                    name,
-                    depth,
-                    library,
-                    ..
-                } => (depth * TUI_INDENT, " ", name.clone(), *library),
+                } => (0, if *expanded { "▾" } else { "▸" }, label.clone()),
+                FrameRow::Frame { name, depth, .. } => (depth * TUI_INDENT, " ", name.clone()),
             };
             let thread = match &row {
                 FrameRow::Thread { id, .. } => Some(*id),
@@ -2245,7 +2239,7 @@ impl DebugTool {
                     )
                     .child(
                         div()
-                            .text_color(frame_color(library, &theme))
+                            .text_color(theme.list_text)
                             .child(skin::fit_text(&label, cols.saturating_sub(lead))),
                     )
                     .into_any_element(),
@@ -2668,11 +2662,9 @@ mod tests {
 
     #[test]
     fn the_current_thread_holds_its_frames() {
-        let mut s = fake_session();
-        s.set_root(Path::new("/w"));
-        let library = |f: &StackFrame| s.is_library_frame(f);
+        let s = fake_session();
         let mut collapsed = HashSet::new();
-        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed, library);
+        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed);
         assert_eq!(
             rows,
             vec![
@@ -2685,14 +2677,12 @@ mod tests {
                     index: 0,
                     name: "app::run".into(),
                     depth: 1,
-                    library: false,
                 },
-                // No file: library code, dimmed.
+                // Library code (no file) is a row like any other.
                 FrameRow::Frame {
                     index: 1,
                     name: "std::rt::lang_start".into(),
                     depth: 1,
-                    library: true,
                 },
                 FrameRow::Thread {
                     id: 3212600,
@@ -2709,11 +2699,11 @@ mod tests {
         );
         // Folded by hand: the node alone, and it takes the highlight.
         collapsed.insert(3212558);
-        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed, library);
+        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed);
         assert_eq!(rows.len(), 2);
         assert_eq!(frames_selected(&rows, None, s.current_thread, 0), Some(0));
         // No threads listed: the frames alone, at the left.
-        let rows = frame_rows(&[], None, &s.frames, &HashSet::new(), library);
+        let rows = frame_rows(&[], None, &s.frames, &HashSet::new());
         assert!(matches!(rows[0], FrameRow::Frame { depth: 0, .. }));
         assert_eq!(rows.len(), 2);
     }

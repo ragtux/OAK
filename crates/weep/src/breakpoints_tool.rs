@@ -8,11 +8,19 @@
 //! row's right. Sizes are `metrics::BREAKPOINTS_*` (`theme.rs`).
 //!
 //! Batch 13 showed one breakpoint in one file, so the order of several
-//! (file by file, in line order), a disabled or unbound breakpoint's dot
-//! (the gutter's ring and grey) and the empty tool's words are estimates.
-//! A row's tooltip is the line's text.
+//! (file by file, in line order) and a disabled or unbound breakpoint's dot
+//! (the gutter's ring and grey) are estimates. A row's tooltip is the
+//! line's text. Without breakpoints the tool is Fleet's empty tool
+//! (`empty_state.rs`, twenty-fourth pass): a hollow ring, "Breakpoints",
+//! "Click on the line numbers in Editor to toggle breakpoints". A right
+//! click on a row opens Fleet's row menu (twenty-fourth pass): "Remove
+//! Breakpoint" with its chord and "Disable Breakpoint" (or "Enable"), the
+//! gutter menu's rows without the separator and View All.
 //!
-//! Estimates beyond batch 13 (no probe has seen them in Fleet):
+//! Hidden behind [`SHOW_BREAKPOINT_EXTRAS`] (twenty-fourth pass: Fleet's
+//! tool lists only line breakpoints and shows nothing for a selected row,
+//! so the user chose to hide these; the store, the protocol and layout.json
+//! keep them), estimates no probe has seen in Fleet:
 //! - The exception breakpoints, a group of their own after the line
 //!   breakpoints: a title row "Exception Breakpoints" with the count, then a
 //!   row per filter (expui's `breakpointException` icon in the breakpoint red,
@@ -40,6 +48,7 @@ use crate::actions::{
 use crate::assets::icon;
 use crate::breakpoints::{BreakpointStore, ExceptionBreakpoint, LineBreakpoint, Look, Properties};
 use crate::debug_tool::{relative_path, section_title, DebugViewEvent};
+use crate::empty_state::EmptyState;
 use crate::git_tool::{checkbox, tui_list, CheckState};
 use crate::input::{InputEvent, TextInput};
 use crate::skin::{self, Cell, FrameBars, RowScroll, Skin};
@@ -47,8 +56,10 @@ use crate::theme::{Metrics, Theme};
 use crate::tooltip::Tooltip;
 use gpui::{
     div, prelude::*, px, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, Render, ScrollHandle, SharedString, Subscription, Window,
+    Focusable, FontWeight, MouseButton, MouseDownEvent, Pixels, Point, Render, ScrollHandle,
+    SharedString, Subscription, Window,
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -165,8 +176,26 @@ fn ring(mut d: gpui::Div, w: gpui::Pixels) -> gpui::Div {
     d
 }
 
-/// Estimate: the words of a tool without line breakpoints.
-const EMPTY: &str = "No breakpoints";
+/// Whether the tool shows the exception breakpoints' group and the
+/// selected breakpoint's properties (condition, log message, hit count).
+/// Off: Fleet 1.48's tool has neither (twenty-fourth pass,
+/// `rest7-fleet-bp-tool.png`), and the user chose to hide them; the code
+/// stays compiled and tested so they can come back.
+pub const SHOW_BREAKPOINT_EXTRAS: bool = false;
+
+/// The tool without breakpoints, Fleet's empty tool (twenty-fourth pass,
+/// `rest8-fleet-bp-gutter-alt.png`): the hollow ring (the gutter's disabled
+/// breakpoint, 18 px of ink at 24 as Fleet's), the title and its hint.
+fn no_breakpoints() -> EmptyState {
+    EmptyState {
+        icon: "weep/breakpoint",
+        glyph: "○",
+        title: "Breakpoints",
+        description: "Click on the line numbers in Editor to toggle breakpoints",
+        button: None,
+    }
+}
+
 /// Estimate: the exception group's title (IntelliJ names its groups so).
 const EXCEPTIONS: &str = "Exception Breakpoints";
 /// Estimate: the properties' field labels and placeholders (IntelliJ's
@@ -319,6 +348,9 @@ impl BreakpointsTool {
 
     fn items(&mut self, cx: &App) -> Vec<Item> {
         let rows = self.rows(cx);
+        if !SHOW_BREAKPOINT_EXTRAS {
+            return items(rows, &[]);
+        }
         let store = BreakpointStore::global(cx);
         items(rows, store.read(cx).exception_breakpoints())
     }
@@ -381,8 +413,12 @@ impl BreakpointsTool {
         }
     }
 
-    /// Writes the fields to the breakpoint they were loaded from.
+    /// Writes the fields to the breakpoint they were loaded from (never
+    /// while the properties are hidden).
     fn apply_fields(&mut self, cx: &mut Context<Self>) {
+        if !SHOW_BREAKPOINT_EXTRAS {
+            return;
+        }
         let Some((path, line)) = self.editing.clone() else {
             return;
         };
@@ -499,6 +535,30 @@ impl BreakpointsTool {
             self.open(ix, cx);
         }
     }
+
+    /// A right click on row `ix`: the row selected and Fleet's row menu at
+    /// the pointer (a line breakpoint's only).
+    fn row_menu(
+        &mut self,
+        ix: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle.focus(window, cx);
+        self.select(ix, cx);
+        let Some(Item::Line(row)) = self.selected_item(cx) else {
+            return;
+        };
+        let entries = crate::breakpoints::tool_menu(&row.path, row.line, cx);
+        if entries.is_empty() {
+            return;
+        }
+        cx.emit(DebugViewEvent::Menu {
+            position,
+            entries: Rc::new(RefCell::new(entries)),
+        });
+    }
 }
 
 fn set_enabled(path: &Path, line: usize, enabled: bool, cx: &mut App) {
@@ -578,6 +638,12 @@ impl BreakpointsTool {
     ) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let m = *cx.global::<Metrics>();
+        if items.is_empty() {
+            let empty = no_breakpoints().fleet(&theme, &m);
+            return self
+                .list_keys(div().size_full().child(empty), cx)
+                .into_any_element();
+        }
         let focused = self.focus_handle.is_focused(window);
         let entity = cx.entity();
         let rows: Vec<BpRow> = items
@@ -599,10 +665,8 @@ impl BreakpointsTool {
             .collect();
         if self.reveal {
             self.reveal = false;
-            // The "no breakpoints" row and the exception group's title are
-            // children of the list too.
-            let child =
-                self.selected + usize::from(n_lines == 0) + usize::from(self.selected >= n_lines);
+            // The exception group's title is a child of the list too.
+            let child = self.selected + usize::from(self.selected >= n_lines);
             self.scroll.scroll_to_item(child);
         }
         let all = all_state(&rows);
@@ -645,6 +709,7 @@ impl BreakpointsTool {
                    item: Item| {
             let selected = ix == selected_ix;
             let click = entity.clone();
+            let menu = entity.clone();
             let on = item.enabled();
             div()
                 .id(ElementId::NamedInteger(id.into(), ix as u64))
@@ -654,6 +719,10 @@ impl BreakpointsTool {
                 .on_click(move |e, window, cx| {
                     let count = e.click_count();
                     click.update(cx, |this, cx| this.click(ix, count, window, cx));
+                })
+                .on_mouse_down(MouseButton::Right, move |e: &MouseDownEvent, window, cx| {
+                    let at = e.position;
+                    menu.update(cx, |this, cx| this.row_menu(ix, at, window, cx));
                 })
                 .child(
                     div()
@@ -696,19 +765,6 @@ impl BreakpointsTool {
                 )
         };
         let mut children: Vec<AnyElement> = Vec::new();
-        if n_lines == 0 {
-            children.push(
-                div()
-                    .h(px(m.tree_row_height))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .pl(px(m.debug_row_pad + m.icon_size + m.debug_chevron_gap))
-                    .text_color(theme.text_secondary)
-                    .child(EMPTY)
-                    .into_any_element(),
-            );
-        }
         for (ix, (item, tooltip)) in items
             .into_iter()
             .zip(
@@ -832,6 +888,9 @@ impl BreakpointsTool {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if !SHOW_BREAKPOINT_EXTRAS {
+            return None;
+        }
         let (path, b, name) = self.edited(cx)?;
         let (line, enabled) = (b.line, b.enabled);
         let gap = px(PROPS_GAP * m.zoom);
@@ -931,6 +990,25 @@ impl BreakpointsTool {
         let m = *cx.global::<Metrics>();
         let cell = Cell::current(cx);
         let (cols, grid_rows) = self.tui_grid.get();
+        // The grid's font and its measure, around the list or the empty tool.
+        let grid = self.tui_grid.clone();
+        let frame = |child: AnyElement| {
+            div()
+                .size_full()
+                .relative()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .font_family(theme.mono_font.clone())
+                .text_size(px(cell.font_size))
+                .line_height(px(cell.h))
+                .child(skin::measure(cell, &grid))
+                .child(child)
+        };
+        if items.is_empty() {
+            let empty = no_breakpoints().tui(cell, cols, grid_rows, &theme);
+            return self.list_keys(frame(empty), cx).into_any_element();
+        }
         let props = self.tui_properties(cell, cols, &theme, &m, window, cx);
         let props_rows = if props.is_some() { TUI_PROPS_ROWS } else { 0 };
         let visible = grid_rows.saturating_sub(1 + props_rows);
@@ -944,18 +1022,14 @@ impl BreakpointsTool {
                 Item::Exception(_) => None,
             })
             .collect();
-        // The list's rows: the items, the empty line and the exception
-        // group's title among them.
+        // The list's rows: the items, the exception group's title among
+        // them.
         enum Shown {
             Item(usize, Item),
-            Empty,
             Exceptions(usize),
         }
         let n_exceptions = items.len() - n_lines;
         let mut shown: Vec<Shown> = Vec::new();
-        if n_lines == 0 {
-            shown.push(Shown::Empty);
-        }
         for (ix, item) in items.into_iter().enumerate() {
             if ix == n_lines && n_exceptions > 0 {
                 shown.push(Shown::Exceptions(n_exceptions));
@@ -1031,20 +1105,12 @@ impl BreakpointsTool {
             .take(visible)
             .map(|(at, s)| {
                 let (ix, item) = match s {
-                    Shown::Empty => {
-                        return div()
-                            .h(px(cell.h))
-                            .flex_shrink_0()
-                            .whitespace_nowrap()
-                            .text_color(theme.text_tertiary)
-                            .child(SharedString::from(format!("   {EMPTY}")))
-                            .into_any_element()
-                    }
                     Shown::Exceptions(n) => return title_row(EXCEPTIONS, n).into_any_element(),
                     Shown::Item(ix, item) => (ix, item),
                 };
                 let selected = ix == self.selected;
                 let click = entity.clone();
+                let menu = entity.clone();
                 let (glyph, color, name, folder) = match &item {
                     Item::Line(r) => {
                         let (glyph, color) = match r.look() {
@@ -1079,6 +1145,10 @@ impl BreakpointsTool {
                     .on_click(move |e, window, cx| {
                         let count = e.click_count();
                         click.update(cx, |this, cx| this.click(ix, count, window, cx));
+                    })
+                    .on_mouse_down(MouseButton::Right, move |e: &MouseDownEvent, window, cx| {
+                        let at = e.position;
+                        menu.update(cx, |this, cx| this.row_menu(ix, at, window, cx));
                     })
                     .child(gap())
                     .child(
@@ -1134,17 +1204,7 @@ impl BreakpointsTool {
             )),
             cx,
         );
-        div()
-            .size_full()
-            .relative()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .font_family(theme.mono_font.clone())
-            .text_size(px(cell.font_size))
-            .line_height(px(cell.h))
-            .child(skin::measure(cell, &self.tui_grid))
-            .child(list)
+        frame(list.into_any_element())
             .child(div().flex_1())
             .children(props)
             .into_any_element()
@@ -1163,6 +1223,9 @@ impl BreakpointsTool {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if !SHOW_BREAKPOINT_EXTRAS {
+            return None;
+        }
         let (path, b, name) = self.edited(cx)?;
         let (line, enabled) = (b.line, b.enabled);
         let gap = || div().w(px(cell.w)).flex_shrink_0();

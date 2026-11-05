@@ -19,7 +19,7 @@ use std::rc::Rc;
 use gpui::{
     deferred, div, point, prelude::*, px, Action, AnyElement, App, Bounds, BoxShadow, Context,
     ElementId, Entity, EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle,
-    FontWeight, Pixels, Point, SharedString, Size, Subscription, TextRun, Window,
+    FontWeight, Hsla, Pixels, Point, SharedString, Size, Subscription, TextRun, Window,
 };
 
 /// What a data row runs when chosen.
@@ -32,6 +32,20 @@ pub struct MenuItem {
     pub enabled: bool,
     /// Runs instead of `action` (a row made from data, such as a branch).
     pub on_select: Option<SelectFn>,
+    /// An icon before the label (the gutter run icon's menu: Fleet's green
+    /// run and debug icons, twenty-fourth pass).
+    pub icon: Option<MenuIcon>,
+}
+
+/// A row's icon: an asset (`expui/run/run`) in `color`, 16 px at the row's
+/// left padding with the popup's 4 px gap to the label (twenty-fourth pass:
+/// the run icon's menu, label ink 20 px after the row's padding); the tui
+/// skin puts `glyph` in a cell of its own instead.
+#[derive(Clone)]
+pub struct MenuIcon {
+    pub path: SharedString,
+    pub color: Hsla,
+    pub glyph: &'static str,
 }
 
 pub enum MenuEntry {
@@ -42,6 +56,10 @@ pub enum MenuEntry {
         label: SharedString,
         entries: Vec<MenuEntry>,
     },
+    /// A line of help in `text.tertiary` closing the menu, never selected
+    /// (the gutter run icon's "⇧Click on icon to Run, ⌥Click to Debug",
+    /// right under the last row with no separator; twenty-fourth pass).
+    Hint(SharedString),
 }
 
 impl MenuEntry {
@@ -54,6 +72,7 @@ impl MenuEntry {
             action,
             enabled: true,
             on_select: None,
+            icon: None,
         }))
     }
 
@@ -68,6 +87,7 @@ impl MenuEntry {
             action: Box::new(PopupCancel),
             enabled: true,
             on_select: Some(Rc::new(f)),
+            icon: None,
         })
     }
 
@@ -88,6 +108,7 @@ impl MenuEntry {
             action: Box::new(PopupCancel),
             enabled: false,
             on_select: None,
+            icon: None,
         })
     }
 
@@ -106,8 +127,10 @@ impl MenuEntry {
                 action: i.action.boxed_clone(),
                 enabled: i.enabled,
                 on_select: i.on_select.clone(),
+                icon: i.icon.clone(),
             }),
             MenuEntry::Separator => MenuEntry::Separator,
+            MenuEntry::Hint(text) => MenuEntry::Hint(text.clone()),
             MenuEntry::Submenu { label, entries } => MenuEntry::Submenu {
                 label: label.clone(),
                 entries: entries.iter().map(MenuEntry::clone_entry).collect(),
@@ -118,7 +141,7 @@ impl MenuEntry {
     fn selectable(&self) -> bool {
         match self {
             MenuEntry::Item(i) => i.enabled,
-            MenuEntry::Separator => false,
+            MenuEntry::Separator | MenuEntry::Hint(_) => false,
             MenuEntry::Submenu { .. } => true,
         }
     }
@@ -333,6 +356,7 @@ impl ContextMenu {
         for e in self.entries.iter().take(ix) {
             y += match e {
                 MenuEntry::Separator => px(1. + 2. * m.menu_separator_pad),
+                MenuEntry::Hint(_) => px(m.menu_hint_height),
                 _ => px(m.menu_row_height),
             };
         }
@@ -381,6 +405,10 @@ impl ContextMenu {
             let w = match e {
                 MenuEntry::Item(i) => {
                     measure(&i.label)
+                        + i.icon
+                            .as_ref()
+                            .map(|_| px(m.icon_size + m.popup_row_icon_gap))
+                            .unwrap_or(px(0.))
                         + i.shortcut
                             .as_ref()
                             .map(|s| px(m.menu_shortcut_gap) + measure(s))
@@ -389,6 +417,7 @@ impl ContextMenu {
                 MenuEntry::Submenu { label, .. } => {
                     measure(label) + px(m.menu_shortcut_gap) + px(m.icon_size)
                 }
+                MenuEntry::Hint(text) => measure(text),
                 MenuEntry::Separator => px(0.),
             };
             widest = widest.max(w);
@@ -437,13 +466,35 @@ impl Render for ContextMenu {
                     .flex_shrink_0()
                     .bg(theme.popup_separator)
                     .into_any_element(),
+                // The hint sits on a row's 28 px line but its box ends
+                // `menu_hint_height` down, the line running into the
+                // padding (Fleet's menu ends 26.5 under the hint's top).
+                MenuEntry::Hint(text) => div()
+                    .id(ElementId::NamedInteger("menu-hint".into(), ix as u64))
+                    .h(px(m.menu_hint_height))
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .h(px(m.menu_row_height))
+                            .px(px(m.menu_row_pad_x))
+                            .flex()
+                            .items_center()
+                            .whitespace_nowrap()
+                            .text_color(theme.text_tertiary)
+                            .child(text.clone()),
+                    )
+                    .into_any_element(),
                 MenuEntry::Item(_) | MenuEntry::Submenu { .. } => {
-                    let (label, shortcut, enabled, submenu) = match entry {
-                        MenuEntry::Item(i) => {
-                            (i.label.clone(), i.shortcut.clone(), i.enabled, false)
-                        }
-                        MenuEntry::Submenu { label, .. } => (label.clone(), None, true, true),
-                        MenuEntry::Separator => unreachable!(),
+                    let (label, shortcut, enabled, submenu, row_icon) = match entry {
+                        MenuEntry::Item(i) => (
+                            i.label.clone(),
+                            i.shortcut.clone(),
+                            i.enabled,
+                            false,
+                            i.icon.clone(),
+                        ),
+                        MenuEntry::Submenu { label, .. } => (label.clone(), None, true, true, None),
+                        MenuEntry::Separator | MenuEntry::Hint(_) => unreachable!(),
                     };
                     let selected = self.selected == Some(ix);
                     let entity = entity.clone();
@@ -489,7 +540,15 @@ impl Render for ContextMenu {
                                     entity.update(cx, |this, cx| this.activate(ix, window, cx))
                                 })
                         })
-                        .child(div().flex_1().child(label))
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .gap(px(m.popup_row_icon_gap))
+                                .children(row_icon.map(|i| icon(&i.path, m.icon_size, i.color)))
+                                .child(label),
+                        )
                         .children(shortcut.map(|s| {
                             div()
                                 .flex_shrink_0()
@@ -575,12 +634,14 @@ impl ContextMenu {
             .map(|e| match e {
                 MenuEntry::Item(i) => {
                     2 + Cell::text_cols(&i.label)
+                        + i.icon.as_ref().map(|_| 2).unwrap_or(0)
                         + i.shortcut
                             .as_ref()
                             .map(|s| 3 + Cell::text_cols(s))
                             .unwrap_or(0)
                 }
                 MenuEntry::Submenu { label, .. } => 2 + Cell::text_cols(label) + 3,
+                MenuEntry::Hint(text) => 2 + Cell::text_cols(text),
                 MenuEntry::Separator => 0,
             })
             .max()
@@ -616,12 +677,31 @@ impl ContextMenu {
             .iter()
             .enumerate()
             .map(|(ix, entry)| {
-                let (label, shortcut, enabled, submenu) = match entry {
+                let (label, shortcut, enabled, submenu, row_icon) = match entry {
                     MenuEntry::Separator => {
                         return div().h(px(cell.h)).flex_shrink_0().into_any_element();
                     }
-                    MenuEntry::Item(i) => (i.label.clone(), i.shortcut.clone(), i.enabled, false),
-                    MenuEntry::Submenu { label, .. } => (label.clone(), None, true, true),
+                    // A dim row of its own, never selected.
+                    MenuEntry::Hint(text) => {
+                        return div()
+                            .h(px(cell.h))
+                            .w_full()
+                            .flex_shrink_0()
+                            .px(px(cell.w))
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .text_color(theme.text_tertiary)
+                            .child(text.clone())
+                            .into_any_element();
+                    }
+                    MenuEntry::Item(i) => (
+                        i.label.clone(),
+                        i.shortcut.clone(),
+                        i.enabled,
+                        false,
+                        i.icon.clone(),
+                    ),
+                    MenuEntry::Submenu { label, .. } => (label.clone(), None, true, true, None),
                 };
                 let selected = self.selected == Some(ix);
                 let entity = entity.clone();
@@ -667,6 +747,14 @@ impl ContextMenu {
                                 entity.update(cx, |this, cx| this.activate(ix, window, cx))
                             })
                     })
+                    // An icon is a glyph in its cell, then a blank cell.
+                    .children(row_icon.map(|i| {
+                        div()
+                            .flex_shrink_0()
+                            .w(cell.cols(2))
+                            .text_color(i.color)
+                            .child(i.glyph)
+                    }))
                     .child(div().flex_1().overflow_hidden().child(label))
                     .children(shortcut.map(|s| {
                         div()
@@ -747,5 +835,40 @@ impl ContextMenu {
                 .children(child),
         )
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hint_closes_a_menu_unselected() {
+        // The run icon's menu: two rows with icons, then the hint, which
+        // keyboard and pointer pass over.
+        let row = |label: &str| {
+            let mut entry = MenuEntry::custom(label.to_string(), |_, _| {});
+            if let MenuEntry::Item(item) = &mut entry {
+                item.icon = Some(MenuIcon {
+                    path: "weep/run-gutter".into(),
+                    color: gpui::black(),
+                    glyph: "▶",
+                });
+            }
+            entry
+        };
+        let entries = [
+            row("Run 'debug fixture'"),
+            row("Debug 'debug fixture'"),
+            MenuEntry::Hint("⇧Click on icon to Run, ⌥Click to Debug".into()),
+        ];
+        let selectable: Vec<bool> = entries.iter().map(MenuEntry::selectable).collect();
+        assert_eq!(selectable, [true, true, false]);
+        let copy = entries[2].clone_entry();
+        assert!(matches!(copy, MenuEntry::Hint(t) if t.starts_with("⇧Click")));
+        let copy = entries[0].clone_entry();
+        assert!(
+            matches!(copy, MenuEntry::Item(i) if i.icon.as_ref().is_some_and(|i| i.glyph == "▶"))
+        );
     }
 }

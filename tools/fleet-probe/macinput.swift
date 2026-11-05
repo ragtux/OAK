@@ -93,9 +93,13 @@ func typeText(_ text: String) {
     }
 }
 
+/// Modifiers held for the pointer events (`click [kind] [alt+shift] x y`).
+var mouseFlags: CGEventFlags = []
+
 func mouse(_ type: CGEventType, _ p: CGPoint, _ button: CGMouseButton = .left, clicks: Int64 = 1) {
     let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button)
     e?.setIntegerValueField(.mouseEventClickState, value: clicks)
+    e?.flags = mouseFlags
     post(e)
 }
 
@@ -191,6 +195,18 @@ case "drag":
 case "click":
     var rest = args[...]
     let kind = ["left", "right", "double"].contains(rest.first ?? "") ? rest.removeFirst() : "left"
+    if let mods = rest.first, Double(mods) == nil {
+        rest.removeFirst()
+        for m in mods.split(separator: "+") {
+            switch m {
+            case "cmd": mouseFlags.insert(.maskCommand)
+            case "ctrl": mouseFlags.insert(.maskControl)
+            case "alt": mouseFlags.insert(.maskAlternate)
+            case "shift": mouseFlags.insert(.maskShift)
+            default: fail("unknown modifier \(m)")
+            }
+        }
+    }
     let p = point(rest)
     mouse(.mouseMoved, p)
     if kind == "right" {

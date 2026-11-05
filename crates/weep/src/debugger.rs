@@ -698,11 +698,12 @@ impl DebugSession {
         }
     }
 
-    /// Whether a frame is library code, drawn dimmed in the Debug tool: no
-    /// file on disk, a file outside the workspace (the standard library,
-    /// a crate from the registry), or one the adapter marks `subtle` or
-    /// `deemphasize`. A session with no root counts every frame with a
-    /// file as the user's.
+    /// Whether a frame is library code, which a panic stop passes over to
+    /// select the user's frame (the Debug tool draws every frame alike, as
+    /// Fleet does: twenty-fourth pass): no file on disk, a file outside the
+    /// workspace (the standard library, a crate from the registry), or one
+    /// the adapter marks `subtle` or `deemphasize`. A session with no root
+    /// counts every frame with a file as the user's.
     pub fn is_library_frame(&self, frame: &StackFrame) -> bool {
         library_frame(frame, &self.workspace_roots)
     }

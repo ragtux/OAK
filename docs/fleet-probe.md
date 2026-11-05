@@ -1149,6 +1149,31 @@ debuggee's pty); `runInTerminal` launches lldb-dap itself as the launcher,
 and macOS refuses an attach to Xcode's signed binary, so only an ad-hoc
 signed copy works (the test does that; WEEP never asks for it).
 
+## Twenty-fourth pass: macOS, batch 13b (`debug-rest`) against Fleet (2026-11-05)
+
+The parts of M8 the earlier passes left unprobed, driven in Fleet 1.48 in
+stages (`attach`, the scene `tools/fleet-probe/scenes/debug-rest.json` collects
+the steps that worked; shots in `~/Library/Caches/weep-probe/out-debug-rest`),
+then the scene on WEEP. macinput's `click` now takes modifiers
+(`["click", "left", "alt"]`). Most of the twenty-third pass's estimates were
+wrong; WEEP now does what Fleet does:
+
+| element | Fleet | WEEP now |
+|---|---|---|
+| gutter run icon | a left click opens a menu under the icon's row (box 396..669.5 x 126.5..215 for the icon ink 400..409 x 112.5..123): "Run '<name>'" with the green run icon and ⇧⌘R (`run/run-in-context`), "Debug '<name>'" with the green bug and ⌥⌘R (`debug/debug-in-context`), 28 px rows, then "⇧Click on icon to Run, ⌥Click to Debug" in `text.tertiary` with no rule (box ends 18.5 under its top); Shift+click runs, Alt+click debugs; a right click does nothing. The same on run.json rows and on Smart Mode's `fn main` (a generated "run debuggee") | the same (`RUN_ICON_MENU_DX`/`DY`, `MENU_HINT_HEIGHT`; menu.rs's row icons and hint row); run icons in Rust sources still missing |
+| Alt+click while stopped | adds a caret ("2 carets"); no quick evaluate; Go to Action offers no `quick-evaluate-expression-with-click` | Alt+click always adds a caret; the action is unbound |
+| quick evaluate | Go to Action lists "Quick Evaluate Expression ⌥⌘E" only with the editor focused; run on `total` it shows nothing within 3 s | WEEP's popup stays (an estimate) |
+| editor menu while stopped | no debugger rows | unchanged (none) |
+| library frames | not dimmed: every frame row (220,221,224) | dimming removed |
+| Breakpoints tool | line breakpoints only; selecting a row shows nothing more; a double-click puts the caret on the line in the editor; a right click: "Remove Breakpoint ⌫", "Disable Breakpoint" | extras hidden (`SHOW_BREAKPOINT_EXTRAS`), the row menu added, double-click as Fleet's |
+| gutter breakpoint with Alt or Shift | toggles as a plain click | the same |
+| empty Breakpoints tool | a block left at 997.5 in the 912..1272 island, centred under the tab row: an 18 px ring (24 box) in `icon.primary`, "Breakpoints" in 14.67 px semibold `text.primary`, "Click on the line numbers in / Editor to toggle breakpoints" in 13 px `text.tertiary` on 16 px lines | `empty_state.rs`, `EMPTY_TOOL_*`; ring top 379.5 in both after `EMPTY_TOOL_DROP` 3.5 |
+| empty Debug tool | the same form: Fleet's bug, "Debug", "Create new or run existing / configuration to debug your / code", a 24 px `button.secondary` "Run & Debug ⌘R"; shown again once the debuggee has exited (the Processes list empties) | the same, WEEP's own bug drawing; the tool shows it once every session has ended |
+| Rust panic | Fleet does not stop: the panic report prints and the process exits | the panic breakpoint stays off by default |
+
+WEEP's replay also showed a row tooltip drawn over the Breakpoints tool's
+context menu; tooltips now draw nothing while a menu is open.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

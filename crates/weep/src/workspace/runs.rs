@@ -9,8 +9,8 @@
 
 use super::*;
 use crate::debugger::DebugSession;
-use crate::menu::MenuEntry;
-use crate::run_popup::{GutterRunRow, RunPopup, RunPopupEvent};
+use crate::menu::{MenuEntry, MenuIcon};
+use crate::run_popup::{GutterClick, GutterRunRow, RunPopup, RunPopupEvent};
 use crate::run_tool::{RunView, RunViewEvent};
 use weep_run::{Command, RunConfig, RunFile};
 
@@ -205,27 +205,54 @@ impl Workspace {
         }
     }
 
-    /// M8: a right click on a gutter run icon: a menu with Run and, where
-    /// WEEP can debug the row, Debug on configuration `ix`
-    /// (`run_popup::gutter_run_rows`); Debug starts the session as the
-    /// popup's Debug does.
-    pub(super) fn run_icon_menu(
+    /// M8: a left click on a gutter run icon (twenty-fourth pass): Shift
+    /// runs configuration `ix`, Alt debugs it where WEEP can, a plain click
+    /// opens the icon's menu at `anchor` (`run_popup::gutter_click`).
+    pub(super) fn run_icon_click(
         &mut self,
         editor: &Entity<EditorView>,
         ix: usize,
-        position: Point<Pixels>,
+        anchor: Point<Pixels>,
+        shift: bool,
+        alt: bool,
         cx: &mut Context<Self>,
     ) {
         let configs = self.run_configurations_or_notify(cx);
         let Some(config) = configs.get(ix) else {
             return;
         };
+        match crate::run_popup::gutter_click(shift, alt, &config.kind) {
+            GutterClick::Run => self.run_configuration_at(ix, cx),
+            GutterClick::Debug => self.debug_configuration_at(ix, cx),
+            GutterClick::Menu => {
+                let (name, kind) = (config.name.clone(), config.kind.clone());
+                self.run_icon_menu(editor, ix, &name, &kind, anchor, cx)
+            }
+        }
+    }
+
+    /// The run icon's menu: "Run 'name'" and, where WEEP can debug the row,
+    /// "Debug 'name'", each with its green icon and its in-context chord,
+    /// then Fleet's hint line; Debug starts the session as the popup's
+    /// Debug does.
+    fn run_icon_menu(
+        &mut self,
+        editor: &Entity<EditorView>,
+        ix: usize,
+        name: &str,
+        kind: &str,
+        anchor: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         let entity = cx.entity();
-        let entries = crate::run_popup::gutter_run_rows(&config.kind)
+        let green = cx.global::<Theme>().icon_green;
+        let rows = crate::run_popup::gutter_run_rows(kind);
+        let debug = rows.contains(&GutterRunRow::Debug);
+        let mut entries: Vec<MenuEntry> = rows
             .into_iter()
             .map(|row| {
                 let entity = entity.clone();
-                let mut entry = MenuEntry::custom(row.label(&config.name), move |_, cx| {
+                let mut entry = MenuEntry::custom(row.label(name), move |_, cx| {
                     entity.update(cx, |this, cx| match row {
                         GutterRunRow::Run => this.run_configuration_at(ix, cx),
                         GutterRunRow::Debug => this.debug_configuration_at(ix, cx),
@@ -233,12 +260,21 @@ impl Workspace {
                 });
                 if let MenuEntry::Item(item) = &mut entry {
                     item.shortcut = crate::keymap::hint_for(cx, row.chord_action()).map(Into::into);
+                    let (path, glyph) = row.icon();
+                    item.icon = Some(MenuIcon {
+                        path: path.into(),
+                        color: green,
+                        glyph,
+                    });
                 }
                 entry
             })
             .collect();
+        entries.push(MenuEntry::Hint(
+            crate::run_popup::gutter_run_hint(debug, weep_keymap::Platform::current()).into(),
+        ));
         let focus = editor.read(cx).focus_handle(cx);
-        self.open_menu(entries, position, Some(focus), cx);
+        self.open_menu(entries, anchor, Some(focus), cx);
     }
 
     // ---- actions -----------------------------------------------------------------

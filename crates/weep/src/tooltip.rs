@@ -224,8 +224,18 @@ fn gpui_origin(
     )
 }
 
+/// Set while a context menu is open: tooltips draw nothing then, as in
+/// Fleet, where the row a menu was opened on shows no tooltip over the menu
+/// (debug-rest replay: the Breakpoints tool row's tooltip covered its menu).
+pub struct MenuShown(pub bool);
+
+impl gpui::Global for MenuShown {}
+
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if cx.try_global::<MenuShown>().is_some_and(|m| m.0) {
+            return div().into_any_element();
+        }
         if crate::skin::Skin::current(cx) == crate::skin::Skin::Tui {
             return self.render_tui(window, cx);
         }

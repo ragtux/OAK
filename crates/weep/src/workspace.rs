@@ -1003,10 +1003,12 @@ impl Workspace {
                     let path = editor.read(cx).path(cx);
                     this.open_changed_files(path, cx);
                 }
-                EditorEvent::RunConfiguration(ix) => this.run_configuration_at(*ix, cx),
-                EditorEvent::RunIconMenu { position, config } => {
-                    this.run_icon_menu(&editor, *config, *position, cx)
-                }
+                EditorEvent::RunIcon {
+                    config,
+                    anchor,
+                    shift,
+                    alt,
+                } => this.run_icon_click(&editor, *config, *anchor, *shift, *alt, cx),
                 EditorEvent::CloseInterline
                 | EditorEvent::Completion { .. }
                 | EditorEvent::SignatureHelp
@@ -4479,13 +4481,6 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::debug_drop_frame))
             .on_action(cx.listener(Self::debugger_attach_to_process))
             .on_action(cx.listener(Self::debug_quick_evaluate))
-            // The Alt+click's action (editor.rs puts the caret on the
-            // clicked expression first): the same popup.
-            .on_action(cx.listener(
-                |this, _: &DebugQuickEvaluateExpressionWithClick, window, cx| {
-                    this.debug_quick_evaluate(&DebugQuickEvaluateExpression, window, cx)
-                },
-            ))
             .on_action(cx.listener(Self::debug_jump_to_tool))
             .on_action(cx.listener(Self::debug_new_tool))
             .on_action(cx.listener(Self::debug_breakpoints_jump_to_tool))

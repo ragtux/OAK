@@ -264,9 +264,6 @@ actions!(
         DebugDeleteWatch,
         DebugDropFrame,
         DebugQuickEvaluateExpression,
-        // An Alt+click on an expression while stopped (`editor.rs`): the
-        // id has no chord in Fleet's keymaps, it is a mouse gesture.
-        DebugQuickEvaluateExpressionWithClick,
         DebugJumpToTool,
         DebugNewTool,
         DebugBreakpointsJumpToTool,
