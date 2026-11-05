@@ -1,6 +1,7 @@
 WEEP's own icon drawings (MIT, like the rest of WEEP): panel toggles, the tools
 grid, the terminal, the collaboration mark, the git branch, the logo, the
-file-type monograms, the gutter's run triangle, the status badge's check, the find bar's up and down arrows, the
+file-type monograms, the gutter's run triangle, the status badge's check, the find bar's up and down arrows and its
+Aa, W and .* toggles, the
 problems widget's sliders and its error mark (a circle and an exclamation,
 painted in two colours). Drawn on the same 16-unit grid with 1 px strokes as the
 expui set beside them, so the two mix in one toolbar. `weep.ico`, the Windows

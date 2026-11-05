@@ -1410,13 +1410,23 @@ impl GotoPanel {
                     .pl(px(m.goto_pad))
                     .child(div().flex_1().min_w_0().h_full().child(self.input.clone()))
                     .when(text_search, |d| {
-                        d.child(toggle("goto-case", "Aa", self.search.case_sensitive, 0))
-                            .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                            .child(toggle("goto-word", "W", self.search.whole_word, 1))
-                            .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                            .child(toggle("goto-regex", ".*", self.search.regex, 2))
-                            .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                            .child(replace_toggle)
+                        d.child(toggle(
+                            "goto-case",
+                            "weep/match-case",
+                            self.search.case_sensitive,
+                            0,
+                        ))
+                        .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
+                        .child(toggle(
+                            "goto-word",
+                            "weep/whole-word",
+                            self.search.whole_word,
+                            1,
+                        ))
+                        .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
+                        .child(toggle("goto-regex", "weep/regex", self.search.regex, 2))
+                        .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
+                        .child(replace_toggle)
                     }),
             )
     }

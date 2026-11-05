@@ -734,38 +734,10 @@ impl Render for FindBar {
             theme.text_tertiary
         };
         let toggle =
-            |id: &'static str, label: &'static str, on: bool, which: Toggle, stop: Stop| {
+            |id: &'static str, glyph: &'static str, on: bool, which: Toggle, stop: Stop| {
                 let entity = entity.clone();
-                let focused = ring == Some(stop);
-                div()
-                    .id(id)
-                    .w(px(m.find_bar_toggle))
-                    .h(px(m.find_bar_toggle))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(m.button_radius))
-                    .cursor_pointer()
-                    .border_1()
-                    .map(|d| {
-                        if on {
-                            d.bg(theme.toggle_on_bg)
-                                .border_color(theme.toggle_on_border)
-                                .text_color(theme.toggle_on_text)
-                                .hover(|s| s.bg(theme.toggle_on_bg_hovered))
-                        } else {
-                            d.bg(theme.toggle_off_bg)
-                                .border_color(gpui::transparent_black())
-                                .text_color(theme.toggle_off_text)
-                                .hover(|s| {
-                                    s.bg(theme.toggle_off_bg_hovered)
-                                        .text_color(theme.toggle_off_text_hovered)
-                                })
-                                .active(|s| s.bg(theme.toggle_off_bg_pressed))
-                        }
-                    })
-                    .when(focused, |d| {
+                crate::search_tool::toggle_button(id, glyph, on, &theme, &m)
+                    .when(ring == Some(stop), |d| {
                         d.border_color(if on {
                             theme.toggle_on_focus_border
                         } else {
@@ -773,7 +745,6 @@ impl Render for FindBar {
                         })
                     })
                     .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.toggle(which, cx)))
-                    .child(label)
             };
         let chevron = {
             let entity = entity.clone();
@@ -856,7 +827,7 @@ impl Render for FindBar {
                 .child(div().w(px(m.find_bar_separator_gap_right)).flex_shrink_0())
                 .child(toggle(
                     "find-case",
-                    "Aa",
+                    "weep/match-case",
                     self.case_sensitive,
                     Toggle::Case,
                     Stop::Case,
@@ -864,7 +835,7 @@ impl Render for FindBar {
                 .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
                 .child(toggle(
                     "find-word",
-                    "W",
+                    "weep/whole-word",
                     self.whole_word,
                     Toggle::Word,
                     Stop::Word,
@@ -872,7 +843,7 @@ impl Render for FindBar {
                 .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
                 .child(toggle(
                     "find-regex",
-                    ".*",
+                    "weep/regex",
                     self.regex,
                     Toggle::Regex,
                     Stop::Regex,

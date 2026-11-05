@@ -606,14 +606,22 @@ impl SearchTool {
     }
 }
 
-/// A 20 px toggle button, as the find bar's.
+/// A 20 px toggle button, as the find bar's, holding a 16 px glyph: Fleet's
+/// Aa, W and .* are drawings on the icon grid with 1 px strokes, not text
+/// (the A 9 wide where Inter's is 8 at the same height; seventeenth pass),
+/// hence WEEP's own `weep/match-case`, `weep/whole-word` and `weep/regex`.
 pub fn toggle_button(
     id: &'static str,
-    label: &'static str,
+    glyph: &'static str,
     on: bool,
     theme: &Theme,
     m: &Metrics,
 ) -> Stateful<Div> {
+    let (color, hovered) = if on {
+        (theme.toggle_on_text, theme.toggle_on_text)
+    } else {
+        (theme.toggle_off_text, theme.toggle_off_text_hovered)
+    };
     div()
         .id(id)
         .w(px(m.find_bar_toggle))
@@ -625,24 +633,20 @@ pub fn toggle_button(
         .rounded(px(m.button_radius))
         .cursor_pointer()
         .border_1()
+        .group(id)
         .map(|d| {
             if on {
                 d.bg(theme.toggle_on_bg)
                     .border_color(theme.toggle_on_border)
-                    .text_color(theme.toggle_on_text)
                     .hover(|s| s.bg(theme.toggle_on_bg_hovered))
             } else {
                 d.bg(theme.toggle_off_bg)
                     .border_color(gpui::transparent_black())
-                    .text_color(theme.toggle_off_text)
-                    .hover(|s| {
-                        s.bg(theme.toggle_off_bg_hovered)
-                            .text_color(theme.toggle_off_text_hovered)
-                    })
+                    .hover(|s| s.bg(theme.toggle_off_bg_hovered))
                     .active(|s| s.bg(theme.toggle_off_bg_pressed))
             }
         })
-        .child(label)
+        .child(icon(glyph, m.icon_size, color).group_hover(id, move |s| s.text_color(hovered)))
 }
 
 /// A field's frame with the focus ring (batch 5's find field).
@@ -728,14 +732,24 @@ impl Render for SearchTool {
                     .child(div().w(px(m.find_bar_separator_gap_left)).flex_shrink_0())
                     .child(toggle(
                         "search-case",
-                        "Aa",
+                        "weep/match-case",
                         self.case_sensitive,
                         Toggle::Case,
                     ))
                     .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                    .child(toggle("search-word", "W", self.whole_word, Toggle::Word))
+                    .child(toggle(
+                        "search-word",
+                        "weep/whole-word",
+                        self.whole_word,
+                        Toggle::Word,
+                    ))
                     .child(div().w(px(m.find_bar_toggle_gap)).flex_shrink_0())
-                    .child(toggle("search-regex", ".*", self.regex, Toggle::Regex)),
+                    .child(toggle(
+                        "search-regex",
+                        "weep/regex",
+                        self.regex,
+                        Toggle::Regex,
+                    )),
             );
         let replace_row = self.replace_mode.then(|| {
             let all = entity.clone();
