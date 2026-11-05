@@ -13,7 +13,9 @@
 //! `Document::edit`): each sits on its line's start, so lines inserted or
 //! deleted above move it, and it goes away with its line when an edit
 //! deletes the line's whole text together with a line break
-//! ([`follow_edits`]). A workspace keeps its breakpoints across launches in
+//! ([`follow`]); undoing that edit brings it back ([`Removed`], kept by the
+//! document), and a move-line carries it with its text. A workspace keeps
+//! its breakpoints and exception breakpoints across launches in
 //! `layout.json` ([`persist`]).
 
 use crate::actions::{DebugBreakpointsJumpToTool, PopupCancel};
@@ -32,6 +34,9 @@ pub struct LineBreakpoint {
     pub enabled: bool,
     pub condition: Option<String>,
     pub log_message: Option<String>,
+    /// DAP's `hitCondition` (IntelliJ's pass count): the adapter stops on
+    /// the hit it names. Estimate: no probe has seen Fleet's editor for it.
+    pub hit_condition: Option<String>,
     /// The running session's verdict: `None` with no session or before the
     /// adapter answered, `Some(false)` when it could not bind the line.
     pub verified: Option<bool>,
@@ -44,6 +49,7 @@ impl LineBreakpoint {
             enabled: true,
             condition: None,
             log_message: None,
+            hit_condition: None,
             verified: None,
         }
     }
@@ -59,20 +65,53 @@ impl LineBreakpoint {
         }
     }
 
-    /// The gutter tooltip's title and detail (the condition or the log
-    /// message). Estimate: IntelliJ's wording; no probe has hovered one.
+    /// The gutter tooltip's title and detail (the condition, the log
+    /// message and the hit count that are set, in that order). Estimate:
+    /// IntelliJ's wording; no probe has hovered one.
     pub fn tooltip(&self) -> (String, Option<String>) {
         let title = match self.look() {
             Look::Enabled => "Line breakpoint",
             Look::Disabled => "Line breakpoint (disabled)",
             Look::Unverified => "Line breakpoint (not verified)",
         };
-        let detail = match (&self.condition, &self.log_message) {
-            (Some(c), _) if !c.is_empty() => Some(format!("Condition: {c}")),
-            (_, Some(l)) if !l.is_empty() => Some(format!("Log: {l}")),
-            _ => None,
-        };
+        let set = |v: &Option<String>| v.clone().filter(|s| !s.trim().is_empty());
+        let parts: Vec<String> = [
+            set(&self.condition).map(|c| format!("Condition: {c}")),
+            set(&self.log_message).map(|l| format!("Log: {l}")),
+            set(&self.hit_condition).map(|h| format!("Hit count: {h}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let detail = (!parts.is_empty()).then(|| parts.join(", "));
         (title.to_string(), detail)
+    }
+
+    /// What the Breakpoints tool's fields edit, as the user typed them
+    /// (`None` for an empty field).
+    pub fn properties(&self) -> Properties {
+        Properties {
+            enabled: self.enabled,
+            condition: self.condition.clone(),
+            log_message: self.log_message.clone(),
+            hit_condition: self.hit_condition.clone(),
+        }
+    }
+}
+
+/// A line breakpoint's settings the Breakpoints tool edits.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Properties {
+    pub enabled: bool,
+    pub condition: Option<String>,
+    pub log_message: Option<String>,
+    pub hit_condition: Option<String>,
+}
+
+impl Properties {
+    /// A field's text as a property: blank is unset.
+    pub fn field(text: &str) -> Option<String> {
+        (!text.trim().is_empty()).then(|| text.to_string())
     }
 }
 
@@ -92,11 +131,33 @@ pub enum Look {
 pub enum BreakpointsEvent {
     /// A file's breakpoints changed (added, removed, enabled, moved).
     Changed(PathBuf),
+    /// An exception breakpoint was enabled or disabled, or an adapter
+    /// offered new ones ([`BreakpointStore::exception_breakpoints`]).
+    ExceptionsChanged,
 }
+
+/// An exception breakpoint: a DAP `exceptionBreakpointFilters` entry the
+/// adapter offered, or WEEP's own [`RUST_PANIC`] (sent as a function
+/// breakpoint on `rust_panic`, which lldb-dap has no filter for). Shown in
+/// the Breakpoints tool; kept per workspace in `layout.json`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExceptionBreakpoint {
+    /// The adapter's `filter` id (or [`RUST_PANIC`]).
+    pub filter: String,
+    /// The adapter's `label`, as the Breakpoints tool shows it.
+    pub label: String,
+    pub enabled: bool,
+}
+
+/// WEEP's exception breakpoint for Rust panics.
+pub const RUST_PANIC: &str = "rust_panic";
 
 #[derive(Default)]
 pub struct BreakpointStore {
     files: BTreeMap<PathBuf, Vec<LineBreakpoint>>,
+    /// The exception breakpoints known so far ([`RUST_PANIC`] first, then
+    /// every adapter's filters as sessions report them).
+    exceptions: Vec<ExceptionBreakpoint>,
 }
 
 impl EventEmitter<BreakpointsEvent> for BreakpointStore {}
@@ -107,7 +168,15 @@ impl Global for GlobalBreakpoints {}
 
 impl BreakpointStore {
     pub fn init(cx: &mut App) {
-        let store = cx.new(|_| BreakpointStore::default());
+        let store = cx.new(|_| BreakpointStore {
+            exceptions: vec![ExceptionBreakpoint {
+                filter: RUST_PANIC.to_string(),
+                // Estimate: codelldb's label for its Rust panic filter.
+                label: "Rust: on panic".to_string(),
+                enabled: false,
+            }],
+            ..BreakpointStore::default()
+        });
         cx.set_global(GlobalBreakpoints(store));
     }
 
@@ -118,6 +187,65 @@ impl BreakpointStore {
     /// The store, when the app made one (a document outside the app has none).
     pub fn try_global(cx: &App) -> Option<Entity<BreakpointStore>> {
         cx.try_global::<GlobalBreakpoints>().map(|g| g.0.clone())
+    }
+
+    /// The exception breakpoints, [`RUST_PANIC`] first.
+    pub fn exception_breakpoints(&self) -> &[ExceptionBreakpoint] {
+        &self.exceptions
+    }
+
+    /// The `filter` ids to send with `setExceptionBreakpoints` (or, for
+    /// [`RUST_PANIC`], as a function breakpoint): the enabled ones.
+    pub fn enabled_exception_filters(&self) -> Vec<String> {
+        self.exceptions
+            .iter()
+            .filter(|e| e.enabled)
+            .map(|e| e.filter.clone())
+            .collect()
+    }
+
+    /// Enables or disables an exception breakpoint by its filter id.
+    pub fn set_exception_enabled(&mut self, filter: &str, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(e) = self.exceptions.iter_mut().find(|e| e.filter == filter) {
+            if e.enabled != enabled {
+                e.enabled = enabled;
+                cx.emit(BreakpointsEvent::ExceptionsChanged);
+                cx.notify();
+            }
+        }
+    }
+
+    /// A session's adapter offers these filters (`filter`, `label`, the
+    /// adapter's `default`): unknown ones are added with their default,
+    /// known ones keep the user's choice and take the adapter's label.
+    pub fn offer_exception_filters(
+        &mut self,
+        filters: Vec<(String, String, bool)>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        for (filter, label, default) in filters {
+            match self.exceptions.iter_mut().find(|e| e.filter == filter) {
+                Some(e) => {
+                    if e.label != label {
+                        e.label = label;
+                        changed = true;
+                    }
+                }
+                None => {
+                    self.exceptions.push(ExceptionBreakpoint {
+                        filter,
+                        label,
+                        enabled: default,
+                    });
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            cx.emit(BreakpointsEvent::ExceptionsChanged);
+            cx.notify();
+        }
     }
 
     /// `debug/toggle-enabled-breakpoint`: enables a disabled breakpoint and
@@ -176,6 +304,57 @@ impl BreakpointStore {
                 cx.emit(BreakpointsEvent::Changed(path.to_path_buf()));
                 cx.notify();
             }
+        }
+    }
+
+    /// Sets the breakpoint on `line`'s enabled state, condition, log message
+    /// and hit count (the Breakpoints tool's fields); emits `Changed` when
+    /// one differs, so a session sends the file's list again.
+    pub fn set_properties(
+        &mut self,
+        path: &Path,
+        line: usize,
+        properties: Properties,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(b) = self
+            .files
+            .get_mut(path)
+            .and_then(|l| l.iter_mut().find(|b| b.line == line))
+        {
+            if b.properties() != properties {
+                b.enabled = properties.enabled;
+                b.condition = properties.condition;
+                b.log_message = properties.log_message;
+                b.hit_condition = properties.hit_condition;
+                cx.emit(BreakpointsEvent::Changed(path.to_path_buf()));
+                cx.notify();
+            }
+        }
+    }
+
+    /// The exception breakpoints `layout.json` kept: known filters take the
+    /// saved choice (and keep their label), unknown ones (an adapter of an
+    /// earlier launch offered them) come back as saved.
+    pub fn restore_exceptions(&mut self, saved: &[ExceptionBreakpoint], cx: &mut Context<Self>) {
+        let mut changed = false;
+        for s in saved {
+            match self.exceptions.iter_mut().find(|e| e.filter == s.filter) {
+                Some(e) => {
+                    if e.enabled != s.enabled {
+                        e.enabled = s.enabled;
+                        changed = true;
+                    }
+                }
+                None => {
+                    self.exceptions.push(s.clone());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            cx.emit(BreakpointsEvent::ExceptionsChanged);
+            cx.notify();
         }
     }
 
@@ -334,10 +513,36 @@ pub fn normalized(mut list: Vec<LineBreakpoint>) -> Vec<LineBreakpoint> {
 
 // ---- following the edits ---------------------------------------------------------
 
-/// Moves breakpoint lines through `edits`. Each line is given as the char
-/// span of its text (without the line break) before the edits; the answer
-/// is the char offset its start lands on, or `None` when an edit deleted
-/// the line.
+/// [`follow`] for several lines, as offsets only (the tests' view).
+#[cfg(test)]
+fn follow_edits(spans: &[Range<usize>], edits: &[Edit]) -> Vec<Option<usize>> {
+    spans
+        .iter()
+        .map(|span| match follow(span, edits) {
+            Followed::At { start, .. } => Some(start),
+            Followed::Deleted { .. } => None,
+        })
+        .collect()
+}
+
+/// Where one line went through some edits ([`follow`]'s rule).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Followed {
+    /// Its start's offset after the edits, and the text of the last
+    /// replacement that held the whole line (offsets after the edits): the
+    /// line may sit elsewhere in it.
+    At {
+        start: usize,
+        replaced: Option<Range<usize>>,
+    },
+    /// An edit deleted it: undoing that edit puts the text back at `anchor`
+    /// (moved through the edits after it), the line `distance` chars in.
+    Deleted { anchor: usize, distance: usize },
+}
+
+/// Moves a breakpoint's line through `edits`. The line is given as the
+/// char span of its text (without the line break) before the edits; the
+/// answer is where its start lands, or that an edit deleted the line.
 ///
 /// The rule: a line sits on its start. An insertion at or before the start
 /// pushes it on (Enter at column 0 moves the breakpoint down with the
@@ -348,43 +553,54 @@ pub fn normalized(mut list: Vec<LineBreakpoint>) -> Vec<LineBreakpoint> {
 /// line joined to the one above (backspace at its start) takes its
 /// breakpoint along, merging with one already there. A replacement keeps
 /// the start's distance into the replaced range, clamped to the new text (a
-/// reload from disk keeps the offset).
-pub fn follow_edits(spans: &[Range<usize>], edits: &[Edit]) -> Vec<Option<usize>> {
-    spans
-        .iter()
-        .map(|span| {
-            let (mut s, mut t) = (span.start, span.end);
-            for e in edits {
-                let (o, n, m) = (e.offset, e.old_len, e.new_len);
-                if n == 0 {
-                    if s >= o {
-                        s += m;
-                    }
-                    if t >= o {
-                        t += m;
-                    }
-                } else {
-                    let end = o + n;
-                    if m == 0 && o <= s && t <= end && (o < s || end > t) {
-                        return None;
-                    }
-                    let map = |p: usize| {
-                        if p <= o {
-                            p
-                        } else if p >= end {
-                            p - n + m
-                        } else {
-                            o + (p - o).min(m)
-                        }
-                    };
-                    s = map(s);
-                    t = map(t);
-                }
-                t = t.max(s);
+/// reload from disk keeps the offset); [`Tracked`] then looks for the line's
+/// own text in the replacement ([`Followed::At`]'s `replaced`), so lines a
+/// move-line swapped carry their breakpoints.
+fn follow(span: &Range<usize>, edits: &[Edit]) -> Followed {
+    let (mut s, mut t) = (span.start, span.end);
+    let mut replaced: Option<Range<usize>> = None;
+    for (ix, e) in edits.iter().enumerate() {
+        let (o, n, m) = (e.offset, e.old_len, e.new_len);
+        if n == 0 {
+            if s >= o {
+                s += m;
             }
-            Some(s)
-        })
-        .collect()
+            if t >= o {
+                t += m;
+            }
+        } else {
+            let end = o + n;
+            if m == 0 && o <= s && t <= end && (o < s || end > t) {
+                let anchor = edits[ix + 1..].iter().fold(o, |p, e| e.adjust(p));
+                return Followed::Deleted {
+                    anchor,
+                    distance: s - o,
+                };
+            }
+            let covered = m > 0 && o <= s && t <= end;
+            let map = |p: usize| {
+                if p <= o {
+                    p
+                } else if p >= end {
+                    p - n + m
+                } else {
+                    o + (p - o).min(m)
+                }
+            };
+            s = map(s);
+            t = map(t);
+            if covered {
+                replaced = Some(o..o + m);
+                t = t.max(s);
+                continue;
+            }
+        }
+        if let Some(r) = replaced.as_mut() {
+            *r = e.adjust(r.start)..e.adjust(r.end);
+        }
+        t = t.max(s);
+    }
+    Followed::At { start: s, replaced }
 }
 
 /// Line `line`'s text as a char span (the last line for one past the end).
@@ -394,62 +610,188 @@ fn line_span(buffer: &Buffer, line: usize) -> Range<usize> {
     start..start + buffer.line_len(row)
 }
 
+/// The row nearest `near` whose text is `text` among the rows starting in
+/// `region` (char offsets of `buffer`).
+fn find_line(buffer: &Buffer, region: &Range<usize>, text: &str, near: usize) -> Option<usize> {
+    let len = buffer.len_chars();
+    let (from, to) = (region.start.min(len), region.end.min(len));
+    let first = buffer.offset_to_point(from).row;
+    let last = buffer.offset_to_point(to).row;
+    (first..=last)
+        .filter(|&r| {
+            let at = buffer.line_to_char(r);
+            from <= at && (at < to || from == to) && buffer.line(r) == text
+        })
+        .min_by_key(|&r| r.abs_diff(near))
+}
+
+/// The breakpoints edits deleted with their lines, kept per document
+/// (`Document` holds one) until the undo step that deleted them is undone,
+/// which brings them back, or that step leaves the undo stack.
+#[derive(Clone, Debug, Default)]
+pub struct Removed {
+    entries: Vec<RemovedBreakpoint>,
+}
+
+#[derive(Clone, Debug)]
+struct RemovedBreakpoint {
+    breakpoint: LineBreakpoint,
+    /// Where the deleted text was, moved through the edits since.
+    anchor: usize,
+    /// The line's start past `anchor` once the text is back.
+    distance: usize,
+    /// The line's text, checked before it comes back.
+    text: String,
+    /// The undo step that deleted it (its index in the buffer's undo stack).
+    step: usize,
+}
+
+impl Removed {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// A file's breakpoints as they stood before an edit, moved through it by
+/// [`moved_through`].
+struct Before {
+    list: Vec<LineBreakpoint>,
+    spans: Vec<Range<usize>>,
+    /// Each line's text, to find it again inside a replacement.
+    texts: Vec<String>,
+    version: u64,
+    /// The buffer's undo depth: one less afterwards means an undo.
+    depth: usize,
+}
+
+impl Before {
+    fn take(list: Vec<LineBreakpoint>, buffer: &Buffer) -> Before {
+        let rows = buffer.line_count();
+        Before {
+            spans: list.iter().map(|b| line_span(buffer, b.line)).collect(),
+            texts: list
+                .iter()
+                .map(|b| {
+                    if b.line < rows {
+                        buffer.line(b.line)
+                    } else {
+                        String::new()
+                    }
+                })
+                .collect(),
+            list,
+            version: buffer.version(),
+            depth: buffer.undo_depth(),
+        }
+    }
+}
+
+/// The list after the edits `buffer` made since `before`: lines moved,
+/// deleted ones kept in `removed` under the step that deleted them, and,
+/// when the edit was the undo of a step, the breakpoints that step deleted
+/// back on their lines.
+fn moved_through(before: Before, buffer: &Buffer, removed: &mut Removed) -> Vec<LineBreakpoint> {
+    let depth = buffer.undo_depth();
+    let Some(edits) = buffer.edits_since(before.version) else {
+        // Too many edits for the log: the lines stay, within the text.
+        removed.entries.clear();
+        let last = buffer.line_count().saturating_sub(1);
+        return before
+            .list
+            .into_iter()
+            .map(|b| LineBreakpoint {
+                line: b.line.min(last),
+                ..b
+            })
+            .collect();
+    };
+    for r in &mut removed.entries {
+        r.anchor = edits.iter().fold(r.anchor, |p, e| e.adjust(p));
+    }
+    let mut moved = Vec::with_capacity(before.list.len());
+    let mut deleted = Vec::new();
+    let lines = before.list.into_iter().zip(before.spans).zip(before.texts);
+    for ((b, span), text) in lines {
+        match follow(&span, &edits) {
+            Followed::At { start, replaced } => {
+                let mut row = buffer.offset_to_point(start).row;
+                if let Some(region) = replaced.filter(|_| buffer.line(row) != text) {
+                    row = find_line(buffer, &region, &text, row).unwrap_or(row);
+                }
+                moved.push(LineBreakpoint { line: row, ..b });
+            }
+            Followed::Deleted { anchor, distance } => deleted.push(RemovedBreakpoint {
+                breakpoint: b,
+                anchor,
+                distance,
+                text,
+                step: depth.saturating_sub(1),
+            }),
+        }
+    }
+    if depth + 1 == before.depth {
+        // The undo of step `depth`: what it deleted comes back where the
+        // text did, if the line reads as it did.
+        let len = buffer.len_chars();
+        for r in removed.entries.iter().filter(|r| r.step == depth) {
+            let start = r.anchor + r.distance;
+            if start > len {
+                continue;
+            }
+            let at = buffer.offset_to_point(start);
+            if at.column == 0 && buffer.line(at.row) == r.text {
+                moved.push(LineBreakpoint {
+                    line: at.row,
+                    verified: None,
+                    ..r.breakpoint.clone()
+                });
+            }
+        }
+    }
+    // Steps no longer on the undo stack take their breakpoints with them; a
+    // line the undo itself deleted is not kept (a redo does not bring it).
+    removed.entries.retain(|r| r.step < depth);
+    if depth + 1 != before.depth && depth > 0 {
+        removed.entries.extend(deleted);
+    }
+    moved
+}
+
 /// A document's breakpoints taken before an edit (`Document::edit`), to be
 /// moved through it afterwards.
 pub struct Tracked {
     store: Entity<BreakpointStore>,
     path: PathBuf,
-    list: Vec<LineBreakpoint>,
-    spans: Vec<Range<usize>>,
-    version: u64,
+    before: Before,
 }
 
 impl Tracked {
     /// The file's breakpoints and their lines' spans in `buffer`; `None`
-    /// for a file without any (or a document with no path).
-    pub fn before_edit(path: Option<&Path>, buffer: &Buffer, cx: &App) -> Option<Tracked> {
+    /// for a file without any, live or deleted (or a document with no
+    /// path).
+    pub fn before_edit(
+        path: Option<&Path>,
+        buffer: &Buffer,
+        removed: &Removed,
+        cx: &App,
+    ) -> Option<Tracked> {
         let path = path?;
         let store = BreakpointStore::try_global(cx)?;
         let list = store.read(cx).in_file(path).to_vec();
-        if list.is_empty() {
+        if list.is_empty() && removed.is_empty() {
             return None;
         }
-        let spans = list.iter().map(|b| line_span(buffer, b.line)).collect();
         Some(Tracked {
             store,
             path: path.to_path_buf(),
-            list,
-            spans,
-            version: buffer.version(),
+            before: Before::take(list, buffer),
         })
     }
 
     /// Moves the breakpoints through the edits `buffer` made since, and
     /// gives the store the moved list when anything changed.
-    pub fn after_edit(self, buffer: &Buffer, cx: &mut App) {
-        let last = buffer.line_count().saturating_sub(1);
-        let moved: Vec<LineBreakpoint> = match buffer.edits_since(self.version) {
-            Some(edits) => self
-                .list
-                .into_iter()
-                .zip(follow_edits(&self.spans, &edits))
-                .filter_map(|(b, at)| {
-                    at.map(|o| LineBreakpoint {
-                        line: buffer.offset_to_point(o).row,
-                        ..b
-                    })
-                })
-                .collect(),
-            // Too many edits for the log: the lines stay, within the text.
-            None => self
-                .list
-                .into_iter()
-                .map(|b| LineBreakpoint {
-                    line: b.line.min(last),
-                    ..b
-                })
-                .collect(),
-        };
+    pub fn after_edit(self, buffer: &Buffer, removed: &mut Removed, cx: &mut App) {
+        let moved = moved_through(self.before, buffer, removed);
         let path = self.path;
         self.store
             .update(cx, |store, cx| store.set_file(&path, moved, cx));
@@ -470,6 +812,7 @@ pub fn saved_under(root: &Path, store: &BreakpointStore) -> Vec<SavedBreakpoint>
                 enabled: b.enabled,
                 condition: b.condition.clone(),
                 log_message: b.log_message.clone(),
+                hit_condition: b.hit_condition.clone(),
             })
         })
         .collect()
@@ -490,6 +833,7 @@ pub fn from_saved(
                 enabled: s.enabled,
                 condition: s.condition.clone(),
                 log_message: s.log_message.clone(),
+                hit_condition: s.hit_condition.clone(),
                 verified: None,
             });
     }
@@ -499,8 +843,10 @@ pub fn from_saved(
 /// A workspace's breakpoints across launches (Fleet keeps them with the
 /// workspace): loads the ones `layout.json` holds for `root` into the store
 /// (a file another window already has some for keeps its own), then writes
-/// them back whenever one under `root` changes. Lives as long as `cx`'s
-/// entity (the workspace).
+/// them back whenever one under `root` changes. The exception breakpoints
+/// are app-wide in the store, so the workspace's saved choice is loaded
+/// over them and every change is written to each open workspace's entry.
+/// Lives as long as `cx`'s entity (the workspace).
 pub fn persist<T: 'static>(root: PathBuf, cx: &mut Context<T>) {
     let Some(store) = BreakpointStore::try_global(cx) else {
         return;
@@ -512,13 +858,21 @@ pub fn persist<T: 'static>(root: PathBuf, cx: &mut Context<T>) {
                 store.set_file(&path, list, cx);
             }
         }
+        store.restore_exceptions(&Layout::load_exceptions(&root), cx);
     });
-    cx.subscribe(&store, move |_, store, event: &BreakpointsEvent, cx| {
-        let BreakpointsEvent::Changed(path) = event;
-        if path.starts_with(&root) {
-            Layout::save_breakpoints(&root, &saved_under(&root, store.read(cx)));
-        }
-    })
+    cx.subscribe(
+        &store,
+        move |_, store, event: &BreakpointsEvent, cx| match event {
+            BreakpointsEvent::Changed(path) => {
+                if path.starts_with(&root) {
+                    Layout::save_breakpoints(&root, &saved_under(&root, store.read(cx)));
+                }
+            }
+            BreakpointsEvent::ExceptionsChanged => {
+                Layout::save_exceptions(&root, store.read(cx).exception_breakpoints());
+            }
+        },
+    )
     .detach();
 }
 
@@ -746,6 +1100,172 @@ mod tests {
         );
     }
 
+    /// A document as `Document::edit` drives it: each step is one edit
+    /// call, the breakpoints moved through it with the document's removed
+    /// list.
+    struct Doc {
+        buffer: Buffer,
+        cursor: weep_text::Cursor,
+        list: Vec<LineBreakpoint>,
+        removed: Removed,
+    }
+
+    impl Doc {
+        fn new(text: &str, lines: &[usize]) -> Doc {
+            let buffer = Buffer::new(text);
+            let cursor = weep_text::Cursor::new(&buffer);
+            let list = lines.iter().map(|&l| LineBreakpoint::at(l)).collect();
+            Doc {
+                buffer,
+                cursor,
+                list,
+                removed: Removed::default(),
+            }
+        }
+
+        fn edit(&mut self, f: impl FnOnce(&mut weep_text::Cursor, &mut Buffer)) {
+            let before = Before::take(self.list.clone(), &self.buffer);
+            f(&mut self.cursor, &mut self.buffer);
+            self.list = normalized(moved_through(before, &self.buffer, &mut self.removed));
+        }
+
+        fn lines(&self) -> Vec<usize> {
+            self.list.iter().map(|b| b.line).collect()
+        }
+    }
+
+    const CODE: &str = "fn main() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n}\n";
+
+    #[test]
+    fn move_line_carries_the_breakpoints_with_their_text() {
+        let mut d = Doc::new(CODE, &[1, 2]);
+        d.list[1].condition = Some("b > 1".into());
+        // `let b` up over `let a`: both breakpoints follow their text.
+        d.edit(|c, b| {
+            c.goto(b, 2, 4);
+            c.move_line(b, true)
+        });
+        assert_eq!(d.buffer.line(1), "    let b = 2;");
+        assert_eq!(d.lines(), vec![1, 2]);
+        assert_eq!(d.list[0].condition.as_deref(), Some("b > 1"));
+        // Down twice: past `let a`, then past `let c`.
+        d.edit(|c, b| c.move_line(b, false));
+        d.edit(|c, b| c.move_line(b, false));
+        assert_eq!(d.buffer.line(3), "    let b = 2;");
+        assert_eq!(d.lines(), vec![1, 3]);
+        assert_eq!(d.list[1].condition.as_deref(), Some("b > 1"));
+        // Undo puts it back a row.
+        d.edit(|c, b| c.undo(b));
+        assert_eq!(d.lines(), vec![1, 2]);
+        assert_eq!(d.list[1].condition.as_deref(), Some("b > 1"));
+    }
+
+    #[test]
+    fn move_line_of_a_block_carries_each_line() {
+        let mut d = Doc::new(CODE, &[1, 2, 3]);
+        d.list[2].enabled = false;
+        // `let b` and `let c` selected, moved up over `let a`.
+        d.edit(|c, b| {
+            let start = b.line_to_char(2);
+            let end = b.line_to_char(3) + 3;
+            c.select(b, start, end);
+            c.move_line(b, true)
+        });
+        assert_eq!(d.buffer.line(3), "    let a = 1;");
+        assert_eq!(d.lines(), vec![1, 2, 3]);
+        // `let c`'s disabled one went to row 2, `let a`'s to row 3.
+        assert!(!d.list[1].enabled);
+        assert!(d.list[2].enabled);
+    }
+
+    #[test]
+    fn undo_brings_back_a_deleted_lines_breakpoint() {
+        let mut d = Doc::new(CODE, &[2, 3]);
+        d.list[0].log_message = Some("b = {b}".into());
+        d.edit(|c, b| {
+            c.goto(b, 2, 4);
+            c.delete_line(b)
+        });
+        assert_eq!(d.lines(), vec![2]);
+        d.edit(|c, b| c.undo(b));
+        assert_eq!(d.lines(), vec![2, 3]);
+        assert_eq!(d.list[0].log_message.as_deref(), Some("b = {b}"));
+        assert!(d.removed.is_empty());
+        // Redo deletes it again, a second undo brings it again.
+        d.edit(|c, b| c.redo(b));
+        assert_eq!(d.lines(), vec![2]);
+        d.edit(|c, b| c.undo(b));
+        assert_eq!(d.lines(), vec![2, 3]);
+    }
+
+    #[test]
+    fn undo_restores_after_later_steps_are_undone_too() {
+        let mut d = Doc::new(CODE, &[2]);
+        // Several lines deleted at once, then a line typed at the top.
+        d.edit(|c, b| {
+            let start = b.line_to_char(1);
+            let end = b.line_to_char(4);
+            c.select(b, start, end);
+            c.backspace(b)
+        });
+        assert!(d.lines().is_empty());
+        d.edit(|c, b| {
+            c.goto(b, 0, 0);
+            c.insert(b, "// x\n")
+        });
+        d.edit(|c, b| c.undo(b));
+        assert!(
+            d.lines().is_empty(),
+            "undoing the typing alone brings nothing"
+        );
+        d.edit(|c, b| c.undo(b));
+        assert_eq!(d.buffer.text(), CODE);
+        assert_eq!(d.lines(), vec![2]);
+    }
+
+    #[test]
+    fn a_backspace_on_an_empty_line_comes_back_on_undo() {
+        let mut d = Doc::new("a\n\nb\n", &[1]);
+        d.edit(|c, b| {
+            c.goto(b, 1, 0);
+            c.backspace(b)
+        });
+        assert!(d.lines().is_empty());
+        d.edit(|c, b| c.undo(b));
+        assert_eq!(d.lines(), vec![1]);
+    }
+
+    #[test]
+    fn a_new_step_after_the_undo_forgets_the_deleted_ones() {
+        let mut d = Doc::new(CODE, &[2]);
+        d.edit(|c, b| {
+            c.goto(b, 2, 4);
+            c.delete_line(b)
+        });
+        assert!(!d.removed.is_empty());
+        d.edit(|c, b| c.undo(b));
+        // Deleted again, then something else typed and that undone: the
+        // delete is still on the stack, so its breakpoint waits.
+        d.edit(|c, b| c.delete_line(b));
+        d.edit(|c, b| c.insert(b, "x"));
+        d.edit(|c, b| c.undo(b));
+        assert!(d.lines().is_empty());
+        assert!(!d.removed.is_empty());
+        // A different edit replaces the delete's redo: nothing to bring back.
+        d.edit(|c, b| c.undo(b));
+        assert_eq!(d.lines(), vec![2]);
+        d.edit(|c, b| c.insert(b, "y"));
+        assert!(d.removed.is_empty());
+    }
+
+    #[test]
+    fn a_reload_keeps_the_breakpoint_on_its_text() {
+        let mut d = Doc::new(CODE, &[2]);
+        let reloaded = format!("// header\n{CODE}");
+        d.edit(|_, b| b.set_text(&reloaded));
+        assert_eq!(d.lines(), vec![3]);
+    }
+
     #[test]
     fn toggling_keeps_the_list_sorted() {
         let mut list = Vec::new();
@@ -781,6 +1301,15 @@ mod tests {
         assert_eq!(b.look(), Look::Disabled);
         b.log_message = Some("hit".into());
         assert_eq!(b.tooltip().1.as_deref(), Some("Log: hit"));
+        b.condition = Some("n > 2".into());
+        b.hit_condition = Some("3".into());
+        assert_eq!(
+            b.tooltip().1.as_deref(),
+            Some("Condition: n > 2, Log: hit, Hit count: 3")
+        );
+        b.condition = Some("  ".into());
+        b.log_message = None;
+        assert_eq!(b.tooltip().1.as_deref(), Some("Hit count: 3"));
     }
 
     #[test]
@@ -793,6 +1322,7 @@ mod tests {
                 enabled: false,
                 condition: Some("n == 2".into()),
                 log_message: None,
+                hit_condition: Some("2".into()),
             },
             SavedBreakpoint {
                 path: PathBuf::from("src/main.rs"),
@@ -800,6 +1330,7 @@ mod tests {
                 enabled: true,
                 condition: None,
                 log_message: None,
+                hit_condition: None,
             },
         ];
         let files = from_saved(root, &saved);
@@ -807,5 +1338,11 @@ mod tests {
         assert_eq!(list.iter().map(|b| b.line).collect::<Vec<_>>(), vec![2, 9]);
         assert!(!list[1].enabled);
         assert_eq!(list[1].condition.as_deref(), Some("n == 2"));
+        assert_eq!(list[1].hit_condition.as_deref(), Some("2"));
+        // And back, the hit count with them.
+        let mut store = BreakpointStore::default();
+        store.files.insert(PathBuf::from("/w/src/main.rs"), list);
+        let again = saved_under(root, &store);
+        assert_eq!(again[1].hit_condition.as_deref(), Some("2"));
     }
 }

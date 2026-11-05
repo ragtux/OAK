@@ -5,8 +5,9 @@
 
 use crate::eval::{EvalRequest, Walk};
 use crate::{
-    Breakpoint, EvalContext, Event, LaunchRequest, OutputCategory, Response, Scope,
-    SourceBreakpoint, StackFrame, Thread, Variable,
+    Breakpoint, EvalContext, Event, ExceptionFilter, ExceptionInfo, FunctionBreakpoint,
+    LaunchRequest, OutputCategory, Response, RunInTerminalRequest, Scope, SourceBreakpoint,
+    StackFrame, Thread, Variable,
 };
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -22,6 +23,16 @@ pub(crate) enum Pending {
     Terminate,
     Disconnect,
     SetBreakpoints(PathBuf),
+    SetFunctionBreakpoints,
+    /// The filters the owner asked for; the ones the adapter offers go out
+    /// (the arguments are made when the request is written).
+    SetExceptionBreakpoints(Vec<String>),
+    ExceptionInfo,
+    /// [`crate::Client::drop_frame`] through LLDB: `frame select` answered
+    /// (`returned` false), then `thread return`.
+    DropFrame {
+        returned: bool,
+    },
     Threads,
     StackTrace(i64),
     Scopes(i64),
@@ -56,7 +67,7 @@ pub(crate) fn initialize_arguments() -> Value {
         "pathFormat": "path",
         "supportsVariableType": true,
         "supportsVariablePaging": false,
-        "supportsRunInTerminalRequest": false,
+        "supportsRunInTerminalRequest": true,
         "supportsMemoryReferences": false,
         "supportsProgressReporting": false,
         "supportsInvalidatedEvent": false,
@@ -84,6 +95,9 @@ pub fn launch_arguments(launch: &LaunchRequest, init_commands: &[String]) -> Val
     if !init_commands.is_empty() {
         args["initCommands"] = json!(init_commands);
     }
+    if launch.run_in_terminal {
+        args["runInTerminal"] = json!(true);
+    }
     args
 }
 
@@ -107,6 +121,9 @@ pub fn set_breakpoints_arguments(path: &Path, breakpoints: &[SourceBreakpoint]) 
             if let Some(m) = b.log_message.as_ref().filter(|m| !m.is_empty()) {
                 row["logMessage"] = json!(m);
             }
+            if let Some(h) = b.hit_condition.as_ref().filter(|h| !h.is_empty()) {
+                row["hitCondition"] = json!(h);
+            }
             row
         })
         .collect();
@@ -117,6 +134,76 @@ pub fn set_breakpoints_arguments(path: &Path, breakpoints: &[SourceBreakpoint]) 
         },
         "breakpoints": rows,
         "sourceModified": false,
+    })
+}
+
+pub fn set_function_breakpoints_arguments(breakpoints: &[FunctionBreakpoint]) -> Value {
+    let rows: Vec<Value> = breakpoints
+        .iter()
+        .map(|b| {
+            let mut row = json!({ "name": b.name });
+            if let Some(c) = b.condition.as_ref().filter(|c| !c.trim().is_empty()) {
+                row["condition"] = json!(c);
+            }
+            row
+        })
+        .collect();
+    json!({ "breakpoints": rows })
+}
+
+/// `setExceptionBreakpoints` with the `filters` the adapter offers (in its
+/// `capabilities`), the others left out: an adapter may refuse an unknown
+/// filter, and the store keeps every adapter's.
+pub fn set_exception_breakpoints_arguments(filters: &[String], capabilities: &Value) -> Value {
+    let offered = exception_filters(capabilities);
+    let filters: Vec<&String> = filters
+        .iter()
+        .filter(|f| offered.iter().any(|o| &o.filter == *f))
+        .collect();
+    json!({ "filters": filters })
+}
+
+/// The `exceptionBreakpointFilters` of an `initialize` answer.
+pub fn exception_filters(capabilities: &Value) -> Vec<ExceptionFilter> {
+    list(capabilities, "exceptionBreakpointFilters", |v| {
+        let filter = str_field(v, "filter")?;
+        Some(ExceptionFilter {
+            label: str_field(v, "label").unwrap_or_else(|| filter.clone()),
+            default: v.get("default").and_then(Value::as_bool).unwrap_or(false),
+            filter,
+        })
+    })
+}
+
+/// A `runInTerminal` reverse request's arguments; `None` without `args`.
+pub fn run_in_terminal_request(seq: i64, arguments: &Value) -> Option<RunInTerminalRequest> {
+    let args: Vec<String> = arguments
+        .get("args")?
+        .as_array()?
+        .iter()
+        .filter_map(|a| a.as_str().map(str::to_string))
+        .collect();
+    if args.is_empty() {
+        return None;
+    }
+    let env = arguments
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|vars| {
+            vars.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string)))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(RunInTerminalRequest {
+        id: seq,
+        kind: str_field(arguments, "kind").unwrap_or_else(|| "integrated".into()),
+        title: str_field(arguments, "title"),
+        cwd: str_field(arguments, "cwd")
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        args,
+        env,
     })
 }
 
@@ -185,6 +272,13 @@ pub fn stack_frame(v: &Value) -> Option<StackFrame> {
         path: source_path(v),
         line: from_protocol(int_field(v, "line").unwrap_or(0)),
         column: from_protocol(int_field(v, "column").unwrap_or(0)),
+        presentation_hint: str_field(v, "presentationHint")
+            .filter(|h| h != "normal")
+            .or_else(|| {
+                v.get("source")
+                    .and_then(|s| str_field(s, "presentationHint"))
+                    .filter(|h| h != "normal")
+            }),
     })
 }
 
@@ -240,6 +334,23 @@ pub(crate) fn response(pending: &Pending, body: &Value) -> Response {
                 .map(|rows| rows.iter().map(breakpoint).collect())
                 .unwrap_or_default(),
         },
+        Pending::SetFunctionBreakpoints => Response::SetFunctionBreakpoints(
+            body.get("breakpoints")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().map(breakpoint).collect())
+                .unwrap_or_default(),
+        ),
+        Pending::SetExceptionBreakpoints(_) => Response::SetExceptionBreakpoints(
+            body.get("breakpoints")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().map(breakpoint).collect())
+                .unwrap_or_default(),
+        ),
+        Pending::ExceptionInfo => Response::ExceptionInfo(ExceptionInfo {
+            exception_id: str_field(body, "exceptionId").unwrap_or_default(),
+            description: str_field(body, "description").filter(|d| !d.is_empty()),
+            break_mode: str_field(body, "breakMode").unwrap_or_default(),
+        }),
         Pending::Threads => Response::Threads(list(body, "threads", thread)),
         Pending::StackTrace(thread_id) => Response::StackTrace {
             thread_id: *thread_id,
@@ -286,6 +397,11 @@ pub fn event(name: &str, body: &Value) -> Option<Event> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             description: str_field(body, "description").or_else(|| str_field(body, "text")),
+            hit_breakpoint_ids: body
+                .get("hitBreakpointIds")
+                .and_then(Value::as_array)
+                .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default(),
         }),
         "continued" => Some(Event::Continued {
             thread_id: int_field(body, "threadId"),
@@ -348,6 +464,7 @@ mod tests {
                     line: 9,
                     condition: Some("i == 3".into()),
                     log_message: Some(String::new()),
+                    hit_condition: None,
                 },
             ],
         );
@@ -464,7 +581,8 @@ mod tests {
                 reason: "breakpoint".into(),
                 thread_id: Some(5),
                 all_threads: true,
-                description: Some("breakpoint 1.1".into())
+                description: Some("breakpoint 1.1".into()),
+                hit_breakpoint_ids: Vec::new(),
             })
         );
         assert_eq!(
@@ -531,6 +649,7 @@ mod tests {
             cwd: "/work".into(),
             env: vec![("RUST_LOG".into(), "debug".into())],
             stop_on_entry: true,
+            run_in_terminal: false,
         };
         let args = launch_arguments(&launch, &["command script import x.py".into()]);
         assert_eq!(
@@ -551,6 +670,144 @@ mod tests {
             args,
             json!({"expression": "x + 1", "frameId": 7, "context": "hover"})
         );
+    }
+
+    #[test]
+    fn exception_and_function_breakpoints() {
+        let caps = json!({"exceptionBreakpointFilters": [
+            {"filter": "cpp_throw", "label": "C++ Throw"},
+            {"filter": "rust_panic", "label": "Rust: on panic", "default": true},
+            {"label": "no filter id"}
+        ]});
+        assert_eq!(
+            exception_filters(&caps),
+            vec![
+                ExceptionFilter {
+                    filter: "cpp_throw".into(),
+                    label: "C++ Throw".into(),
+                    default: false
+                },
+                ExceptionFilter {
+                    filter: "rust_panic".into(),
+                    label: "Rust: on panic".into(),
+                    default: true
+                },
+            ]
+        );
+        assert!(exception_filters(&Value::Null).is_empty());
+        // Only the filters the adapter offers go out.
+        assert_eq!(
+            set_exception_breakpoints_arguments(
+                &["rust_panic".into(), "objc_throw".into(), "cpp_throw".into()],
+                &caps
+            ),
+            json!({"filters": ["rust_panic", "cpp_throw"]})
+        );
+        assert_eq!(
+            set_function_breakpoints_arguments(&[
+                FunctionBreakpoint {
+                    name: "rust_panic".into(),
+                    condition: None
+                },
+                FunctionBreakpoint {
+                    name: "f".into(),
+                    condition: Some("x > 1".into())
+                },
+            ]),
+            json!({"breakpoints": [{"name": "rust_panic"}, {"name": "f", "condition": "x > 1"}]})
+        );
+        let body = json!({"breakpoints": [{"id": 4, "verified": true, "line": 887}]});
+        let Response::SetFunctionBreakpoints(bps) =
+            response(&Pending::SetFunctionBreakpoints, &body)
+        else {
+            panic!()
+        };
+        assert_eq!((bps[0].id, bps[0].verified), (Some(4), true));
+        assert_eq!(
+            response(&Pending::SetExceptionBreakpoints(Vec::new()), &json!({})),
+            Response::SetExceptionBreakpoints(Vec::new())
+        );
+        assert_eq!(
+            response(
+                &Pending::ExceptionInfo,
+                &json!({"exceptionId": "signal", "description": "EXC_BAD_ACCESS", "breakMode": "always"})
+            ),
+            Response::ExceptionInfo(ExceptionInfo {
+                exception_id: "signal".into(),
+                description: Some("EXC_BAD_ACCESS".into()),
+                break_mode: "always".into()
+            })
+        );
+        // lldb-dap names the breakpoint a stop hit.
+        let Some(Event::Stopped {
+            hit_breakpoint_ids, ..
+        }) = event(
+            "stopped",
+            &json!({"reason": "breakpoint", "threadId": 1, "hitBreakpointIds": [4]}),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!(hit_breakpoint_ids, vec![4]);
+    }
+
+    #[test]
+    fn frames_carry_their_presentation_hint() {
+        let frame = |v: Value| stack_frame(&v).unwrap();
+        let f = frame(json!({"id": 1, "name": "main", "line": 1, "column": 1,
+            "source": {"path": "/a.rs"}}));
+        assert_eq!(f.presentation_hint, None);
+        assert!(!f.is_subtle());
+        let f = frame(json!({"id": 2, "name": "start", "line": 1, "column": 1,
+            "source": {"path": "/usr/lib/dyld`start", "sourceReference": 3, "presentationHint": "deemphasize"}}));
+        assert_eq!(f.presentation_hint.as_deref(), Some("deemphasize"));
+        assert!(f.is_subtle());
+        let f = frame(json!({"id": 3, "name": "x", "line": 1, "column": 1,
+            "presentationHint": "subtle", "source": {"path": "/a.rs", "presentationHint": "normal"}}));
+        assert!(f.is_subtle());
+        let f = frame(json!({"id": 4, "name": "x", "line": 1, "column": 1,
+            "presentationHint": "normal", "source": {"path": "/a.rs", "presentationHint": "emphasize"}}));
+        assert_eq!(f.presentation_hint.as_deref(), Some("emphasize"));
+        assert!(!f.is_subtle());
+    }
+
+    #[test]
+    fn run_in_terminal_both_ways() {
+        let launch = LaunchRequest {
+            program: "/bin/prog".into(),
+            run_in_terminal: true,
+            ..Default::default()
+        };
+        assert_eq!(launch_arguments(&launch, &[])["runInTerminal"], json!(true));
+        let launch = LaunchRequest {
+            program: "/bin/prog".into(),
+            ..Default::default()
+        };
+        assert_eq!(launch_arguments(&launch, &[]).get("runInTerminal"), None);
+        assert_eq!(
+            initialize_arguments()["supportsRunInTerminalRequest"],
+            json!(true)
+        );
+        let request = run_in_terminal_request(
+            7,
+            &json!({"kind": "integrated", "title": "prog", "cwd": "/work",
+                "args": ["lldb-dap", "--launch-target", "/bin/prog"],
+                "env": {"A": "1", "B": null}}),
+        )
+        .unwrap();
+        assert_eq!(request.id, 7);
+        assert_eq!(request.kind, "integrated");
+        assert_eq!(request.title.as_deref(), Some("prog"));
+        assert_eq!(request.cwd, PathBuf::from("/work"));
+        assert_eq!(request.args.len(), 3);
+        let mut env = request.env.clone();
+        env.sort();
+        assert_eq!(
+            env,
+            vec![("A".into(), Some("1".into())), ("B".into(), None)]
+        );
+        assert_eq!(run_in_terminal_request(1, &json!({"args": []})), None);
+        assert_eq!(run_in_terminal_request(1, &json!({})), None);
     }
 
     #[test]

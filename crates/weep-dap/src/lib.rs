@@ -22,6 +22,7 @@ pub mod transport;
 pub use adapters::{find_on_path, rust_init_commands, rust_init_commands_for};
 pub use client::Client;
 pub use eval::{clean_error, rust_path};
+pub use protocol::exception_filters;
 
 use std::path::PathBuf;
 
@@ -46,6 +47,10 @@ pub struct LaunchRequest {
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
     pub stop_on_entry: bool,
+    /// lldb-dap's `runInTerminal`: the debuggee runs in a terminal the
+    /// client opens ([`Event::RunInTerminal`]) instead of on the adapter's
+    /// pty. Off unless asked (Fleet's run.json has no key for it).
+    pub run_in_terminal: bool,
 }
 
 /// How a session starts: a new process, or one already running.
@@ -61,6 +66,54 @@ pub struct SourceBreakpoint {
     pub line: usize,
     pub condition: Option<String>,
     pub log_message: Option<String>,
+    /// DAP's `hitCondition`.
+    pub hit_condition: Option<String>,
+}
+
+/// A function breakpoint as sent with `setFunctionBreakpoints`: lldb-dap
+/// matches `name` against a function's base name too (`rust_panic` binds
+/// `__rustc::rust_panic`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FunctionBreakpoint {
+    pub name: String,
+    pub condition: Option<String>,
+}
+
+/// One of the adapter's `exceptionBreakpointFilters` (lldb-dap's: C++,
+/// Objective-C and Swift catch and throw).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExceptionFilter {
+    /// The id `setExceptionBreakpoints` sends back.
+    pub filter: String,
+    pub label: String,
+    /// Whether the adapter wants it on unless the user said otherwise.
+    pub default: bool,
+}
+
+/// What the adapter says about the exception a thread stopped on
+/// (`exceptionInfo`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExceptionInfo {
+    pub exception_id: String,
+    pub description: Option<String>,
+    /// `never`, `always`, `unhandled` or `userUnhandled`.
+    pub break_mode: String,
+}
+
+/// The adapter's `runInTerminal` reverse request: start `args` in a
+/// terminal, in `cwd` with `env` over the client's environment (a `None`
+/// value unsets the variable), then answer with the process id
+/// ([`Client::answer_run_in_terminal`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunInTerminalRequest {
+    /// The request's seq, for the answer.
+    pub id: i64,
+    /// `integrated` (the client's own terminal) or `external`.
+    pub kind: String,
+    pub title: Option<String>,
+    pub cwd: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, Option<String>)>,
 }
 
 /// A breakpoint as the adapter reports it back (same order as sent).
@@ -86,6 +139,20 @@ pub struct StackFrame {
     pub path: Option<PathBuf>,
     pub line: usize,
     pub column: usize,
+    /// DAP's `presentationHint`: the frame's own (`normal`, `label`,
+    /// `subtle`), else its source's (`emphasize`, `deemphasize`: lldb-dap's
+    /// for a frame it only has disassembly of).
+    pub presentation_hint: Option<String>,
+}
+
+impl StackFrame {
+    /// Whether the adapter asks for the frame to be shown dimmed.
+    pub fn is_subtle(&self) -> bool {
+        matches!(
+            self.presentation_hint.as_deref(),
+            Some("subtle" | "deemphasize" | "label")
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +199,11 @@ pub enum Response {
         path: PathBuf,
         breakpoints: Vec<Breakpoint>,
     },
+    /// The function breakpoints' verdicts, in the order sent.
+    SetFunctionBreakpoints(Vec<Breakpoint>),
+    /// The exception filters' verdicts (empty when the adapter gives none).
+    SetExceptionBreakpoints(Vec<Breakpoint>),
+    ExceptionInfo(ExceptionInfo),
     Threads(Vec<Thread>),
     StackTrace {
         thread_id: i64,
@@ -166,6 +238,8 @@ pub enum Event {
         thread_id: Option<i64>,
         all_threads: bool,
         description: Option<String>,
+        /// The breakpoints that made a `breakpoint` stop (`hitBreakpointIds`).
+        hit_breakpoint_ids: Vec<i64>,
     },
     Continued {
         thread_id: Option<i64>,
@@ -180,6 +254,11 @@ pub enum Event {
         path: Option<PathBuf>,
         breakpoint: Breakpoint,
     },
+    /// The adapter's `exceptionBreakpointFilters`, once `initialize` answered.
+    ExceptionFilters(Vec<ExceptionFilter>),
+    /// The adapter asks for the debuggee to be started in a terminal; answer
+    /// with [`Client::answer_run_in_terminal`].
+    RunInTerminal(RunInTerminalRequest),
     ThreadStarted(i64),
     ThreadExited(i64),
     /// The debuggee exited with this code.

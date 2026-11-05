@@ -10,7 +10,7 @@
 use super::*;
 use crate::debugger::DebugSession;
 use crate::menu::MenuEntry;
-use crate::run_popup::{RunPopup, RunPopupEvent};
+use crate::run_popup::{GutterRunRow, RunPopup, RunPopupEvent};
 use crate::run_tool::{RunView, RunViewEvent};
 use weep_run::{Command, RunConfig, RunFile};
 
@@ -203,6 +203,42 @@ impl Workspace {
         if let Some(config) = configs.get(ix).cloned() {
             self.run_config(&config, cx);
         }
+    }
+
+    /// M8: a right click on a gutter run icon: a menu with Run and, where
+    /// WEEP can debug the row, Debug on configuration `ix`
+    /// (`run_popup::gutter_run_rows`); Debug starts the session as the
+    /// popup's Debug does.
+    pub(super) fn run_icon_menu(
+        &mut self,
+        editor: &Entity<EditorView>,
+        ix: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let configs = self.run_configurations_or_notify(cx);
+        let Some(config) = configs.get(ix) else {
+            return;
+        };
+        let entity = cx.entity();
+        let entries = crate::run_popup::gutter_run_rows(&config.kind)
+            .into_iter()
+            .map(|row| {
+                let entity = entity.clone();
+                let mut entry = MenuEntry::custom(row.label(&config.name), move |_, cx| {
+                    entity.update(cx, |this, cx| match row {
+                        GutterRunRow::Run => this.run_configuration_at(ix, cx),
+                        GutterRunRow::Debug => this.debug_configuration_at(ix, cx),
+                    });
+                });
+                if let MenuEntry::Item(item) = &mut entry {
+                    item.shortcut = crate::keymap::hint_for(cx, row.chord_action()).map(Into::into);
+                }
+                entry
+            })
+            .collect();
+        let focus = editor.read(cx).focus_handle(cx);
+        self.open_menu(entries, position, Some(focus), cx);
     }
 
     // ---- actions -----------------------------------------------------------------

@@ -541,7 +541,7 @@ languages, a `cargo check` run's diagnostics shown as they arrive (the
 server's `checkOnSave` runs; its progress shows in the lightning's tooltip),
 and Fleet's Smart Mode popup under the lightning (WEEP shows a menu).
 
-### M8 Debugger via DAP (L; first pass built 2026-11-04, batch 13 written, not run)
+### M8 Debugger via DAP (L; built 2026-11-04, batch 13 run 2026-11-05, the rest built 2026-11-05)
 
 Built in one pass without Fleet, by five agents split by file ownership over
 a skeleton of shared types (`docs/fleet-probe.md`, nineteenth pass, lists
@@ -577,15 +577,34 @@ configurations.
   `jump-to-tool` and `new-tool` actions; the floating debug panel
   (`editor.showFloatingDebugPanel`); `quick-evaluate-expression` and the
   value on hover while stopped. Both skins.
-- Probes: batch 13 as the `debug` scene (written, not run on either editor).
+- Done (2026-11-05, the rest of the list, three agents; `docs/fleet-probe.md`,
+  twenty-third pass, lists the estimates): conditions, log messages and hit
+  counts (`hitCondition`) edited in the Breakpoints tool's properties under
+  its list; exception breakpoints: the adapter's `exceptionBreakpointFilters`
+  and WEEP's own "Rust: on panic" (a function breakpoint on `rust_panic`),
+  listed with check boxes in the Breakpoints tool, kept per workspace, sent
+  with `setExceptionBreakpoints` / `setFunctionBreakpoints`; a panic stop
+  reads "Panic: <message>" (the message from the panic report) and selects
+  the first frame of the user's code; `debug/drop-frame` (Backspace/Delete
+  in the frames list: `restartFrame` where the adapter has it, else LLDB's
+  `thread return`, which returns to the caller after the call rather than
+  re-running it); expanded variables kept across stops (by their names'
+  path under the function); library frames dimmed; `runInTerminal` answered
+  with a Terminal tab (WEEP never asks for it: Fleet has no run.json key,
+  and Xcode's lldb-dap launcher cannot be attached to on macOS);
+  `debug/quick-evaluate-expression-with-click` (Alt+click while stopped;
+  elsewhere Alt+click still adds a caret); Run and Debug on a right click on
+  run.json's gutter run icons; undo brings back a deleted line's breakpoint
+  and move-line carries breakpoints with their text.
+- Probes: batch 13 as the `debug` scene, run on both (twentieth to
+  twenty-second passes). Fleet's quick evaluate, the run icon's clicks,
+  Alt+click while stopped, the breakpoint properties and a panic stop are
+  still unprobed.
 
-Left for later: conditions and log messages edited in the UI (the store and
-the protocol carry them), exception breakpoints (`breakpoints/exception-*`
-icons), `drop-frame`, `quick-evaluate-expression-with-click`, a Debug entry
-under the gutter's run icon (it has no menu), expanded variables kept across
-a stop, undo bringing back a deleted line's breakpoint, move-line carrying
-breakpoints, the frames of library code dimmed, `runInTerminal`, adapters
-for other languages, and `java.debugger.*`.
+Left for later: redo bringing back a breakpoint an undo deleted; Rust
+`fn main` / test run icons in source files (the run icon menu exists only in
+run.json); adapters for other languages (none installed here, and Fleet's
+run.json keys for them are unknown); `java.debugger.*` (Java, likely never).
 
 ### Later or never
 

@@ -204,7 +204,9 @@ action_table! {
     "debug/add-watch" => DebugAddWatch, DEBUG_TOOL;
     "debug/edit-watch" => DebugEditWatch, DEBUG_TOOL;
     "debug/delete-watch" => DebugDeleteWatch, DEBUG_TOOL;
+    "debug/drop-frame" => DebugDropFrame, DEBUG_TOOL;
     "debug/quick-evaluate-expression" => DebugQuickEvaluateExpression, EDITOR;
+    "debug/quick-evaluate-expression-with-click" => DebugQuickEvaluateExpressionWithClick, EDITOR;
     "debug/jump-to-tool" => DebugJumpToTool, WORKSPACE;
     "debug/new-tool" => DebugNewTool, WORKSPACE;
     "debug/breakpoints/jump-to-tool" => DebugBreakpointsJumpToTool, WORKSPACE;
@@ -410,7 +412,13 @@ pub fn action_title(id: &str) -> String {
         "debug/add-watch" => Some("Add Watch"),
         "debug/edit-watch" => Some("Edit Watch"),
         "debug/delete-watch" => Some("Delete Watch"),
+        // Estimate: IntelliJ's title (Fleet's unprobed).
+        "debug/drop-frame" => Some("Drop Frame"),
         "debug/quick-evaluate-expression" => Some("Quick Evaluate Expression"),
+        // Estimate: no Fleet shot names it; IntelliJ's gesture is Alt+click.
+        "debug/quick-evaluate-expression-with-click" => {
+            Some("Quick Evaluate Expression with Click")
+        }
         "debug/jump-to-tool" => Some("Jump to Debug Tool"),
         "debug/new-tool" => Some("New Debug Tool"),
         "debug/breakpoints/jump-to-tool" => Some("Jump to Breakpoints Tool"),
@@ -714,6 +722,6 @@ mod tests {
         // M8: one id in two contexts binds twice.
         assert_eq!(bindings("f9", "debug/toggle-enabled-breakpoint").len(), 2);
         assert!(is_editor_action("debug/toggle-breakpoint"));
-        assert!(bindings("f9", "debug/drop-frame").is_empty());
+        assert!(bindings("f9", "ai/terminal-fix-command").is_empty());
     }
 }

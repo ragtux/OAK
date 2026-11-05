@@ -12,9 +12,11 @@
 //! since.
 //!
 //! The file's breakpoints (M8) live in the app's `BreakpointStore`, not here;
-//! every edit moves them with their lines.
+//! every edit moves them with their lines. The ones an edit deleted with
+//! their lines are kept here (`removed_breakpoints`), tied to this buffer's
+//! undo steps, so undoing the deletion brings them back.
 
-use crate::breakpoints::{BreakpointStore, Tracked};
+use crate::breakpoints::{BreakpointStore, Removed, Tracked};
 use gpui::{Context, EventEmitter};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -122,6 +124,9 @@ pub struct Document {
     /// git status; against the saved text, not the unsaved edits (estimate:
     /// Fleet diffs the buffer).
     pub hunks: Vec<weep_git::Hunk>,
+    /// Breakpoints edits deleted with their lines, until their undo step is
+    /// undone or leaves the stack (M8, `breakpoints::Removed`).
+    removed_breakpoints: Removed,
 }
 
 fn modified_time(path: &std::path::Path) -> Option<std::time::SystemTime> {
@@ -161,6 +166,7 @@ impl Document {
             disk_modified: None,
             conflict: false,
             hunks: Vec::new(),
+            removed_breakpoints: Removed::default(),
         };
         doc.disk_modified = doc.path.as_deref().and_then(modified_time);
         doc.refresh_indent(settings);
@@ -310,14 +316,19 @@ impl Document {
     }
 
     /// Runs an edit on the buffer and tells every view. The file's
-    /// breakpoints (M8) follow the edit's lines (`breakpoints::follow_edits`).
+    /// breakpoints (M8) follow the edit's lines (`breakpoints::Tracked`).
     pub fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Buffer)) {
         let before = self.buffer.version();
-        let breakpoints = Tracked::before_edit(self.path.as_deref(), &self.buffer, cx);
+        let breakpoints = Tracked::before_edit(
+            self.path.as_deref(),
+            &self.buffer,
+            &self.removed_breakpoints,
+            cx,
+        );
         f(&mut self.buffer);
         if self.buffer.version() != before {
             if let Some(tracked) = breakpoints {
-                tracked.after_edit(&self.buffer, cx);
+                tracked.after_edit(&self.buffer, &mut self.removed_breakpoints, cx);
             }
             cx.emit(DocumentEvent::Changed);
             cx.notify();

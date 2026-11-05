@@ -27,9 +27,20 @@
 //! an estimate); [`DebugSession::console`] is the Debugger Console's: the
 //! adapter's own messages, typed expressions and their values, errors.
 //!
+//! Exception breakpoints (the store's `ExceptionBreakpoint`s): the adapter's
+//! filters go out with `setExceptionBreakpoints`, WEEP's Rust panic as a
+//! function breakpoint on `rust_panic`, both before `configurationDone` and
+//! again on every change; a stop on either is an "exception" stop the Debug
+//! tool reports ([`DebugSession::stop_text`]).
+//!
+//! The variables tree's expansion outlives the stop ([`Expansion`]): a node
+//! is remembered by its path of names (the frame's function, the scope,
+//! then each variable), since the adapter's references change every stop,
+//! and the paths still open are fetched again as their parents arrive.
+//!
 //! Lines are 0-based.
 
-use crate::breakpoints::{BreakpointStore, BreakpointsEvent, LineBreakpoint};
+use crate::breakpoints::{BreakpointStore, BreakpointsEvent, LineBreakpoint, RUST_PANIC};
 use futures::channel::{mpsc::unbounded, oneshot};
 use futures::StreamExt;
 use gpui::{
@@ -38,7 +49,10 @@ use gpui::{
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use weep_dap::{AdapterCommand, Client, Event, RequestId, Response, SourceBreakpoint, Start};
+use weep_dap::{
+    AdapterCommand, Client, Event, FunctionBreakpoint, RequestId, Response, RunInTerminalRequest,
+    SourceBreakpoint, Start,
+};
 pub use weep_dap::{EvalContext, OutputCategory, StackFrame, Thread, Variable};
 
 /// Where the debuggee is stopped: the editor paints this line with
@@ -224,7 +238,112 @@ pub enum DebugSessionEvent {
     Stopped,
     /// The session ended.
     Ended,
+    /// Something the user asked for failed: the workspace's notification.
+    Failed { title: String, message: String },
+    /// The adapter asks for the debuggee to be started in a terminal: the
+    /// workspace opens one and answers through
+    /// [`DebugSession::answer_run_in_terminal`].
+    RunInTerminal(RunInTerminalRequest),
 }
+
+/// A node of the variables tree by the names leading to it: the frame's
+/// function, the scope, then each variable down (a watch: [`WATCH_ROOT`]
+/// and its expression).
+pub type NodePath = Vec<String>;
+
+/// The first name of a watch's path (no function or scope is named so).
+const WATCH_ROOT: &str = "\u{1}watch";
+
+/// How deep a remembered path is followed: the tree's own guard
+/// (`debug_tool::MAX_DEPTH`) against an adapter reusing a reference.
+const MAX_PATH: usize = 64;
+
+/// The variables tree's expansion across stops. The adapter's variables
+/// references are good for one stop only (lldb-dap numbers them afresh),
+/// so the expanded nodes are kept by their [`NodePath`]; each stop places
+/// its references on their paths as the scopes and the children arrive,
+/// and a node on a path still open is expanded (its children fetched)
+/// again. The function's name heads a scope's path, so the expansion
+/// carries over to the next stop in the same function and to its other
+/// frames (a recursion), not to another function's locals.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Expansion {
+    /// The paths shown expanded.
+    open: HashSet<NodePath>,
+    /// This stop's references and their paths.
+    paths: HashMap<i64, NodePath>,
+}
+
+impl Expansion {
+    pub fn scope_path(function: &str, scope: &str) -> NodePath {
+        vec![function.to_string(), scope.to_string()]
+    }
+
+    pub fn watch_path(expression: &str) -> NodePath {
+        vec![WATCH_ROOT.to_string(), expression.to_string()]
+    }
+
+    /// Puts this stop's `reference` on `path` (the first place a reference
+    /// shows up keeps it); true when the path is open.
+    pub fn place(&mut self, reference: i64, path: NodePath) -> bool {
+        if reference == 0 || path.len() > MAX_PATH {
+            return false;
+        }
+        let path = self.paths.entry(reference).or_insert(path);
+        self.open.contains(path)
+    }
+
+    /// The path of the child `name` of the node `parent`, when the parent
+    /// was placed.
+    pub fn child_path(&self, parent: i64, name: &str) -> Option<NodePath> {
+        let mut path = self.paths.get(&parent)?.clone();
+        path.push(name.to_string());
+        Some(path)
+    }
+
+    /// The node `reference` was expanded (`open`) or collapsed by hand.
+    /// Its children's own expansion stays, shown again with it.
+    pub fn set_open(&mut self, reference: i64, open: bool) {
+        if let Some(path) = self.paths.get(&reference) {
+            if open {
+                self.open.insert(path.clone());
+            } else {
+                self.open.remove(path);
+            }
+        }
+    }
+
+    /// Whether the path is open.
+    #[cfg(test)]
+    pub fn is_open(&self, path: &NodePath) -> bool {
+        self.open.contains(path)
+    }
+
+    /// The stop is over: its references mean nothing now.
+    pub fn forget_references(&mut self) {
+        self.paths.clear();
+    }
+}
+
+/// Rust's default panic hook as it reaches stderr: `thread 'main' (123)
+/// panicked at src/main.rs:19:5:` with the message on the next line (Rust
+/// 1.73 on; the thread id in parentheses from 1.89), or `thread 'main'
+/// panicked at 'boom', src/main.rs:2:5` before. The header's message when it
+/// has one (the old form), `Some("")` when it comes on the next line.
+pub fn panic_header(line: &str) -> Option<String> {
+    let rest = line.trim_end().strip_prefix("thread '")?;
+    let (_, after) = rest.split_once(" panicked at ")?;
+    if let Some(quoted) = after.strip_prefix('\'') {
+        if let Some((message, _)) = quoted.rsplit_once("', ") {
+            return Some(message.to_string());
+        }
+    }
+    Some(String::new())
+}
+
+/// What a stop on WEEP's Rust panic breakpoint is reported as, before the
+/// panic's message is known (estimate: Fleet's Rust panic stop unprobed).
+pub const PANIC_DESCRIPTION: &str = "panic";
 
 /// What a request was for, so its answer lands in the right place.
 #[derive(Clone, Debug, PartialEq)]
@@ -244,6 +363,15 @@ enum Pending {
     Console(usize),
     /// [`DebugSession::evaluate`]'s, answered through its task.
     Eval(String),
+    /// The function breakpoints: the Rust panic's (`rust_panic`) when sent.
+    FunctionBreakpoints {
+        panic: bool,
+    },
+    ExceptionBreakpoints,
+    /// What the stopped thread stopped on.
+    ExceptionInfo(i64),
+    /// `debug/drop-frame`.
+    DropFrame,
     /// resume, pause, a step: named for an error line.
     Command(&'static str),
 }
@@ -257,6 +385,7 @@ enum Ask {
     Variables(i64),
     Watch(String, Option<i64>),
     Pause(i64),
+    ExceptionInfo(i64),
 }
 
 /// What handling an event or an answer leaves to do with gpui at hand.
@@ -267,6 +396,12 @@ struct Effects {
     resend: Vec<PathBuf>,
     /// Files whose verdicts changed (written to the BreakpointStore).
     verdicts: Vec<PathBuf>,
+    /// The adapter's exception filters, offered to the BreakpointStore.
+    offer: Vec<(String, String, bool)>,
+    /// A failure to report: title and message.
+    failed: Option<(String, String)>,
+    /// The adapter's `runInTerminal`, for the workspace.
+    run_in_terminal: Option<RunInTerminalRequest>,
     /// The frames of a fresh stop arrived: the workspace shows the line.
     stopped: bool,
     /// The session is over.
@@ -290,6 +425,7 @@ pub fn source_breakpoints(list: &[LineBreakpoint]) -> Vec<SourceBreakpoint> {
             line: b.line,
             condition: b.condition.clone().filter(|c| !c.trim().is_empty()),
             log_message: b.log_message.clone().filter(|m| !m.is_empty()),
+            hit_condition: b.hit_condition.clone().filter(|h| !h.trim().is_empty()),
         })
         .collect()
 }
@@ -322,6 +458,17 @@ fn same_file(a: &Path, b: &Path) -> bool {
             (Ok(a), Ok(b)) => a == b,
             _ => false,
         }
+}
+
+/// [`DebugSession::is_library_frame`] with the workspace's roots.
+pub fn library_frame(frame: &StackFrame, roots: &[PathBuf]) -> bool {
+    if frame.is_subtle() {
+        return true;
+    }
+    match &frame.path {
+        None => true,
+        Some(path) => !roots.is_empty() && !roots.iter().any(|r| path.starts_with(r)),
+    }
 }
 
 /// Appends an output chunk and takes off the complete lines (an adapter
@@ -381,8 +528,14 @@ pub struct DebugSession {
     pub scopes: Vec<weep_dap::Scope>,
     /// Children fetched so far, by variables reference.
     pub children: HashMap<i64, Vec<Variable>>,
-    /// The references shown expanded in the variables tree.
+    /// The references shown expanded in the variables tree (this stop's;
+    /// [`DebugSession::expansion`] keeps them across stops).
     pub expanded: HashSet<i64>,
+    /// The tree's expansion by path, kept across stops.
+    pub expansion: Expansion,
+    /// The stop is on WEEP's Rust panic breakpoint (the state's reason
+    /// "exception", its description the panic's message).
+    pub stopped_on_panic: bool,
     pub watches: Vec<Watch>,
     pub console: Vec<ConsoleLine>,
     /// The lines typed into the console, in order ([`ConsoleKind::Evaluation`]).
@@ -409,6 +562,15 @@ pub struct DebugSession {
     /// with canonical paths (`/private/var/...`), the editors and the store
     /// use the workspace's spelling.
     roots: Vec<(PathBuf, PathBuf)>,
+    /// The workspace's root (its spelling and the canonical one): frames
+    /// outside it are library code.
+    workspace_roots: Vec<PathBuf>,
+    /// The adapter's ids for the Rust panic's function breakpoint.
+    panic_breakpoints: HashSet<i64>,
+    /// The last panic message the debuggee's stderr carried, and whether a
+    /// panic's header came without its message yet.
+    panic_message: Option<String>,
+    panic_header_seen: bool,
     /// Every file whose breakpoints were sent: its canonical path to its
     /// BreakpointStore key (the document's path, not canonicalised).
     keys: HashMap<PathBuf, PathBuf>,
@@ -467,6 +629,8 @@ impl DebugSession {
             scopes: Vec::new(),
             children: HashMap::new(),
             expanded: HashSet::new(),
+            expansion: Expansion::default(),
+            stopped_on_panic: false,
             watches: Vec::new(),
             console: Vec::new(),
             evaluations: Vec::new(),
@@ -480,6 +644,10 @@ impl DebugSession {
             breakpoint_ids: HashMap::new(),
             unsent: BTreeSet::new(),
             roots: Vec::new(),
+            workspace_roots: Vec::new(),
+            panic_breakpoints: HashSet::new(),
+            panic_message: None,
+            panic_header_seen: false,
             keys: HashMap::new(),
             started_threads: Vec::new(),
             last_error: None,
@@ -521,11 +689,52 @@ impl DebugSession {
     /// The workspace's root, to give the adapter's canonical paths back in
     /// its spelling.
     pub fn set_root(&mut self, root: &Path) {
+        self.workspace_roots.push(root.to_path_buf());
         if let Ok(canonical) = root.canonicalize() {
             if canonical != root {
+                self.workspace_roots.push(canonical.clone());
                 self.roots.push((canonical, root.to_path_buf()));
             }
         }
+    }
+
+    /// Whether a frame is library code, drawn dimmed in the Debug tool: no
+    /// file on disk, a file outside the workspace (the standard library,
+    /// a crate from the registry), or one the adapter marks `subtle` or
+    /// `deemphasize`. A session with no root counts every frame with a
+    /// file as the user's.
+    pub fn is_library_frame(&self, frame: &StackFrame) -> bool {
+        library_frame(frame, &self.workspace_roots)
+    }
+
+    /// What the stop is, for the Debug tool's status row: an exception or a
+    /// signal (lldb-dap's "exception" stops, `exceptionInfo`'s description
+    /// when it answered), or WEEP's Rust panic with its message; `None` for
+    /// any other stop (estimate: the words, Fleet's exception stop is
+    /// unprobed).
+    pub fn stop_text(&self) -> Option<String> {
+        let SessionState::Stopped {
+            reason,
+            description,
+        } = &self.state
+        else {
+            return None;
+        };
+        if reason != "exception" {
+            return None;
+        }
+        let description = description.as_deref().map(str::trim).unwrap_or("");
+        if self.stopped_on_panic {
+            return Some(match description {
+                "" | PANIC_DESCRIPTION => "Panic".to_string(),
+                message => format!("Panic: {message}"),
+            });
+        }
+        Some(if description.is_empty() {
+            "Exception".to_string()
+        } else {
+            format!("Exception: {description}")
+        })
     }
 
     // ---- starting -----------------------------------------------------------------
@@ -566,6 +775,9 @@ impl DebugSession {
         }) {
             Ok(client) => {
                 self.client = Some(client);
+                // Queued by the client into the configuration, before
+                // `configurationDone`, as the line breakpoints.
+                self.send_exception_breakpoints(true, cx);
                 self._pump = Some(cx.spawn(async move |this, cx| {
                     while rx.next().await.is_some() {
                         if this.update(cx, |this, cx| this.drain(cx)).is_err() {
@@ -685,6 +897,7 @@ impl DebugSession {
                     cwd,
                     env,
                     stop_on_entry: false,
+                    run_in_terminal: false,
                 });
                 self.start(adapter, start, cx);
             }
@@ -711,12 +924,18 @@ impl DebugSession {
             return;
         }
         let store = BreakpointStore::global(cx);
-        self._breakpoints = Some(
-            cx.subscribe(&store, |this, _, event: &BreakpointsEvent, cx| {
-                let BreakpointsEvent::Changed(path) = event;
-                this.breakpoints_changed(path.clone(), cx);
-            }),
-        );
+        self._breakpoints =
+            Some(cx.subscribe(
+                &store,
+                |this, _, event: &BreakpointsEvent, cx| match event {
+                    BreakpointsEvent::Changed(path) => this.breakpoints_changed(path.clone(), cx),
+                    BreakpointsEvent::ExceptionsChanged => {
+                        if !this.state.is_over() {
+                            this.send_exception_breakpoints(false, cx);
+                        }
+                    }
+                },
+            ));
     }
 
     fn breakpoints_changed(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -742,6 +961,38 @@ impl DebugSession {
         self.pending
             .insert(id, Pending::SetBreakpoints(path.to_path_buf(), lines));
         self.remember_key(path);
+    }
+
+    /// The store's enabled exception breakpoints to the adapter: its own
+    /// filters with `setExceptionBreakpoints` (the client sends the ones
+    /// this adapter offers), [`RUST_PANIC`] as a function breakpoint on
+    /// `rust_panic` (lldb-dap has no Rust filter; it binds
+    /// `__rustc::rust_panic`, which every panic of std's runtime calls
+    /// before unwinding). At the start the function breakpoints go only
+    /// when there is one, on a change always (an empty list clears).
+    fn send_exception_breakpoints(&mut self, starting: bool, cx: &mut Context<Self>) {
+        let filters = BreakpointStore::global(cx)
+            .read(cx)
+            .enabled_exception_filters();
+        let Some(client) = self.client.as_mut() else {
+            return;
+        };
+        let panic = filters.iter().any(|f| f == RUST_PANIC);
+        let others: Vec<String> = filters.into_iter().filter(|f| f != RUST_PANIC).collect();
+        if panic || !starting {
+            let list: Vec<FunctionBreakpoint> = panic
+                .then(|| FunctionBreakpoint {
+                    name: RUST_PANIC.to_string(),
+                    condition: None,
+                })
+                .into_iter()
+                .collect();
+            let id = client.set_function_breakpoints(&list);
+            self.pending
+                .insert(id, Pending::FunctionBreakpoints { panic });
+        }
+        let id = client.set_exception_breakpoints(&others);
+        self.pending.insert(id, Pending::ExceptionBreakpoints);
     }
 
     fn remember_key(&mut self, key: &Path) {
@@ -799,6 +1050,16 @@ impl DebugSession {
     fn apply(&mut self, effects: Effects, cx: &mut Context<Self>) {
         for ask in effects.asks {
             self.send(ask);
+        }
+        if !effects.offer.is_empty() {
+            let store = BreakpointStore::global(cx);
+            store.update(cx, |s, cx| s.offer_exception_filters(effects.offer, cx));
+        }
+        if let Some((title, message)) = effects.failed {
+            cx.emit(DebugSessionEvent::Failed { title, message });
+        }
+        if let Some(request) = effects.run_in_terminal {
+            cx.emit(DebugSessionEvent::RunInTerminal(request));
         }
         for path in effects.resend {
             self.send_breakpoints(&path, cx);
@@ -878,6 +1139,10 @@ impl DebugSession {
                 },
             ),
             Ask::Pause(thread) => (client.pause(thread), Pending::Command("pause")),
+            Ask::ExceptionInfo(thread) => (
+                client.exception_info(thread),
+                Pending::ExceptionInfo(thread),
+            ),
         };
         self.pending.insert(id, pending);
     }
@@ -914,10 +1179,26 @@ impl DebugSession {
                 thread_id,
                 all_threads: _,
                 description,
+                hit_breakpoint_ids,
             } => {
                 if self.state.is_over() {
                     return Effects::default();
                 }
+                // The Rust panic's function breakpoint is an exception stop.
+                self.stopped_on_panic = hit_breakpoint_ids
+                    .iter()
+                    .any(|id| self.panic_breakpoints.contains(id));
+                let (reason, description) = if self.stopped_on_panic {
+                    let message = self
+                        .panic_message
+                        .clone()
+                        .filter(|m| !m.is_empty())
+                        .unwrap_or_else(|| PANIC_DESCRIPTION.to_string());
+                    ("exception".to_string(), Some(message))
+                } else {
+                    (reason, description)
+                };
+                let exception = reason == "exception" && !self.stopped_on_panic;
                 self.state = SessionState::Stopped {
                     reason,
                     description,
@@ -929,6 +1210,16 @@ impl DebugSession {
                 let mut effects = Effects::ask(Ask::Threads);
                 if let Some(thread) = thread {
                     effects.asks.push(Ask::StackTrace(thread));
+                    // lldb-dap's description is the stop's own ("signal
+                    // SIGABRT"); `exceptionInfo` may say more.
+                    if exception
+                        && self
+                            .client
+                            .as_ref()
+                            .is_some_and(|c| c.supports("supportsExceptionInfoRequest"))
+                    {
+                        effects.asks.push(Ask::ExceptionInfo(thread));
+                    }
                 }
                 effects
             }
@@ -946,6 +1237,9 @@ impl DebugSession {
                     let partial =
                         &mut self.output_partial[usize::from(kind == RunLineKind::Stderr)];
                     for line in split_output(partial, &text) {
+                        // Either stream: lldb-dap runs the debuggee on a pty,
+                        // so its stderr arrives as `stdout`.
+                        self.note_panic(&line);
                         self.push_output(kind, line);
                     }
                     return Effects::default();
@@ -994,6 +1288,17 @@ impl DebugSession {
                     None => Effects::default(),
                 }
             }
+            Event::ExceptionFilters(filters) => Effects {
+                offer: filters
+                    .into_iter()
+                    .map(|f| (f.filter, f.label, f.default))
+                    .collect(),
+                ..Effects::default()
+            },
+            Event::RunInTerminal(request) => Effects {
+                run_in_terminal: Some(request),
+                ..Effects::default()
+            },
             Event::ThreadStarted(id) => {
                 if !self.started_threads.contains(&id) {
                     self.started_threads.push(id);
@@ -1074,6 +1379,21 @@ impl DebugSession {
                         }
                     }
                     Pending::Console(ix) => self.answer(ix, EvalAnswer::Error(message)),
+                    Pending::DropFrame => {
+                        // estimate: Fleet's wording for a frame it cannot drop.
+                        self.push_line(ConsoleKind::Error, format!("Drop Frame: {message}"));
+                        return Effects {
+                            failed: Some(("Cannot drop the frame".into(), message)),
+                            ..Effects::default()
+                        };
+                    }
+                    Pending::FunctionBreakpoints { panic: true } => {
+                        self.panic_breakpoints.clear();
+                        self.push_line(
+                            ConsoleKind::Error,
+                            format!("The panic breakpoint was not set: {message}"),
+                        );
+                    }
                     Pending::Command(name) => {
                         self.push_line(ConsoleKind::Error, format!("{name}: {message}"))
                     }
@@ -1112,6 +1432,54 @@ impl DebugSession {
                     ..Effects::default()
                 }
             }
+            (Pending::FunctionBreakpoints { panic }, Response::SetFunctionBreakpoints(bps)) => {
+                self.panic_breakpoints = if panic {
+                    bps.iter().filter_map(|b| b.id).collect()
+                } else {
+                    HashSet::new()
+                };
+                Effects::default()
+            }
+            (Pending::ExceptionInfo(thread), Response::ExceptionInfo(info)) => {
+                if self.current_thread == Some(thread) {
+                    if let SessionState::Stopped {
+                        reason,
+                        description,
+                    } = &mut self.state
+                    {
+                        let text = info
+                            .description
+                            .filter(|d| !d.trim().is_empty())
+                            .or_else(|| Some(info.exception_id).filter(|e| !e.is_empty()));
+                        if reason == "exception" && text.is_some() {
+                            *description = text;
+                        }
+                    }
+                }
+                Effects::default()
+            }
+            (Pending::DropFrame, _) => {
+                // lldb-dap sends no stop for `thread return`: the stack again,
+                // as a stop asks it (an adapter's `restartFrame` sends its own
+                // `stopped`, which asks once more).
+                if !self.state.is_stopped() {
+                    return Effects::default();
+                }
+                // What the debuggee stopped on is gone with the frames (the
+                // reason `restartFrame`'s own stop gives).
+                self.state = SessionState::Stopped {
+                    reason: "restart".into(),
+                    description: None,
+                };
+                self.stopped_on_panic = false;
+                self.clear_frames();
+                self.reveal = true;
+                let mut effects = Effects::ask(Ask::Threads);
+                if let Some(thread) = self.current_thread {
+                    effects.asks.push(Ask::StackTrace(thread));
+                }
+                effects
+            }
             (Pending::Threads, Response::Threads(threads)) => {
                 self.threads = threads;
                 let mut effects = Effects::default();
@@ -1145,6 +1513,13 @@ impl DebugSession {
                     })
                     .collect();
                 self.current_frame = 0;
+                if self.stopped_on_panic {
+                    // The panicking code, not std's machinery under it
+                    // (estimate: where Fleet's panic stop lands is unprobed).
+                    if let Some(ix) = self.frames.iter().position(|f| !self.is_library_frame(f)) {
+                        self.current_frame = ix;
+                    }
+                }
                 self.scopes.clear();
                 let mut effects = self.frame_selected();
                 if std::mem::take(&mut self.reveal) {
@@ -1157,9 +1532,26 @@ impl DebugSession {
                     return Effects::default();
                 }
                 // Collapsed, nothing fetched until one is expanded (batch 13:
-                // Fleet shows Local, Static, Global, Registers closed on a stop).
+                // Fleet shows Local, Static, Global, Registers closed on a
+                // stop), but for the ones expanded at an earlier stop in this
+                // function.
+                let function = self
+                    .frames
+                    .get(self.current_frame)
+                    .map(|f| f.name.clone())
+                    .unwrap_or_default();
+                let mut effects = Effects::default();
+                for scope in &scopes {
+                    let reference = scope.variables_reference;
+                    if self
+                        .expansion
+                        .place(reference, Expansion::scope_path(&function, &scope.name))
+                    {
+                        self.reopen(reference, &mut effects);
+                    }
+                }
                 self.scopes = scopes;
-                Effects::default()
+                effects
             }
             (
                 Pending::Variables(_),
@@ -1168,10 +1560,19 @@ impl DebugSession {
                     variables,
                 },
             ) => {
+                let mut effects = Effects::default();
                 if self.state.is_stopped() {
+                    for v in &variables {
+                        let Some(path) = self.expansion.child_path(reference, &v.name) else {
+                            continue;
+                        };
+                        if self.expansion.place(v.variables_reference, path) {
+                            self.reopen(v.variables_reference, &mut effects);
+                        }
+                    }
                     self.children.insert(reference, variables);
                 }
-                Effects::default()
+                effects
             }
             (
                 Pending::Watch {
@@ -1180,8 +1581,18 @@ impl DebugSession {
                 },
                 response @ Response::Evaluate { .. },
             ) => {
+                let mut effects = Effects::default();
                 if frame_id == self.frame_id() {
                     let value = evaluation(expression.clone(), Ok(response));
+                    if let Ok(v) = &value {
+                        let reference = v.variables_reference;
+                        if self
+                            .expansion
+                            .place(reference, Expansion::watch_path(&expression))
+                        {
+                            self.reopen(reference, &mut effects);
+                        }
+                    }
                     for w in self
                         .watches
                         .iter_mut()
@@ -1190,7 +1601,7 @@ impl DebugSession {
                         w.value = Some(value.clone());
                     }
                 }
-                Effects::default()
+                effects
             }
             (
                 Pending::Console(ix),
@@ -1211,6 +1622,32 @@ impl DebugSession {
                 Effects::default()
             }
             _ => Effects::default(),
+        }
+    }
+
+    /// A node of this stop on a path expanded before: expanded again, its
+    /// children asked for.
+    fn reopen(&mut self, reference: i64, effects: &mut Effects) {
+        if self.expanded.insert(reference) && !self.children.contains_key(&reference) {
+            effects.asks.push(Ask::Variables(reference));
+        }
+    }
+
+    /// The debuggee's output line: Rust's panic report remembered for the
+    /// panic stop's description (and put there when it comes after the stop).
+    fn note_panic(&mut self, line: &str) {
+        if std::mem::take(&mut self.panic_header_seen) {
+            self.panic_message = Some(line.trim().to_string());
+        } else if let Some(message) = panic_header(line) {
+            self.panic_header_seen = message.is_empty();
+            self.panic_message = Some(message);
+        } else {
+            return;
+        }
+        if self.stopped_on_panic {
+            if let SessionState::Stopped { description, .. } = &mut self.state {
+                *description = self.panic_message.clone().filter(|m| !m.is_empty());
+            }
         }
     }
 
@@ -1242,9 +1679,11 @@ impl DebugSession {
         self.frames.clear();
         self.current_frame = 0;
         self.scopes.clear();
-        // Variables references are only good while the debuggee stays stopped.
+        // Variables references are only good while the debuggee stays
+        // stopped; the expansion's paths stay.
         self.children.clear();
         self.expanded.clear();
+        self.expansion.forget_references();
     }
 
     fn set_running(&mut self) {
@@ -1253,6 +1692,7 @@ impl DebugSession {
         }
         self.state = SessionState::Running;
         self.reveal = false;
+        self.stopped_on_panic = false;
         self.clear_frames();
         for w in &mut self.watches {
             w.value = None;
@@ -1449,6 +1889,10 @@ impl DebugSession {
         self.breakpoint_ids.clear();
         self.unsent.clear();
         self.started_threads.clear();
+        self.panic_breakpoints.clear();
+        self.panic_message = None;
+        self.panic_header_seen = false;
+        self.stopped_on_panic = false;
         self.last_error = None;
         self.partial.clear();
         self.output_partial = [String::new(), String::new()];
@@ -1502,14 +1946,75 @@ impl DebugSession {
         if reference == 0 {
             return;
         }
-        if !self.expanded.remove(&reference) {
-            self.expanded.insert(reference);
-            if !self.children.contains_key(&reference) && self.state.is_stopped() {
-                self.send(Ask::Variables(reference));
-            }
+        if let Some(ask) = self.toggle_node(reference) {
+            self.send(ask);
         }
         cx.emit(DebugSessionEvent::Changed);
         cx.notify();
+    }
+
+    /// [`DebugSession::toggle_expanded`] without gpui: the expansion flipped
+    /// (by reference for this stop, by path for the next), and the request
+    /// for children not fetched yet.
+    fn toggle_node(&mut self, reference: i64) -> Option<Ask> {
+        if self.expanded.remove(&reference) {
+            self.expansion.set_open(reference, false);
+            return None;
+        }
+        self.expanded.insert(reference);
+        self.expansion.set_open(reference, true);
+        (!self.children.contains_key(&reference) && self.state.is_stopped())
+            .then_some(Ask::Variables(reference))
+    }
+
+    /// Why `debug/drop-frame` cannot drop the selected frame now, or `None`
+    /// when it can: the debuggee must be stopped, the frame must have a
+    /// caller to return to, and the adapter must offer a way (its
+    /// `restartFrame`, or LLDB's `thread return`). Estimate: the words.
+    pub fn drop_frame_refusal(&self) -> Option<String> {
+        if !self.state.is_stopped() || self.frames.is_empty() {
+            return Some("The debuggee is not stopped".into());
+        }
+        if self.current_frame + 1 >= self.frames.len() {
+            return Some("The bottom frame has no caller to return to".into());
+        }
+        match &self.client {
+            Some(c) if c.can_drop_frame() => None,
+            Some(c) => Some(format!("{} cannot drop frames", c.name())),
+            None => Some("The debuggee is not stopped".into()),
+        }
+    }
+
+    /// `debug/drop-frame` on the selected frame (Fleet binds Backspace and
+    /// Delete in the frames list): the frame and those above it dropped,
+    /// the caller on top (`weep_dap::Client::drop_frame`: lldb-dap leaves it
+    /// just after the call, the dropped call's result unset). The stack is
+    /// asked again when the adapter answers.
+    pub fn drop_frame(&mut self, cx: &mut Context<Self>) {
+        if self.drop_frame_refusal().is_some() {
+            return;
+        }
+        let index = self.current_frame;
+        let Some(frame_id) = self.frames.get(index).map(|f| f.id) else {
+            return;
+        };
+        let Some(client) = self.client.as_mut() else {
+            return;
+        };
+        let id = client.drop_frame(index, frame_id);
+        self.pending.insert(id, Pending::DropFrame);
+        cx.notify();
+    }
+
+    /// The workspace's answer to [`DebugSessionEvent::RunInTerminal`]: the
+    /// process it started, or why it could not.
+    pub fn answer_run_in_terminal(&mut self, id: i64, result: Result<u32, String>) {
+        if let Err(e) = &result {
+            self.push_line(ConsoleKind::Error, format!("runInTerminal: {e}"));
+        }
+        if let Some(client) = self.client.as_mut() {
+            client.answer_run_in_terminal(id, result);
+        }
     }
 
     pub fn add_watch(&mut self, expression: String, cx: &mut Context<Self>) {
@@ -1790,6 +2295,7 @@ mod tests {
             path: Some(PathBuf::from("/w/src/main.rs")),
             line,
             column: 0,
+            presentation_hint: None,
         }
     }
 
@@ -1799,6 +2305,7 @@ mod tests {
             thread_id: thread,
             all_threads: true,
             description: None,
+            hit_breakpoint_ids: Vec::new(),
         }
     }
 
@@ -1820,12 +2327,14 @@ mod tests {
                 SourceBreakpoint {
                     line: 1,
                     condition: None,
-                    log_message: None
+                    log_message: None,
+                    hit_condition: None,
                 },
                 SourceBreakpoint {
                     line: 7,
                     condition: Some("x > 1".into()),
-                    log_message: None
+                    log_message: None,
+                    hit_condition: None,
                 },
             ]
         );
@@ -2047,6 +2556,374 @@ mod tests {
             s.execution_point().map(|p| (p.line, p.top)),
             Some((3, false))
         );
+    }
+
+    fn var(name: &str, reference: i64) -> Variable {
+        Variable {
+            name: name.into(),
+            value: String::new(),
+            type_name: None,
+            variables_reference: reference,
+            evaluate_name: None,
+        }
+    }
+
+    fn named_frame(id: i64, name: &str, path: Option<&str>) -> StackFrame {
+        StackFrame {
+            id,
+            name: name.into(),
+            path: path.map(PathBuf::from),
+            line: 3,
+            column: 0,
+            presentation_hint: None,
+        }
+    }
+
+    /// A stop in `function` (frame `frame_id`) whose Locals scope is
+    /// `locals`: the effects of the frames' and the scopes' answers.
+    fn stop_in(s: &mut DebugSession, function: &str, frame_id: i64, locals: i64) -> Effects {
+        s.on_event(stopped(Some(1)));
+        s.on_response(
+            Pending::StackTrace(1),
+            Ok(Response::StackTrace {
+                thread_id: 1,
+                frames: vec![named_frame(frame_id, function, Some("/w/src/main.rs"))],
+            }),
+        );
+        s.on_response(
+            Pending::Scopes(frame_id),
+            Ok(Response::Scopes {
+                frame_id,
+                scopes: vec![Scope {
+                    name: "Locals".into(),
+                    variables_reference: locals,
+                    expensive: false,
+                }],
+            }),
+        )
+    }
+
+    fn children(s: &mut DebugSession, reference: i64, variables: Vec<Variable>) -> Effects {
+        s.on_response(
+            Pending::Variables(reference),
+            Ok(Response::Variables {
+                reference,
+                variables,
+            }),
+        )
+    }
+
+    fn resume(s: &mut DebugSession) {
+        s.on_event(Event::Continued {
+            thread_id: Some(1),
+            all_threads: true,
+        });
+    }
+
+    #[test]
+    fn the_expansion_paths_follow_the_references() {
+        let mut e = Expansion::default();
+        let locals = Expansion::scope_path("app::run", "Locals");
+        assert!(!e.place(8, locals.clone()));
+        let points = e.child_path(8, "points").unwrap();
+        assert_eq!(points, vec!["app::run", "Locals", "points"]);
+        assert!(!e.place(9, points.clone()));
+        // A reference already placed keeps its first path.
+        assert!(!e.place(9, vec!["elsewhere".into()]));
+        assert_eq!(e.child_path(9, "x").unwrap()[2], "points");
+        e.set_open(8, true);
+        e.set_open(9, true);
+        assert!(e.is_open(&locals) && e.is_open(&points));
+        // A new stop: the references are forgotten, the paths stay.
+        e.forget_references();
+        assert_eq!(e.child_path(8, "points"), None);
+        assert!(e.place(18, locals.clone()));
+        assert!(e.place(19, e.child_path(18, "points").unwrap()));
+        // Closing a node forgets its path; its children stay open.
+        e.set_open(18, false);
+        assert!(!e.is_open(&locals) && e.is_open(&points));
+        // A leaf or an unplaced parent places nothing.
+        assert!(!e.place(0, locals));
+        assert_eq!(e.child_path(77, "x"), None);
+        assert!(!e.place(5, vec!["x".into(); MAX_PATH + 1]));
+    }
+
+    #[test]
+    fn expanded_variables_stay_expanded_across_a_stop() {
+        let mut s = DebugSession::new("x".into());
+        running(&mut s);
+        let e = stop_in(&mut s, "app::run", 100, 8);
+        assert_eq!(e.asks, Vec::<Ask>::new(), "collapsed at first");
+        // Locals opened by hand, then `points` in it.
+        assert_eq!(s.toggle_node(8), Some(Ask::Variables(8)));
+        children(&mut s, 8, vec![var("points", 9), var("total", 0)]);
+        assert_eq!(s.toggle_node(9), Some(Ask::Variables(9)));
+        children(&mut s, 9, vec![var("[0]", 10)]);
+        // The next stop, in the same function, new references.
+        resume(&mut s);
+        assert!(s.expanded.is_empty());
+        let e = stop_in(&mut s, "app::run", 200, 18);
+        assert_eq!(e.asks, vec![Ask::Variables(18)]);
+        assert!(s.expanded.contains(&18));
+        let e = children(&mut s, 18, vec![var("points", 19), var("total", 0)]);
+        assert_eq!(e.asks, vec![Ask::Variables(19)]);
+        let e = children(&mut s, 19, vec![var("[0]", 20)]);
+        // `[0]` was never opened.
+        assert_eq!(e.asks, Vec::<Ask>::new());
+        assert_eq!(s.expanded, HashSet::from([18, 19]));
+        // `points` closed: the next stop opens Locals only.
+        assert_eq!(s.toggle_node(19), None);
+        resume(&mut s);
+        stop_in(&mut s, "app::run", 300, 28);
+        let e = children(&mut s, 28, vec![var("points", 29)]);
+        assert_eq!(e.asks, Vec::<Ask>::new());
+        assert_eq!(s.expanded, HashSet::from([28]));
+        // Another function's Locals stay closed.
+        resume(&mut s);
+        let e = stop_in(&mut s, "app::sum", 400, 38);
+        assert_eq!(e.asks, Vec::<Ask>::new());
+        assert!(s.expanded.is_empty());
+    }
+
+    #[test]
+    fn an_expanded_watch_stays_expanded_across_a_stop() {
+        let mut s = DebugSession::new("x".into());
+        running(&mut s);
+        s.watches.push(Watch {
+            expression: "points".into(),
+            value: None,
+        });
+        stop_in(&mut s, "app::run", 100, 8);
+        let answer = |reference| {
+            Ok(Response::Evaluate {
+                result: "size=2".into(),
+                type_name: None,
+                variables_reference: reference,
+            })
+        };
+        let watch = |frame_id| Pending::Watch {
+            expression: "points".into(),
+            frame_id: Some(frame_id),
+        };
+        let e = s.on_response(watch(100), answer(30));
+        assert_eq!(e.asks, Vec::<Ask>::new());
+        assert_eq!(s.toggle_node(30), Some(Ask::Variables(30)));
+        resume(&mut s);
+        stop_in(&mut s, "app::sum", 200, 18);
+        // Watches are not the frame's: open in any function.
+        let e = s.on_response(watch(200), answer(40));
+        assert_eq!(e.asks, vec![Ask::Variables(40)]);
+        assert!(s.expanded.contains(&40));
+    }
+
+    #[test]
+    fn panic_reports_are_read_from_stderr() {
+        assert_eq!(
+            panic_header("thread 'main' (3393960) panicked at src/main.rs:19:5:"),
+            Some(String::new())
+        );
+        assert_eq!(
+            panic_header("thread 'main' panicked at src/main.rs:19:5:"),
+            Some(String::new())
+        );
+        assert_eq!(
+            panic_header("thread 'main' panicked at 'boom', src/main.rs:2:5"),
+            Some("boom".into())
+        );
+        assert_eq!(
+            panic_header("thread '<unnamed>' panicked at 'a', b', src/x.rs:1:1"),
+            Some("a', b".into())
+        );
+        assert_eq!(panic_header("note: run with `RUST_BACKTRACE=1`"), None);
+        assert_eq!(panic_header("the thread 'x' panicked at y"), None);
+    }
+
+    #[test]
+    fn a_stop_on_the_panic_breakpoint_is_an_exception_in_the_users_code() {
+        let mut s = DebugSession::new("x".into());
+        s.set_root(Path::new("/w"));
+        running(&mut s);
+        s.on_response(
+            Pending::FunctionBreakpoints { panic: true },
+            Ok(Response::SetFunctionBreakpoints(vec![Breakpoint {
+                id: Some(4),
+                verified: true,
+                line: Some(886),
+                message: None,
+            }])),
+        );
+        let stderr = |s: &mut DebugSession, text: &str| {
+            s.on_event(Event::Output {
+                category: OutputCategory::Stderr,
+                text: text.into(),
+            })
+        };
+        stderr(
+            &mut s,
+            "
+thread 'main' (77) panicked at src/main.rs:19:5:
+",
+        );
+        let e = s.on_event(Event::Stopped {
+            reason: "breakpoint".into(),
+            thread_id: Some(1),
+            all_threads: true,
+            description: Some("breakpoint 4.1".into()),
+            hit_breakpoint_ids: vec![4],
+        });
+        assert!(!e.asks.contains(&Ask::ExceptionInfo(1)));
+        assert!(s.stopped_on_panic);
+        assert_eq!(
+            s.state,
+            SessionState::Stopped {
+                reason: "exception".into(),
+                description: Some(PANIC_DESCRIPTION.into())
+            }
+        );
+        assert_eq!(s.stop_text().as_deref(), Some("Panic"));
+        // The message's line after the stop.
+        stderr(
+            &mut s,
+            "boom 60
+note: run with `RUST_BACKTRACE=1`
+",
+        );
+        assert_eq!(s.stop_text().as_deref(), Some("Panic: boom 60"));
+        // The frames: std's machinery, then the panicking function, which
+        // is selected.
+        let e = s.on_response(
+            Pending::StackTrace(1),
+            Ok(Response::StackTrace {
+                thread_id: 1,
+                frames: vec![
+                    named_frame(
+                        10,
+                        "__rustc::rust_panic",
+                        Some("/r/library/std/src/panicking.rs"),
+                    ),
+                    named_frame(11, "core::panicking::panic_fmt", None),
+                    named_frame(12, "app::boom", Some("/w/src/main.rs")),
+                    named_frame(13, "app::main", Some("/w/src/main.rs")),
+                ],
+            }),
+        );
+        assert!(e.stopped);
+        assert_eq!(s.current_frame, 2);
+        assert_eq!(e.asks[0], Ask::Scopes(12));
+        assert_eq!(
+            s.execution_point().map(|p| (p.line, p.top)),
+            Some((3, false))
+        );
+        // A later breakpoint stop is no panic.
+        resume(&mut s);
+        assert!(!s.stopped_on_panic);
+        s.on_event(stopped(Some(1)));
+        assert_eq!(s.stop_text(), None);
+        // The panic breakpoint cleared: its id means nothing any more.
+        s.on_response(
+            Pending::FunctionBreakpoints { panic: false },
+            Ok(Response::SetFunctionBreakpoints(Vec::new())),
+        );
+        resume(&mut s);
+        s.on_event(Event::Stopped {
+            reason: "breakpoint".into(),
+            thread_id: Some(1),
+            all_threads: true,
+            description: None,
+            hit_breakpoint_ids: vec![4],
+        });
+        assert!(!s.stopped_on_panic);
+    }
+
+    #[test]
+    fn an_exception_stop_takes_the_adapters_exception_info() {
+        let mut s = DebugSession::new("x".into());
+        running(&mut s);
+        s.on_event(Event::Stopped {
+            reason: "exception".into(),
+            thread_id: Some(1),
+            all_threads: true,
+            description: Some("signal SIGABRT".into()),
+            hit_breakpoint_ids: Vec::new(),
+        });
+        assert_eq!(s.stop_text().as_deref(), Some("Exception: signal SIGABRT"));
+        s.on_response(
+            Pending::ExceptionInfo(1),
+            Ok(Response::ExceptionInfo(weep_dap::ExceptionInfo {
+                exception_id: "signal".into(),
+                description: Some("SIGABRT: abort() called".into()),
+                break_mode: "always".into(),
+            })),
+        );
+        assert_eq!(
+            s.stop_text().as_deref(),
+            Some("Exception: SIGABRT: abort() called")
+        );
+    }
+
+    #[test]
+    fn the_adapters_filters_and_terminal_requests_go_to_the_app() {
+        let mut s = DebugSession::new("x".into());
+        let e = s.on_event(Event::ExceptionFilters(vec![weep_dap::ExceptionFilter {
+            filter: "cpp_throw".into(),
+            label: "C++ Throw".into(),
+            default: false,
+        }]));
+        assert_eq!(
+            e.offer,
+            vec![("cpp_throw".to_string(), "C++ Throw".to_string(), false)]
+        );
+        let request = RunInTerminalRequest {
+            id: 3,
+            kind: "integrated".into(),
+            title: None,
+            cwd: PathBuf::from("/w"),
+            args: vec!["lldb-dap".into()],
+            env: Vec::new(),
+        };
+        let e = s.on_event(Event::RunInTerminal(request.clone()));
+        assert_eq!(e.run_in_terminal, Some(request));
+    }
+
+    #[test]
+    fn library_frames() {
+        let roots = vec![PathBuf::from("/w"), PathBuf::from("/private/w")];
+        let lib = |path: Option<&str>| library_frame(&named_frame(1, "f", path), &roots);
+        assert!(!lib(Some("/w/src/main.rs")));
+        assert!(!lib(Some("/private/w/src/main.rs")));
+        assert!(lib(Some("/rustc/abc/library/std/src/rt.rs")));
+        assert!(lib(Some("/home/u/.cargo/registry/src/x/lib.rs")));
+        assert!(lib(None));
+        let mut subtle = named_frame(1, "f", Some("/w/src/main.rs"));
+        subtle.presentation_hint = Some("subtle".into());
+        assert!(library_frame(&subtle, &roots));
+        // No root known: a file is the user's.
+        assert!(!library_frame(&named_frame(1, "f", Some("/x.rs")), &[]));
+    }
+
+    #[test]
+    fn a_dropped_frame_asks_the_stack_again() {
+        let mut s = DebugSession::new("x".into());
+        running(&mut s);
+        assert_eq!(
+            s.drop_frame_refusal().as_deref(),
+            Some("The debuggee is not stopped")
+        );
+        stop_in(&mut s, "app::run", 100, 8);
+        // One frame: no caller to return to.
+        assert_eq!(
+            s.drop_frame_refusal().as_deref(),
+            Some("The bottom frame has no caller to return to")
+        );
+        let e = s.on_response(Pending::DropFrame, Ok(Response::Ack));
+        assert_eq!(e.asks, vec![Ask::Threads, Ask::StackTrace(1)]);
+        assert!(s.frames.is_empty());
+        let e = s.on_response(Pending::DropFrame, Err("Can't return".into()));
+        assert_eq!(
+            e.failed,
+            Some(("Cannot drop the frame".into(), "Can't return".into()))
+        );
+        assert!(e.asks.is_empty());
     }
 
     #[test]
@@ -2272,6 +3149,7 @@ mod tests {
             cwd: PathBuf::from("/w"),
             env: Vec::new(),
             stop_on_entry: false,
+            run_in_terminal: false,
         });
         assert_eq!(
             intro_lines(&launch),

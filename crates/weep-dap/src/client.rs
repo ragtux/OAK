@@ -9,13 +9,21 @@
 //! Nothing blocks: a request is written by the writer thread and its
 //! answer arrives on a later [`Client::poll`] as [`Event::Response`] with
 //! the id the request was given; `wake` tells the owner to poll. Requests
-//! made before the configuration is sent wait in a queue: breakpoints go
-//! out with the configuration, the rest right after it.
+//! made before the configuration is sent wait in a queue: breakpoints (line,
+//! function and exception ones) go out with the configuration, the rest
+//! right after it.
+//!
+//! The adapter's reverse requests: `runInTerminal` becomes
+//! [`Event::RunInTerminal`], answered by [`Client::answer_run_in_terminal`];
+//! any other is declined.
 
 use crate::eval::{self, EvalRequest, Walk};
 use crate::protocol::{self, Pending};
 use crate::transport::{self, Incoming, Wake};
-use crate::{AdapterCommand, EvalContext, Event, RequestId, Response, SourceBreakpoint, Start};
+use crate::{
+    AdapterCommand, EvalContext, Event, FunctionBreakpoint, RequestId, Response, SourceBreakpoint,
+    Start,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -212,6 +220,18 @@ impl Client {
         self.child.id()
     }
 
+    /// The adapter is LLDB's (lldb-dap, or its old name lldb-vscode): its
+    /// `repl` runs LLDB commands behind [`COMMAND_ESCAPE`].
+    pub fn is_lldb(&self) -> bool {
+        self.name.contains("lldb")
+    }
+
+    /// Whether [`Client::drop_frame`] can work: the adapter's
+    /// `restartFrame`, or LLDB's `thread return`.
+    pub fn can_drop_frame(&self) -> bool {
+        self.supports("supportsRestartFrame") || self.is_lldb()
+    }
+
     fn allocate(&mut self) -> RequestId {
         let id = RequestId(self.next_id);
         self.next_id += 1;
@@ -237,7 +257,12 @@ impl Client {
     fn request(&mut self, command: &'static str, arguments: Value, pending: Pending) -> RequestId {
         let id = self.allocate();
         match self.phase {
-            Phase::Configured => self.write(Some(id), command, arguments, pending),
+            Phase::Configured => self.send_queued(Queued {
+                id,
+                command,
+                arguments,
+                pending,
+            }),
             Phase::Initializing | Phase::Configuring => self.queued.push(Queued {
                 id,
                 command,
@@ -253,6 +278,32 @@ impl Client {
             }
         }
         id
+    }
+
+    /// Writes one of the owner's requests, the capabilities known: the
+    /// exception filters cut to the adapter's, a request the adapter cannot
+    /// take answered here.
+    fn send_queued(&mut self, q: Queued) {
+        let refuse = match &q.pending {
+            Pending::SetFunctionBreakpoints => !self.supports("supportsFunctionBreakpoints"),
+            Pending::ExceptionInfo => !self.supports("supportsExceptionInfoRequest"),
+            _ => false,
+        };
+        if refuse {
+            self.local.push(Event::Response {
+                id: q.id,
+                result: Err(format!("{} cannot take a {} request", self.name, q.command)),
+            });
+            (self.wake)();
+            return;
+        }
+        let arguments = match &q.pending {
+            Pending::SetExceptionBreakpoints(filters) => {
+                protocol::set_exception_breakpoints_arguments(filters, &self.capabilities)
+            }
+            _ => q.arguments,
+        };
+        self.write(Some(q.id), q.command, arguments, q.pending);
     }
 
     /// Answers one of the adapter's requests.
@@ -350,9 +401,18 @@ impl Client {
                 self.answered(id, pending, error, &body, events);
             }
             Incoming::Event { event, body } => self.event(&event, body, events),
-            Incoming::Request { seq, command, .. } => {
-                // runInTerminal is declined in `initialize`; startDebugging
-                // (child sessions) is not WEEP's yet.
+            Incoming::Request {
+                seq,
+                command,
+                arguments,
+            } => {
+                if command == "runInTerminal" {
+                    if let Some(request) = protocol::run_in_terminal_request(seq, &arguments) {
+                        events.push(Event::RunInTerminal(request));
+                        return;
+                    }
+                }
+                // startDebugging (child sessions) is not WEEP's yet.
                 let message = format!("WEEP does not support the {command} request");
                 self.respond(seq, &command, Err(message));
             }
@@ -372,6 +432,7 @@ impl Client {
                 None => {
                     self.capabilities = body.clone();
                     self.phase = Phase::Configuring;
+                    events.push(Event::ExceptionFilters(protocol::exception_filters(body)));
                     let init = crate::rust_init_commands();
                     match self.start.take() {
                         Some(Start::Launch(launch)) => self.write(
@@ -412,6 +473,11 @@ impl Client {
                 self.disconnect();
             }
             Pending::Disconnect => {}
+            Pending::DropFrame { returned } => {
+                if let Some(id) = id {
+                    self.frame_dropped(id, returned, error, body, events);
+                }
+            }
             Pending::Evaluate(request) => {
                 if let Some(id) = id {
                     self.evaluated(id, request, error, body, events);
@@ -484,6 +550,7 @@ impl Client {
                     thread_id,
                     all_threads,
                     description,
+                    hit_breakpoint_ids,
                 }) => {
                     // lldb-dap may stop (on entry, at once) before it
                     // answers `configurationDone`: the session ran first.
@@ -506,6 +573,7 @@ impl Client {
                         thread_id,
                         all_threads,
                         description,
+                        hit_breakpoint_ids,
                     });
                 }
                 Some(e @ Event::Exited(_)) => {
@@ -533,11 +601,17 @@ impl Client {
                 Pending::SetBreakpoints(path),
             );
         }
-        let (configuration, rest): (Vec<Queued>, Vec<Queued>) = std::mem::take(&mut self.queued)
-            .into_iter()
-            .partition(|q| matches!(q.pending, Pending::SetBreakpoints(_)));
+        let (configuration, rest): (Vec<Queued>, Vec<Queued>) =
+            std::mem::take(&mut self.queued).into_iter().partition(|q| {
+                matches!(
+                    q.pending,
+                    Pending::SetBreakpoints(_)
+                        | Pending::SetFunctionBreakpoints
+                        | Pending::SetExceptionBreakpoints(_)
+                )
+            });
         for q in configuration {
-            self.write(Some(q.id), q.command, q.arguments, q.pending);
+            self.send_queued(q);
         }
         if self.supports("supportsConfigurationDoneRequest") {
             self.write(
@@ -551,7 +625,7 @@ impl Client {
         }
         self.phase = Phase::Configured;
         for q in rest {
-            self.write(Some(q.id), q.command, q.arguments, q.pending);
+            self.send_queued(q);
         }
     }
 
@@ -563,6 +637,118 @@ impl Client {
             args,
             Pending::SetBreakpoints(path.to_path_buf()),
         )
+    }
+
+    /// Replaces every function breakpoint (an empty list clears them),
+    /// answered by [`Response::SetFunctionBreakpoints`]; an error when the
+    /// adapter has no `supportsFunctionBreakpoints`.
+    pub fn set_function_breakpoints(&mut self, breakpoints: &[FunctionBreakpoint]) -> RequestId {
+        let args = protocol::set_function_breakpoints_arguments(breakpoints);
+        self.request(
+            "setFunctionBreakpoints",
+            args,
+            Pending::SetFunctionBreakpoints,
+        )
+    }
+
+    /// Replaces the enabled exception filters: of `filters`, the ones the
+    /// adapter offers ([`Event::ExceptionFilters`]) go out; answered by
+    /// [`Response::SetExceptionBreakpoints`].
+    pub fn set_exception_breakpoints(&mut self, filters: &[String]) -> RequestId {
+        self.request(
+            "setExceptionBreakpoints",
+            json!({ "filters": filters }),
+            Pending::SetExceptionBreakpoints(filters.to_vec()),
+        )
+    }
+
+    /// What the thread stopped on (`exceptionInfo`), answered by
+    /// [`Response::ExceptionInfo`]; an error when the adapter cannot tell.
+    pub fn exception_info(&mut self, thread_id: i64) -> RequestId {
+        self.request(
+            "exceptionInfo",
+            json!({ "threadId": thread_id }),
+            Pending::ExceptionInfo,
+        )
+    }
+
+    /// Drops the frames from the top down to the one at `index` (whose id
+    /// is `frame_id`), answered by [`Response::Ack`] once done, or an error.
+    ///
+    /// With the adapter's `restartFrame` the frame starts over and a
+    /// `stopped` (reason "restart") follows. lldb-dap has none (Xcode's,
+    /// LLDB 2103): LLDB's `thread return` pops the selected frame and every
+    /// one above it, so `frame select <index>` then `thread return` leave
+    /// the debuggee stopped in the caller just after the call, the dropped
+    /// function's result unset (native code cannot run a call again: its
+    /// arguments are gone with the registers). lldb-dap runs a command in
+    /// LLDB's own selected frame, whatever the request's frame, hence the
+    /// `frame select`. No `stopped` comes: the owner asks for the stack
+    /// again on the answer.
+    pub fn drop_frame(&mut self, index: usize, frame_id: i64) -> RequestId {
+        if self.supports("supportsRestartFrame") {
+            return self.request("restartFrame", json!({ "frameId": frame_id }), Pending::Ack);
+        }
+        if !self.is_lldb() {
+            let id = self.allocate();
+            self.local.push(Event::Response {
+                id,
+                result: Err(format!("{} cannot drop a frame", self.name)),
+            });
+            (self.wake)();
+            return id;
+        }
+        let line = format!("{COMMAND_ESCAPE}frame select {index}");
+        let args = protocol::evaluate_arguments(&line, Some(frame_id), EvalContext::Repl);
+        self.request("evaluate", args, Pending::DropFrame { returned: false })
+    }
+
+    /// One step of [`Client::drop_frame`] through LLDB answered.
+    fn frame_dropped(
+        &mut self,
+        id: RequestId,
+        returned: bool,
+        error: Option<String>,
+        body: &Value,
+        events: &mut Vec<Event>,
+    ) {
+        // A command's own failure comes back as its output.
+        let output = body.get("result").and_then(Value::as_str).unwrap_or("");
+        let failure = error.map(|e| eval::clean_error(&e)).or_else(|| {
+            output
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("error:"))
+                .map(|e| e.trim().to_string())
+        });
+        if let Some(e) = failure {
+            events.push(Event::Response { id, result: Err(e) });
+            return;
+        }
+        if returned {
+            events.push(Event::Response {
+                id,
+                result: Ok(Response::Ack),
+            });
+            return;
+        }
+        let line = format!("{COMMAND_ESCAPE}thread return");
+        let args = protocol::evaluate_arguments(&line, None, EvalContext::Repl);
+        self.write(
+            Some(id),
+            "evaluate",
+            args,
+            Pending::DropFrame { returned: true },
+        );
+    }
+
+    /// Answers the adapter's `runInTerminal` ([`Event::RunInTerminal`] with
+    /// this `id`): the started process's id, or why it could not start.
+    pub fn answer_run_in_terminal(&mut self, id: i64, result: Result<u32, String>) {
+        if self.phase == Phase::Over {
+            return;
+        }
+        let result = result.map(|pid| json!({ "processId": pid }));
+        self.respond(id, "runInTerminal", result);
     }
 
     pub fn threads(&mut self) -> RequestId {

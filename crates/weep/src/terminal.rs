@@ -85,6 +85,17 @@ fn caret_shape(settings: &weep_settings::Settings) -> CursorShape {
 
 impl TerminalView {
     pub fn new(profile: Profile, cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self::with_env(profile, cwd, &[], cx)
+    }
+
+    /// A terminal running `profile`'s program with `env` over the app's
+    /// environment (M8: a debug adapter's `runInTerminal`).
+    pub fn with_env(
+        profile: Profile,
+        cwd: PathBuf,
+        env: &[(String, String)],
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = &cx.global::<AppSettings>().settings;
         let options = (settings.terminal_line_capacity(), caret_shape(settings));
         let (tx, rx) = unbounded::<()>();
@@ -99,11 +110,18 @@ impl TerminalView {
             cell_width: 8,
             cell_height: 22,
         };
-        let (terminal, error) =
-            match Terminal::spawn(&profile, Some(&cwd), size, options.0, options.1, wake) {
-                Ok(t) => (Some(t), None),
-                Err(e) => (None, Some(format!("{e:#}"))),
-            };
+        let (terminal, error) = match Terminal::spawn_with_env(
+            &profile,
+            Some(&cwd),
+            env,
+            size,
+            options.0,
+            options.1,
+            wake,
+        ) {
+            Ok(t) => (Some(t), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
+        };
         if let Some(e) = &error {
             eprintln!("weep: terminal: {e}");
         }
@@ -165,6 +183,16 @@ impl TerminalView {
 
     pub fn profile(&self) -> &Profile {
         &self.profile
+    }
+
+    /// The program's process id, once it started.
+    pub fn pid(&self) -> Option<u32> {
+        self.terminal.as_ref().and_then(Terminal::pid)
+    }
+
+    /// Why the program did not start.
+    pub fn spawn_error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     fn snapshot(&self) -> Option<Snapshot> {

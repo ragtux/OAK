@@ -233,6 +233,8 @@ pub struct Terminal {
     clipboard: Option<String>,
     /// The PTY produced output since the last [`take_output`](Self::take_output).
     output: bool,
+    /// The program's process id, when the platform tells it.
+    pid: Option<u32>,
 }
 
 impl Terminal {
@@ -242,6 +244,20 @@ impl Terminal {
     pub fn spawn(
         profile: &Profile,
         cwd: Option<&Path>,
+        size: Size,
+        scrollback: usize,
+        cursor: CursorShape,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Terminal> {
+        Self::spawn_with_env(profile, cwd, &[], size, scrollback, cursor, wake)
+    }
+
+    /// [`Terminal::spawn`] with `env` set for the program over the app's
+    /// own environment (a debug adapter's `runInTerminal`).
+    pub fn spawn_with_env(
+        profile: &Profile,
+        cwd: Option<&Path>,
+        extra_env: &[(String, String)],
         size: Size,
         scrollback: usize,
         cursor: CursorShape,
@@ -266,6 +282,9 @@ impl Terminal {
         if !cfg!(windows) {
             env.insert("TERM".to_string(), "xterm-256color".to_string());
         }
+        for (k, v) in extra_env {
+            env.insert(k.clone(), v.clone());
+        }
         let options = tty::Options {
             shell: Some(tty::Shell::new(
                 profile.program.clone(),
@@ -279,6 +298,10 @@ impl Terminal {
         };
         let pty = tty::new(&options, size.window_size(), 0)
             .with_context(|| format!("starting {}", profile.program))?;
+        #[cfg(unix)]
+        let pid = Some(pty.child().id());
+        #[cfg(windows)]
+        let pid = pty.child_watcher().pid().map(|p| p.get());
         let event_loop = EventLoop::new(term.clone(), listener, pty, false, false)
             .context("the terminal's event loop")?;
         let notifier = Notifier(event_loop.channel());
@@ -296,7 +319,13 @@ impl Terminal {
             bells: 0,
             clipboard: None,
             output: false,
+            pid,
         })
+    }
+
+    /// The program's process id (`None` where the platform does not say).
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     /// Drains Alacritty's events; true when the grid may have changed.
@@ -642,6 +671,50 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+    }
+
+    /// A debug adapter's `runInTerminal`: a program with its own
+    /// environment, its pid known.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_with_its_environment_and_pid() {
+        let profile = Profile::new(
+            "probe",
+            "/bin/sh",
+            vec!["-c".into(), "echo \"weep-$WEEP_RIT_PROBE\"; sleep 5".into()],
+        );
+        let size = Size {
+            cols: 80,
+            rows: 24,
+            cell_width: 8,
+            cell_height: 16,
+        };
+        let mut terminal = Terminal::spawn_with_env(
+            &profile,
+            None,
+            &[("WEEP_RIT_PROBE".into(), "42".into())],
+            size,
+            100,
+            CursorShape::Block,
+            Arc::new(|| {}),
+        )
+        .expect("spawn");
+        let pid = terminal.pid().expect("a pid");
+        assert!(pid > 0);
+        let snap = wait_for(&mut terminal, |s| {
+            (0..s.rows).any(|r| s.row_text(r).contains("weep-42"))
+        });
+        assert!(
+            (0..snap.rows).any(|r| snap.row_text(r).contains("weep-42")),
+            "{:?}",
+            (0..snap.rows).map(|r| snap.row_text(r)).collect::<Vec<_>>()
+        );
+        // The pid is the program's.
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(alive);
     }
 
     #[test]

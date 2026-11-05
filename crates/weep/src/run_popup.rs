@@ -123,6 +123,49 @@ fn debug_button(kind: &str) -> bool {
     kind == "cargo"
 }
 
+/// A row of the menu a right click on a gutter run icon opens (M8,
+/// estimate: Fleet's click on the icon is unprobed; the rows after
+/// IntelliJ's gutter menu, "Run 'name'" and "Debug 'name'", with the
+/// in-context actions' chords, which act on the configuration at
+/// run.json's caret, where the click puts it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GutterRunRow {
+    Run,
+    Debug,
+}
+
+impl GutterRunRow {
+    pub fn label(self, name: &str) -> String {
+        let verb = match self {
+            GutterRunRow::Run => "Run",
+            GutterRunRow::Debug => "Debug",
+        };
+        if name.is_empty() {
+            verb.to_string()
+        } else {
+            format!("{verb} '{name}'")
+        }
+    }
+
+    /// The Fleet action whose chord the row shows.
+    pub fn chord_action(self) -> &'static str {
+        match self {
+            GutterRunRow::Run => "run/run-in-context",
+            GutterRunRow::Debug => "debug/debug-in-context",
+        }
+    }
+}
+
+/// The run icon's menu for a configuration of type `kind`: Run, and Debug
+/// where WEEP can debug the row (as the popup's Alt+Enter decides).
+pub fn gutter_run_rows(kind: &str) -> Vec<GutterRunRow> {
+    let mut rows = vec![GutterRunRow::Run];
+    if debuggable(kind) {
+        rows.push(GutterRunRow::Debug);
+    }
+    rows
+}
+
 /// The tab's and the row's icon for a configuration type (estimates: Fleet
 /// draws its own per type).
 pub fn kind_icon(kind: &str) -> &'static str {
@@ -870,5 +913,18 @@ mod tests {
     fn debug_buttons_and_gesture_targets() {
         assert!(debug_button("cargo") && !debug_button("command"));
         assert!(debuggable("command") && !debuggable("docker"));
+    }
+
+    #[test]
+    fn the_run_icon_menu() {
+        use GutterRunRow::*;
+        assert_eq!(gutter_run_rows("cargo"), vec![Run, Debug]);
+        assert_eq!(gutter_run_rows("command"), vec![Run, Debug]);
+        assert_eq!(gutter_run_rows("gradle"), vec![Run]);
+        assert_eq!(Run.label("debug fixture"), "Run 'debug fixture'");
+        assert_eq!(Debug.label("debug fixture"), "Debug 'debug fixture'");
+        assert_eq!(Debug.label(""), "Debug");
+        assert_eq!(Run.chord_action(), "run/run-in-context");
+        assert_eq!(Debug.chord_action(), "debug/debug-in-context");
     }
 }

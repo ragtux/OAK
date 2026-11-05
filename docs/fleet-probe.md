@@ -1115,6 +1115,40 @@ Left open:
   Static, Global against Locals, Globals).
 - Fleet's input shows its parser's red squiggles under `?` and `*`.
 
+## Twenty-third pass: M8's remainder, built without Fleet (2026-11-05)
+
+No Fleet shot: three agents built the rest of the M8 list at once. WEEP ran on
+the fixture by hand (`WEEP_KEYS`, a scratch `WEEP_CONFIG_DIR`): stopped on line
+5 with the std frames dimmed; the Breakpoints tool listed "Rust: on panic" and
+lldb-dap's six filters (C++ Catch/Throw, Objective-C Catch/Throw, Swift
+Catch/Throw) under the line breakpoints, and a selected breakpoint's
+properties under the list; with the debuggee changed to panic, the session
+stopped in `__rustc::rust_panic`, selected `debuggee::main` (scrolled into
+view) and the editor's line 7, the status row reading "Panic: points: 14 is
+too big". Every value below is an estimate.
+
+| element | WEEP (estimate) |
+|---|---|
+| breakpoint properties | under the Breakpoints tool's list when a line breakpoint is selected, after the Debug tool's splitter: a title row with its name, an "Enabled" check box, then "Condition", "Log message", "Hit count" in a 104 px label column (6 px between rows) with the find field's 28 px frame; placeholders "Stop only when this is true", "Log instead of stopping: {expr}", "Stop on hit N"; applied on Enter or focus loss, Esc reverts; the gutter tooltip's detail lists all three |
+| exception breakpoints | the group "Exception Breakpoints N" after the line breakpoints; expui's `breakpointException` (`breakpointExceptionDisabled` off) in `icon.background.red`, the adapter's label, a check box; WEEP's "Rust: on panic" first (codelldb's label), off by default; kept as `exceptionBreakpoints` in `layout.json` |
+| panic stop | "Panic: <message>" (or "Exception: <description>" from `exceptionInfo`) as the Debug tool's status row in `text.dangerous`; the first frame of the user's code selected |
+| library frames | no source, a source outside the workspace, or the `subtle`/`deemphasize` hint: drawn in `listItem.text.secondary` |
+| drop-frame | "Drop Frame" (IntelliJ's title); refusals "The debuggee is not stopped", "The bottom frame has no caller to return to", "<adapter> cannot drop frames" in a notification "Cannot drop the frame" and a console line "Drop Frame: …" |
+| quick evaluate with click | Alt+click on an identifier while stopped (IntelliJ's gesture): the caret moves there and the quick evaluate popup opens; anywhere else Alt+click adds a caret; title "Quick Evaluate Expression with Click" |
+| run icon menu | a right click on a run.json run icon: "Run '<name>'", and "Debug '<name>'" on cargo and command rows, with the `run/run-in-context` and `debug/debug-in-context` chords; the caret moves to the icon's line; the left click still runs |
+| runInTerminal | a new bottom Terminal tab, not focused, kept after the process exits; `external` treated as `integrated` |
+
+What lldb-dap does (`crates/weep-dap/tests/lldb.rs`): it offers six
+exception filters and none for Rust; a function breakpoint on `rust_panic`
+binds `__rustc::rust_panic`; it has no `supportsRestartFrame`; its repl runs
+in LLDB's own selected frame whatever `frameId` says, so a drop is
+`frame select N` then `thread return` (`thread jump` back to the call line
+was tried and rejected: at -O0 the line's first instruction relies on
+registers set before it); the panic report arrives as `stdout` (the
+debuggee's pty); `runInTerminal` launches lldb-dap itself as the launcher,
+and macOS refuses an attach to Xcode's signed binary, so only an ad-hoc
+signed copy works (the test does that; WEEP never asks for it).
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws

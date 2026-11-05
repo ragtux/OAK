@@ -66,6 +66,12 @@ pub enum EditorEvent {
     /// A click on a run icon in `.fleet/run.json`'s gutter: the workspace
     /// runs that configuration (its index in the file).
     RunConfiguration(usize),
+    /// M8: a right click on a run icon: the workspace opens its menu (Run
+    /// and Debug on configuration `config`) at `position`.
+    RunIconMenu {
+        position: Point<Pixels>,
+        config: usize,
+    },
     /// Escape in the editor while an interline view (the inline usages) is
     /// open: the workspace closes it.
     CloseInterline,
@@ -2750,6 +2756,30 @@ impl EditorView {
                 return;
             }
         }
+        // A run icon's menu: Run and Debug on its configuration (estimate:
+        // Fleet's click on the icon is unprobed, so the left click keeps
+        // running it). The caret goes to the icon's line, so the chords the
+        // rows show (`run/run-in-context`, `debug/debug-in-context`) act
+        // on the same configuration.
+        if let Hit::RunIcon(config) = hit {
+            let row = self
+                .run_rows(cx)
+                .iter()
+                .find(|(_, ix)| *ix == config)
+                .map(|(r, _)| *r);
+            if let Some(row) = row {
+                self.go(cx, |c, b| {
+                    let at = b.line_to_char(row);
+                    c.set_cursor(b, at)
+                });
+                cx.notify();
+            }
+            cx.emit(EditorEvent::RunIconMenu {
+                position: event.position,
+                config,
+            });
+            return;
+        }
         if let Hit::Text(offset) = hit {
             let inside = self.with_buffer(cx, |c, _| {
                 c.selections().iter().any(|s| s.range().contains(&offset))
@@ -3068,6 +3098,28 @@ impl EditorView {
                     cx.emit(EditorEvent::GoToDefinition { offset });
                     cx.notify();
                     return;
+                }
+                // M8: Alt+click on an expression while a session is stopped
+                // quick-evaluates it (`debug/quick-evaluate-expression-with-click`,
+                // a gesture with no chord in Fleet's keymaps; estimate after
+                // IntelliJ, unprobed in Fleet): the caret goes onto it and the
+                // keyboard action's popup opens there. Elsewhere, or with no
+                // stopped session, the click adds a caret as below.
+                if alt
+                    && !shift
+                    && clicks < 2
+                    && !event.modifiers.secondary()
+                    && debug::stopped_session(cx).is_some()
+                {
+                    if let Some(at) = self.eval_click_offset(offset, event.position, window, cx) {
+                        self.go(cx, |c, b| c.set_cursor(b, at));
+                        self.goal_column = None;
+                        self.expand_last = None;
+                        self.restart_blink(cx);
+                        cx.notify();
+                        window.dispatch_action(Box::new(DebugQuickEvaluateExpressionWithClick), cx);
+                        return;
+                    }
                 }
                 self.go(cx, |c, b| match clicks {
                     2 => {

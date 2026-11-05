@@ -10,8 +10,8 @@ use std::process::Command;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 use weep_dap::{
-    AdapterCommand, Client, EvalContext, Event, LaunchRequest, OutputCategory, RequestId, Response,
-    SourceBreakpoint, Start,
+    AdapterCommand, Client, EvalContext, Event, FunctionBreakpoint, LaunchRequest, OutputCategory,
+    RequestId, Response, SourceBreakpoint, Start,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -82,6 +82,35 @@ fn sum(points: &[Point]) -> i32 {
 }
 "#;
 
+/// 0-based lines of `RUST_PANIC_SOURCE`: `depth`'s `return`, its recursive
+/// call, `main`'s call of `depth` and `boom`'s panic.
+const PANIC_RETURN_LINE: usize = 12;
+const PANIC_RECURSE_LINE: usize = 14;
+const PANIC_MAIN_CALL_LINE: usize = 2;
+const PANIC_LINE: usize = 18;
+
+const RUST_PANIC_SOURCE: &str = r#"fn main() {
+    let v = vec![1, 2, 3];
+    let n = depth(3);
+    println!("n = {}", n);
+    if v.len() == 3 {
+        boom(n);
+    }
+}
+
+fn depth(k: i32) -> i32 {
+    let here = k * 10;
+    if k == 0 {
+        return here;
+    }
+    depth(k - 1) + here
+}
+
+fn boom(n: i32) {
+    panic!("boom {}", n);
+}
+"#;
+
 fn adapter() -> Option<AdapterCommand> {
     let found = AdapterCommand::find_lldb();
     if found.is_none() {
@@ -139,6 +168,7 @@ fn launch(program: &Path, args: &[&str]) -> Start {
         cwd: program.parent().unwrap().to_path_buf(),
         env: vec![("WEEP_DAP_TEST".into(), "1".into())],
         stop_on_entry: false,
+        run_in_terminal: false,
     })
 }
 
@@ -217,6 +247,24 @@ impl Session {
     fn ok(&mut self, id: RequestId) -> Response {
         self.response(id)
             .unwrap_or_else(|e| panic!("request {id:?} failed: {e}; events: {:#?}", self.log))
+    }
+
+    fn frames(&mut self, thread: i64) -> Vec<weep_dap::StackFrame> {
+        let id = self.client.stack_trace(thread);
+        match self.ok(id) {
+            Response::StackTrace { frames, .. } => frames,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn value(&mut self, expression: &str, frame: i64) -> String {
+        let id = self
+            .client
+            .evaluate(expression, Some(frame), EvalContext::Watch);
+        match self.ok(id) {
+            Response::Evaluate { result, .. } => result,
+            other => panic!("{other:?}"),
+        }
     }
 
     fn stopped(&mut self) -> (String, i64) {
@@ -739,4 +787,250 @@ fn kill_ends_the_session_at_once() {
         .status()
         .is_ok_and(|st| st.success());
     assert!(!alive, "the adapter {pid} still runs");
+}
+
+/// WEEP's Rust panic breakpoint: a function breakpoint on `rust_panic`
+/// (lldb-dap binds `__rustc::rust_panic` by its base name) set before the
+/// configuration is done, with the adapter's exception filters (an unknown
+/// one left out); the stop names the breakpoint it hit, and the frames
+/// below it reach the panicking function.
+#[test]
+fn a_panic_stops_on_the_rust_panic_breakpoint() {
+    let Some(adapter) = adapter() else { return };
+    let Some((dir, source, program)) = build_rust_from(RUST_PANIC_SOURCE) else {
+        return;
+    };
+    let mut s = Session::start(&adapter, launch(&program, &[]), Vec::new());
+    let function = s.client.set_function_breakpoints(&[FunctionBreakpoint {
+        name: "rust_panic".into(),
+        condition: None,
+    }]);
+    let exceptions = s
+        .client
+        .set_exception_breakpoints(&["cpp_throw".into(), "no_such_filter".into()]);
+    let filters = s.wait("the exception filters", |e| match e {
+        Event::ExceptionFilters(f) => Some(f.clone()),
+        _ => None,
+    });
+    eprintln!("exception filters: {filters:?}");
+    assert!(filters
+        .iter()
+        .any(|f| f.filter == "cpp_throw" && !f.label.is_empty()));
+    let ids = match s.ok(function) {
+        Response::SetFunctionBreakpoints(bps) => {
+            assert_eq!(bps.len(), 1);
+            assert!(bps[0].verified, "{bps:?}");
+            bps.iter().filter_map(|b| b.id).collect::<Vec<_>>()
+        }
+        other => panic!("{other:?}"),
+    };
+    assert!(matches!(
+        s.ok(exceptions),
+        Response::SetExceptionBreakpoints(_)
+    ));
+    let (reason, hit, thread) = s.wait("the panic's stop", |e| match e {
+        Event::Stopped {
+            reason,
+            hit_breakpoint_ids,
+            thread_id: Some(t),
+            ..
+        } => Some((reason.clone(), hit_breakpoint_ids.clone(), *t)),
+        _ => None,
+    });
+    assert_eq!(reason, "breakpoint");
+    assert!(hit.iter().any(|h| ids.contains(h)), "{hit:?} of {ids:?}");
+    let frames = s.frames(thread);
+    assert!(frames[0].name.contains("rust_panic"), "{:?}", frames[0]);
+    let boom = frames
+        .iter()
+        .find(|f| f.path.as_deref() == Some(source.as_path()))
+        .expect("the panicking function's frame");
+    assert!(boom.name.contains("boom"), "{boom:?}");
+    assert_eq!(boom.line, PANIC_LINE);
+    // The library's frames: none under the probe's folder, some dimmed by
+    // the adapter (the frames it has only disassembly of).
+    let root = dir.path().canonicalize().unwrap();
+    let library = frames
+        .iter()
+        .filter(|f| !f.path.as_ref().is_some_and(|p| p.starts_with(&root)))
+        .count();
+    assert!(library > frames.len() / 2, "{frames:#?}");
+    assert!(frames.iter().any(|f| f.is_subtle()), "{frames:#?}");
+    // lldb-dap answers exceptionInfo for any stop.
+    let id = s.client.exception_info(thread);
+    match s.response(id) {
+        Ok(Response::ExceptionInfo(info)) => eprintln!("exception info: {info:?}"),
+        other => panic!("{other:?}"),
+    }
+    // The panic's message reached stderr before the stop's report.
+    let text: String = s
+        .log
+        .iter()
+        .filter_map(|e| match e {
+            Event::Output { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    eprintln!("panic output: {text:?}");
+    s.client.stop();
+    s.terminated();
+}
+
+/// `debug/drop-frame` through LLDB: `frame select` and `thread return` pop
+/// the selected frame and those above it; the caller is then the top frame,
+/// stopped at its call. lldb-dap has no `restartFrame`.
+#[test]
+fn drop_frame_returns_to_the_caller() {
+    let Some(adapter) = adapter() else { return };
+    let Some((_dir, source, program)) = build_rust_from(RUST_PANIC_SOURCE) else {
+        return;
+    };
+    let mut s = Session::start(
+        &adapter,
+        launch(&program, &[]),
+        vec![(source.clone(), vec![line(PANIC_RETURN_LINE)])],
+    );
+    let (reason, thread) = s.stopped();
+    assert_eq!(reason, "breakpoint");
+    assert!(!s.client.supports("supportsRestartFrame"));
+    assert!(s.client.can_drop_frame());
+    // depth(0) .. depth(3), main.
+    let before = s.frames(thread);
+    assert_eq!(s.value("k", before[0].id), "0");
+    assert_eq!(before[1].line, PANIC_RECURSE_LINE);
+    // Drop depth(0), depth(1) and depth(2): depth(3) is on top.
+    let id = s.client.drop_frame(2, before[2].id);
+    assert_eq!(s.ok(id), Response::Ack);
+    let after = s.frames(thread);
+    assert_eq!(after.len(), before.len() - 3, "{after:#?}");
+    assert_eq!(after[0].line, PANIC_RECURSE_LINE);
+    assert_eq!(s.value("k", after[0].id), "3");
+    // The top frame alone: main, at its call of depth.
+    let id = s.client.drop_frame(0, after[0].id);
+    assert_eq!(s.ok(id), Response::Ack);
+    let top = s.top_frame(thread);
+    assert!(top.name.contains("main"), "{top:?}");
+    assert_eq!(top.line, PANIC_MAIN_CALL_LINE);
+    // The debuggee goes on from there (the breakpoint cleared).
+    let id = s.client.set_breakpoints(&source, &[]);
+    s.ok(id);
+    let id = s.client.resume(thread);
+    s.ok(id);
+    s.wait("exited", |e| matches!(e, Event::Exited(_)).then_some(()));
+    s.terminated();
+}
+
+/// An ad-hoc signed copy of an Apple-signed lldb-dap (macOS): the
+/// `runInTerminal` launcher is lldb-dap itself, waiting for the adapter to
+/// attach before it starts the debuggee, and macOS refuses an attach to
+/// Xcode's binary ("Not allowed to attach to process"). The copy finds
+/// LLDB.framework through `DYLD_FRAMEWORK_PATH`.
+#[cfg(target_os = "macos")]
+fn attachable_launcher(program: &str, dir: &Path) -> Option<(PathBuf, Vec<(String, String)>)> {
+    let program = Path::new(program).canonicalize().ok()?;
+    let developer = program.ancestors().find(|p| p.ends_with("Developer"))?;
+    let frameworks = developer.parent()?.join("SharedFrameworks");
+    let copy = dir.join("lldb-dap-launcher");
+    std::fs::copy(&program, &copy).ok()?;
+    let signed = Command::new("codesign")
+        .args(["-s", "-", "-f"])
+        .arg(&copy)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    signed.then(|| {
+        (
+            copy,
+            vec![(
+                "DYLD_FRAMEWORK_PATH".into(),
+                frameworks.display().to_string(),
+            )],
+        )
+    })
+}
+
+/// `runInTerminal`: with `run_in_terminal` set lldb-dap asks the client to
+/// start its launcher (`lldb-dap --comm-file … --launch-target <program>
+/// <args>`) in a terminal; the test starts it itself (no terminal) and
+/// answers with its pid; the adapter attaches to it and the breakpoint is
+/// hit as with a plain launch.
+#[test]
+fn run_in_terminal_is_asked_of_the_client() {
+    let Some(adapter) = adapter() else { return };
+    let Some((dir, source, program)) = build_rust_from(RUST_PANIC_SOURCE) else {
+        return;
+    };
+    let mut start = launch(&program, &["one two"]);
+    if let Start::Launch(l) = &mut start {
+        l.run_in_terminal = true;
+    }
+    let mut s = Session::start(
+        &adapter,
+        start,
+        vec![(source.clone(), vec![line(PANIC_RETURN_LINE)])],
+    );
+    let request = s.wait("the runInTerminal request", |e| match e {
+        Event::RunInTerminal(r) => Some(r.clone()),
+        _ => None,
+    });
+    eprintln!("runInTerminal: {request:#?}");
+    assert_eq!(request.kind, "integrated");
+    assert_eq!(request.cwd, program.parent().unwrap());
+    let target = request
+        .args
+        .iter()
+        .position(|a| a == "--launch-target")
+        .expect("the launcher's --launch-target");
+    assert_eq!(Path::new(&request.args[target + 1]), program.as_path());
+    assert_eq!(request.args[target + 2], "one two");
+    assert!(request
+        .env
+        .iter()
+        .any(|(k, v)| k == "WEEP_DAP_TEST" && v.as_deref() == Some("1")));
+
+    #[cfg(target_os = "macos")]
+    let (launcher, extra_env) = attachable_launcher(&request.args[0], dir.path())
+        .unwrap_or_else(|| (PathBuf::from(&request.args[0]), Vec::new()));
+    #[cfg(not(target_os = "macos"))]
+    let (launcher, extra_env): (PathBuf, Vec<(String, String)>) =
+        (PathBuf::from(&request.args[0]), Vec::new());
+    let mut cmd = Command::new(&launcher);
+    cmd.args(&request.args[1..])
+        .current_dir(&request.cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null());
+    for (k, v) in &request.env {
+        match v {
+            Some(v) => cmd.env(k, v),
+            None => cmd.env_remove(k),
+        };
+    }
+    cmd.envs(extra_env);
+    let mut child = cmd.spawn().expect("the launcher starts");
+    s.client.answer_run_in_terminal(request.id, Ok(child.id()));
+
+    let outcome = s.wait("a stop or a failed launch", |e| match e {
+        Event::Stopped {
+            thread_id: Some(t), ..
+        } => Some(Ok(*t)),
+        Event::Error(m) if m.starts_with("launch:") => Some(Err(m.clone())),
+        _ => None,
+    });
+    match outcome {
+        Ok(thread) => {
+            let frame = s.top_frame(thread);
+            assert_eq!(frame.line, PANIC_RETURN_LINE);
+            assert_eq!(frame.path.as_deref(), Some(source.as_path()));
+            s.client.stop();
+            s.terminated();
+        }
+        Err(e) => {
+            // The adapter took the answer and tried the attach.
+            assert!(e.contains("attach"), "{e}");
+            eprintln!("skipped the debuggee: {e}");
+            s.terminated();
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }

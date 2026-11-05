@@ -109,6 +109,19 @@ pub fn expression_at(line: &str, col: usize) -> Option<Range<usize>> {
     Some(start..end)
 }
 
+/// The expression an Alt+click on char column `col` of `line` evaluates
+/// (`debug/quick-evaluate-expression-with-click`): as [`expression_at`],
+/// but only with the pointer on the identifier's own chars. A click on the
+/// space after a name, on an operator or past the line's end is no
+/// expression (so it keeps adding a caret), where the caret's rule would
+/// take the name just before it.
+pub fn expression_under(line: &str, col: usize) -> Option<Range<usize>> {
+    line.chars()
+        .nth(col)
+        .filter(|c| is_ident(*c))
+        .and_then(|_| expression_at(line, col))
+}
+
 /// Whether byte `byte` of the text is code: not inside a comment or a
 /// string by the highlight `spans` (sorted, not overlapping, as the
 /// document keeps them). A text without spans (no grammar) is all code.
@@ -212,12 +225,31 @@ impl EditorView {
         offset: usize,
         cx: &mut App,
     ) -> Option<(String, Range<usize>)> {
+        self.eval_expression_picked(offset, expression_at, cx)
+    }
+
+    /// The expression an Alt+click on the char at `offset` evaluates
+    /// ([`expression_under`]), only in code.
+    pub fn eval_expression_under(
+        &self,
+        offset: usize,
+        cx: &mut App,
+    ) -> Option<(String, Range<usize>)> {
+        self.eval_expression_picked(offset, expression_under, cx)
+    }
+
+    fn eval_expression_picked(
+        &self,
+        offset: usize,
+        pick: fn(&str, usize) -> Option<Range<usize>>,
+        cx: &mut App,
+    ) -> Option<(String, Range<usize>)> {
         self.document.update(cx, |doc, _| {
             let buffer = &doc.buffer;
             let offset = offset.min(buffer.len_chars());
             let at = buffer.offset_to_point(offset);
             let line = buffer.line(at.row);
-            let cols = expression_at(&line, at.column)?;
+            let cols = pick(&line, at.column)?;
             let text: String = line
                 .chars()
                 .skip(cols.start)
@@ -228,6 +260,27 @@ impl EditorView {
             let byte = buffer.char_to_byte(range.start);
             in_code(doc.spans(), byte).then_some((text, range))
         })
+    }
+
+    /// An Alt+click at `position` that hit the text at char boundary
+    /// `offset` (the boundary nearest the pointer, as a click places the
+    /// caret): the char under the pointer, when that char starts an
+    /// expression in code; `None` keeps the click adding a caret. The
+    /// pointer left of the boundary is over the char before it.
+    pub fn eval_click_offset(
+        &mut self,
+        offset: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<usize> {
+        let boundary = self.eval_char_window_bounds(offset, window, cx);
+        let under = if offset > 0 && position.x < boundary.origin.x {
+            offset - 1
+        } else {
+            offset
+        };
+        self.eval_expression_under(under, cx).map(|_| under)
     }
 
     /// The char under a window position, `None` outside the text (as the
@@ -1115,6 +1168,33 @@ mod tests {
     #[test]
     fn ranges_are_not_qualifiers() {
         assert_eq!(at("for i in 0..count {", 13), Some("count".into()));
+    }
+
+    fn under(line: &str, col: usize) -> Option<String> {
+        expression_under(line, col).map(|r| line.chars().skip(r.start).take(r.len()).collect())
+    }
+
+    #[test]
+    fn a_click_takes_the_name_under_the_pointer() {
+        let line = "    let total = self.points.len() + p->x;";
+        // On any char of a name: the name with its qualifiers before it.
+        assert_eq!(under(line, 8).as_deref(), Some("total"));
+        assert_eq!(under(line, 12).as_deref(), Some("total"));
+        assert_eq!(under(line, 16).as_deref(), Some("self"));
+        assert_eq!(under(line, 22).as_deref(), Some("self.points"));
+        assert_eq!(under(line, 39).as_deref(), Some("p->x"));
+        // Not beside one, as the caret's rule would take it.
+        assert_eq!(expression_at(line, 13).map(|r| r.start), Some(8));
+        assert_eq!(under(line, 13), None);
+        assert_eq!(under(line, 14), None);
+        assert_eq!(under(line, 2), None);
+        assert_eq!(under(line, line.chars().count()), None);
+        // A call, a keyword and a number are no expression, as for the caret.
+        assert_eq!(under(line, 29), None);
+        assert_eq!(under(line, 5), None);
+        assert_eq!(under("x = 42;", 4), None);
+        // Columns are chars, not bytes.
+        assert_eq!(under("é = ünï;", 5).as_deref(), Some("ünï"));
     }
 
     #[test]

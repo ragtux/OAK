@@ -4,6 +4,8 @@
 //! closed by `close-tab`, the tab's menu or the shell's exit. The profiles
 //! are `terminal.profiles` plus the shells the machine has
 //! (`weep_terminal::Profile::discover`), `terminal.profile.default` picking one.
+//! M8: a debug adapter's `runInTerminal` opens a tab of its own running the
+//! adapter's command line ([`Workspace::run_in_terminal`]).
 
 use super::*;
 use crate::menu::MenuEntry;
@@ -132,6 +134,69 @@ impl Workspace {
         }
         self.save_layout();
         cx.notify();
+    }
+
+    /// M8: a debug adapter's `runInTerminal` (lldb-dap's launcher, which
+    /// starts the debuggee once the adapter attached): its command line in a
+    /// new Terminal tab of the bottom panel, shown without the focus, with
+    /// the adapter's environment over WEEP's (a variable it unsets is left
+    /// as it is: the PTY's options only add). The tab stays when the program
+    /// ends, its output kept (estimate: Fleet runs no debuggee in a
+    /// terminal, its run.json has no key for it). Returns the pid.
+    pub(super) fn run_in_terminal(
+        &mut self,
+        request: &weep_dap::RunInTerminalRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<u32, String> {
+        let Some((program, args)) = request.args.split_first() else {
+            return Err("no command to run".into());
+        };
+        let name = request
+            .title
+            .clone()
+            .unwrap_or_else(|| weep_terminal::profile::program_name(program));
+        let profile = Profile::new(name, program.clone(), args.to_vec());
+        let cwd = if request.cwd.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            request.cwd.clone()
+        };
+        let env: Vec<(String, String)> = request
+            .env
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), v.clone()?)))
+            .collect();
+        let view = cx.new(|cx| TerminalView::with_env(profile, cwd, &env, cx));
+        let pid = match view.read(cx).pid() {
+            Some(pid) => pid,
+            None => {
+                return Err(view
+                    .read(cx)
+                    .spawn_error()
+                    .unwrap_or("the terminal gave no process id")
+                    .to_string())
+            }
+        };
+        cx.subscribe_in(&view, window, |this, view, event, window, cx| match event {
+            // The debuggee's output stays to be read.
+            TerminalEvent::Exited => {}
+            _ => this.on_terminal_event(view, event, window, cx),
+        })
+        .detach();
+        let id = self.next_terminal;
+        self.next_terminal += 1;
+        self.terminals.push((id, view));
+        let panel = self.panel_mut(Side::Bottom);
+        panel.tools.push(ToolTab {
+            tool: Tool::Terminal,
+            instance: id,
+        });
+        panel.active = panel.tools.len() - 1;
+        panel.open = true;
+        self.save_layout();
+        cx.notify();
+        Ok(pid)
     }
 
     fn on_terminal_event(

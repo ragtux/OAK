@@ -110,6 +110,9 @@ bundle!(
     "icons/expui/run/stepOver.svg",
     "icons/expui/run/stepInto.svg",
     "icons/expui/run/stepOut.svg",
+    // M8: the Breakpoints tool's exception breakpoints (agent A).
+    "icons/expui/breakpoints/breakpointException.svg",
+    "icons/expui/breakpoints/breakpointExceptionDisabled.svg",
     "icons/expui/actions/lightning.svg",
     "icons/expui/actions/replace.svg",
     "icons/expui/toolwindows/notifications.svg",

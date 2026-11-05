@@ -9,7 +9,11 @@
 //!   dot and its name, the active session selected.
 //! - **Threads & Frames**: a tree, a node per thread (`1: tid=3212558
 //!   "main"`) with the current thread expanded to its frames, names only,
-//!   the selected frame highlighted.
+//!   the selected frame highlighted; library frames (no file, a file
+//!   outside the workspace, or the adapter's `subtle`) dimmed in
+//!   `listItem.text.secondary` (estimate). An exception or panic stop puts
+//!   its words above the tree in `text.dangerous`. Backspace and Delete drop
+//!   the selected frame (`debug/drop-frame`).
 //! - **Variables**: an "Add Watch" button at the title's right; below, the
 //!   watches (the inline field while one is typed), then the frame's scopes
 //!   in the adapter's order, collapsed until opened, each variable `name =
@@ -30,10 +34,10 @@
 //! [`DebugViews`] the workspace keeps, the key bindings and [`Follow`].
 
 use crate::actions::{
-    DebugAddWatch, DebugDeleteWatch, DebugEditWatch, DebugPause, DebugRemoveBreakpoint,
-    DebugRestart, DebugResume, DebugStepInto, DebugStepOut, DebugStepOver, DebugStop,
-    DebugToggleEnabledBreakpoint, PopupConfirm, PopupDown, PopupLeft, PopupRight, PopupTab,
-    PopupUp,
+    DebugAddWatch, DebugDeleteWatch, DebugDropFrame, DebugEditWatch, DebugPause,
+    DebugRemoveBreakpoint, DebugRestart, DebugResume, DebugStepInto, DebugStepOut, DebugStepOver,
+    DebugStop, DebugToggleEnabledBreakpoint, PopupConfirm, PopupDown, PopupLeft, PopupRight,
+    PopupTab, PopupUp,
 };
 use crate::assets::icon;
 use crate::breakpoints_tool::BreakpointsTool;
@@ -412,6 +416,8 @@ pub enum FrameRow {
         index: usize,
         name: String,
         depth: usize,
+        /// Library code ([`DebugSession::is_library_frame`]): dimmed.
+        library: bool,
     },
 }
 
@@ -422,11 +428,13 @@ pub fn frame_rows(
     current: Option<i64>,
     frames: &[StackFrame],
     collapsed: &HashSet<i64>,
+    is_library: impl Fn(&StackFrame) -> bool,
 ) -> Vec<FrameRow> {
     let frame_row = |(index, f): (usize, &StackFrame), depth| FrameRow::Frame {
         index,
         name: f.name.clone(),
         depth,
+        library: is_library(f),
     };
     let mut rows = Vec::new();
     let mut shown = false;
@@ -788,14 +796,15 @@ pub fn clip_runs(
 }
 
 /// The words Threads & Frames shows while the debuggee is not stopped, and
-/// whether they report a failure (`DebugSession::failed`); `None` while
-/// stopped (the frames say it).
+/// whether they report a failure (`DebugSession::failed`); while stopped,
+/// only an exception's or a panic's words (`DebugSession::stop_text`, in
+/// the failure's colour), else `None` (the frames say it).
 pub fn status_text(session: &DebugSession) -> Option<(String, bool)> {
     let text = match &session.state {
         // Estimate: the words IntelliJ's debugger prints while connecting.
         SessionState::Starting => "Starting…".to_string(),
         SessionState::Running => "Running".into(),
-        SessionState::Stopped { .. } => return None,
+        SessionState::Stopped { .. } => return session.stop_text().map(|t| (t, true)),
         SessionState::Exited(Some(code)) => format!("Process finished with exit code {code}"),
         SessionState::Exited(None) => "Process finished".into(),
         SessionState::Failed(e) => e.clone(),
@@ -841,6 +850,8 @@ pub struct DebugTool {
     reveal: bool,
     focus_handle: FocusHandle,
     frames_scroll: ScrollHandle,
+    /// The frame row last drawn as selected, to scroll a new one into view.
+    shown_frame: Option<usize>,
     tree_scroll: ScrollHandle,
     tui_grid: Rc<std::cell::Cell<(usize, usize)>>,
     tui_bars: FrameBars,
@@ -881,6 +892,7 @@ impl DebugTool {
             reveal: false,
             focus_handle: cx.focus_handle(),
             frames_scroll: ScrollHandle::new(),
+            shown_frame: None,
             tree_scroll: ScrollHandle::new(),
             tui_grid: Default::default(),
             tui_bars: Default::default(),
@@ -926,7 +938,13 @@ impl DebugTool {
             return (Vec::new(), None);
         };
         let s = session.read(cx);
-        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &self.collapsed);
+        let rows = frame_rows(
+            &s.threads,
+            s.current_thread,
+            &s.frames,
+            &self.collapsed,
+            |f| s.is_library_frame(f),
+        );
         let selected =
             frames_selected(&rows, self.thread_cursor, s.current_thread, s.current_frame);
         (rows, selected)
@@ -1188,7 +1206,13 @@ impl DebugTool {
         }
     }
 
-    fn delete_watch(&mut self, _: &DebugDeleteWatch, _: &mut Window, cx: &mut Context<Self>) {
+    fn delete_watch(&mut self, _: &DebugDeleteWatch, window: &mut Window, cx: &mut Context<Self>) {
+        // Fleet binds Backspace and Delete to both: in the frames list
+        // they drop the frame.
+        if self.editing.is_none() && self.part == Part::Threads {
+            window.dispatch_action(DebugDropFrame.boxed_clone(), cx);
+            return;
+        }
         if self.editing.is_some() || self.part != Part::Variables {
             return;
         }
@@ -1201,6 +1225,21 @@ impl DebugTool {
         ) = (self.selected_row(cx), self.session())
         {
             session.update(cx, |s, cx| s.delete_watch(ix, cx));
+        }
+    }
+
+    /// `debug/drop-frame`: in the watches it is Delete Watch (the same keys);
+    /// in Threads & Frames the workspace drops the session's selected frame
+    /// (the list keeps the session's selection), saying why it cannot.
+    fn drop_frame(&mut self, _: &DebugDropFrame, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_some() {
+            return;
+        }
+        match self.part {
+            Part::Variables => self.delete_watch(&DebugDeleteWatch, window, cx),
+            Part::Threads => cx.propagate(),
+            // The sessions' list has no frame under the keys.
+            Part::Processes => {}
         }
     }
 
@@ -1364,6 +1403,17 @@ impl DebugTool {
     }
 }
 
+/// A frame's name: the list's text, library code in its secondary text
+/// (`listItem.text.secondary`; estimate, no probe has seen Fleet dim a
+/// frame), both skins.
+fn frame_color(library: bool, theme: &Theme) -> Hsla {
+    if library {
+        theme.list_text_secondary
+    } else {
+        theme.list_text
+    }
+}
+
 fn tint_color(tint: Tint, theme: &Theme) -> Hsla {
     match tint {
         Tint::Name => theme.list_text,
@@ -1456,6 +1506,7 @@ impl Render for DebugTool {
             .on_action(cx.listener(Self::add_watch))
             .on_action(cx.listener(Self::edit_watch))
             .on_action(cx.listener(Self::delete_watch))
+            .on_action(cx.listener(Self::drop_frame))
             .size_full()
             .relative()
             .overflow_hidden();
@@ -1680,9 +1731,14 @@ impl DebugTool {
         let (rows, selected) = self.frame_rows(cx);
         let status = status_text(session.read(cx));
         let part_focused = focused && self.part == Part::Threads;
-        if self.reveal && self.part == Part::Threads {
+        // A new selection (a stop that picks the user's frame under the
+        // library's) is brought into view wherever the focus is.
+        let moved = std::mem::replace(&mut self.shown_frame, selected) != selected;
+        if (self.reveal && self.part == Part::Threads) || moved {
             if let Some(ix) = selected {
-                self.frames_scroll.scroll_to_item(ix);
+                // The status row, when shown, comes first.
+                self.frames_scroll
+                    .scroll_to_item(ix + usize::from(status.is_some()));
             }
         }
         let text_x = m.debug_row_pad + m.icon_size + m.debug_chevron_gap;
@@ -1708,11 +1764,16 @@ impl DebugTool {
             .enumerate()
             .map(|(ix, row)| {
                 let is_selected = selected == Some(ix);
-                let (depth, chevron, label) = match &row {
+                let (depth, chevron, label, library) = match &row {
                     FrameRow::Thread {
                         label, expanded, ..
-                    } => (0, Some(*expanded), label.clone()),
-                    FrameRow::Frame { name, depth, .. } => (*depth, None, name.clone()),
+                    } => (0, Some(*expanded), label.clone(), false),
+                    FrameRow::Frame {
+                        name,
+                        depth,
+                        library,
+                        ..
+                    } => (*depth, None, name.clone(), *library),
                 };
                 let click = entity.clone();
                 let fold = entity.clone();
@@ -1753,7 +1814,7 @@ impl DebugTool {
                             // edge and is cut there, no ellipsis.
                             .child(
                                 div()
-                                    .text_color(theme.list_text)
+                                    .text_color(frame_color(library, theme))
                                     .child(SharedString::from(label)),
                             ),
                     )
@@ -2086,7 +2147,8 @@ impl DebugTool {
         let status = status_text(session.read(cx));
         let status_rows = usize::from(status.is_some());
         let frames_total = frame_rows.len() + status_rows;
-        if self.part == Part::Threads && self.reveal {
+        let moved = std::mem::replace(&mut self.shown_frame, frame_selected) != frame_selected;
+        if (self.part == Part::Threads && self.reveal) || moved {
             if let Some(ix) = frame_selected {
                 self.tui_frames_scroll
                     .follow(ix + status_rows, frames_total, threads_visible);
@@ -2124,11 +2186,16 @@ impl DebugTool {
         let take = threads_visible.saturating_sub(frame_els.len());
         for (ix, row) in frame_rows.into_iter().enumerate().skip(skip).take(take) {
             let selected = frame_selected == Some(ix);
-            let (indent, chevron, label) = match &row {
+            let (indent, chevron, label, library) = match &row {
                 FrameRow::Thread {
                     label, expanded, ..
-                } => (0, if *expanded { "▾" } else { "▸" }, label.clone()),
-                FrameRow::Frame { name, depth, .. } => (depth * TUI_INDENT, " ", name.clone()),
+                } => (0, if *expanded { "▾" } else { "▸" }, label.clone(), false),
+                FrameRow::Frame {
+                    name,
+                    depth,
+                    library,
+                    ..
+                } => (depth * TUI_INDENT, " ", name.clone(), *library),
             };
             let thread = match &row {
                 FrameRow::Thread { id, .. } => Some(*id),
@@ -2178,7 +2245,7 @@ impl DebugTool {
                     )
                     .child(
                         div()
-                            .text_color(theme.list_text)
+                            .text_color(frame_color(library, &theme))
                             .child(skin::fit_text(&label, cols.saturating_sub(lead))),
                     )
                     .into_any_element(),
@@ -2401,6 +2468,7 @@ pub(crate) fn fake_session() -> DebugSession {
             path: Some(PathBuf::from("/w/src/main.rs")),
             line: 11,
             column: 4,
+            presentation_hint: None,
         },
         StackFrame {
             id: 101,
@@ -2408,6 +2476,7 @@ pub(crate) fn fake_session() -> DebugSession {
             path: None,
             line: 0,
             column: 0,
+            presentation_hint: None,
         },
     ];
     s.scopes = vec![
@@ -2599,9 +2668,11 @@ mod tests {
 
     #[test]
     fn the_current_thread_holds_its_frames() {
-        let s = fake_session();
+        let mut s = fake_session();
+        s.set_root(Path::new("/w"));
+        let library = |f: &StackFrame| s.is_library_frame(f);
         let mut collapsed = HashSet::new();
-        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed);
+        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed, library);
         assert_eq!(
             rows,
             vec![
@@ -2614,11 +2685,14 @@ mod tests {
                     index: 0,
                     name: "app::run".into(),
                     depth: 1,
+                    library: false,
                 },
+                // No file: library code, dimmed.
                 FrameRow::Frame {
                     index: 1,
                     name: "std::rt::lang_start".into(),
                     depth: 1,
+                    library: true,
                 },
                 FrameRow::Thread {
                     id: 3212600,
@@ -2635,11 +2709,11 @@ mod tests {
         );
         // Folded by hand: the node alone, and it takes the highlight.
         collapsed.insert(3212558);
-        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed);
+        let rows = frame_rows(&s.threads, s.current_thread, &s.frames, &collapsed, library);
         assert_eq!(rows.len(), 2);
         assert_eq!(frames_selected(&rows, None, s.current_thread, 0), Some(0));
         // No threads listed: the frames alone, at the left.
-        let rows = frame_rows(&[], None, &s.frames, &HashSet::new());
+        let rows = frame_rows(&[], None, &s.frames, &HashSet::new(), library);
         assert!(matches!(rows[0], FrameRow::Frame { depth: 0, .. }));
         assert_eq!(rows.len(), 2);
     }
@@ -2683,6 +2757,26 @@ mod tests {
         );
         s.state = SessionState::Failed("no lldb-dap".into());
         assert_eq!(status_text(&s), Some(("no lldb-dap".into(), true)));
+        // An exception or panic stop says what it stopped on.
+        s.state = SessionState::Stopped {
+            reason: "exception".into(),
+            description: Some("signal SIGABRT".into()),
+        };
+        assert_eq!(
+            status_text(&s),
+            Some(("Exception: signal SIGABRT".into(), true))
+        );
+        s.stopped_on_panic = true;
+        s.state = SessionState::Stopped {
+            reason: "exception".into(),
+            description: Some("boom 60".into()),
+        };
+        assert_eq!(status_text(&s), Some(("Panic: boom 60".into(), true)));
+        s.state = SessionState::Stopped {
+            reason: "exception".into(),
+            description: Some(crate::debugger::PANIC_DESCRIPTION.into()),
+        };
+        assert_eq!(status_text(&s), Some(("Panic".into(), true)));
         assert_eq!(single_line("a\nb"), "a b");
     }
 }

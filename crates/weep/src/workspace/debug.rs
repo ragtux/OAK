@@ -21,6 +21,11 @@
 //! and the tools (their key contexts); `debugger/attach-to-process` opens
 //! the floating debug panel's attach dialog.
 //!
+//! `debug/drop-frame` drops the active session's selected frame (the Debug
+//! tool's frames list sends Backspace and Delete here), or says why not.
+//! An adapter's `runInTerminal` opens a Terminal tool tab running the
+//! command it gives (`workspace/terminals.rs`), answered with its pid.
+//!
 //! Ended sessions stay listed (the Debug tool shows the last one's console
 //! and state) until a new session of the same configuration starts or the
 //! last Debug tool tab closes (estimate: Fleet's rule is unprobed).
@@ -126,6 +131,8 @@ impl Workspace {
                     cwd: command.cwd.clone(),
                     env: command.env.clone(),
                     stop_on_entry: false,
+                    // Fleet's run.json has no key for it.
+                    run_in_terminal: false,
                 });
                 session.update(cx, |s, cx| s.start(&adapter, start, cx));
             }
@@ -254,6 +261,24 @@ impl Workspace {
                     }
                 }
                 cx.notify();
+            }
+            DebugSessionEvent::Failed { title, message } => {
+                self.notify_error(title, message.clone(), cx);
+            }
+            DebugSessionEvent::RunInTerminal(request) => {
+                // The terminal needs the window, which a session's event
+                // does not carry: on the next turn, through the workspace's.
+                let request = request.clone();
+                let window = self.window;
+                let weak = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let _ = window.update(cx, |_, window, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            let result = this.run_in_terminal(&request, window, cx);
+                            session.update(cx, |s, _| s.answer_run_in_terminal(request.id, result));
+                        });
+                    });
+                });
             }
             DebugSessionEvent::Ended => {
                 let (name, state) = {
@@ -459,6 +484,31 @@ impl Workspace {
 
     pub(super) fn debug_stop(&mut self, _: &DebugStop, _: &mut Window, cx: &mut Context<Self>) {
         self.with_session(cx, |s, cx| s.stop(cx));
+    }
+
+    /// `debug/drop-frame`: the active session's selected frame dropped, the
+    /// caller on top; a notification says why when it cannot be (estimate:
+    /// Fleet's own for Rust is unprobed, its codelldb has no `restartFrame`
+    /// either).
+    pub(super) fn debug_drop_frame(
+        &mut self,
+        _: &DebugDropFrame,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.command_session(cx) else {
+            self.notify_error(
+                "Cannot drop the frame",
+                "No debug session is running".into(),
+                cx,
+            );
+            return;
+        };
+        if let Some(why) = session.read(cx).drop_frame_refusal() {
+            self.notify_error("Cannot drop the frame", why, cx);
+            return;
+        }
+        session.update(cx, |s, cx| s.drop_frame(cx));
     }
 
     /// `DebugRestart` (the Processes row's and the floating panel's Restart,

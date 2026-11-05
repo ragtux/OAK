@@ -370,6 +370,14 @@ impl Buffer {
         !self.undo.is_empty()
     }
 
+    /// How many steps the undo stack holds. An undo lowers it by one and
+    /// nothing else does, so a caller that keeps something per step (the
+    /// app's breakpoints a step deleted) can tell an undo of step `n - 1`
+    /// from any other edit.
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
@@ -419,6 +427,20 @@ mod tests {
         b.undo();
         assert_eq!(b.edits_since(v0).unwrap().len(), 4);
         assert_eq!(b.text(), "abc");
+    }
+
+    #[test]
+    fn undo_depth_drops_only_on_undo() {
+        let mut b = Buffer::new("abc");
+        assert_eq!(b.undo_depth(), 0);
+        let mut tx = Transaction::default();
+        b.replace_in(&mut tx, 0..1, "");
+        b.push_transaction(tx);
+        assert_eq!(b.undo_depth(), 1);
+        b.undo();
+        assert_eq!(b.undo_depth(), 0);
+        b.redo();
+        assert_eq!(b.undo_depth(), 1);
     }
 
     #[test]
