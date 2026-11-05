@@ -963,7 +963,7 @@ and Space on a focused button; one shot after each key.
 | Ctrl+F on a word | the query is the word at the caret ("record") | not compared |
 | the match counter | "1/8" dimmer, at most `#5E5E60`, its ink 1071-1091 | `text.secondary` (`#FFFFFF85`, at most `#858687`) → `text.tertiary` (`#FFFFFF59`, the dark theme's next step down): at most `#5E5E60` in every shot. The ink was 1073.5-1090.5, 3 narrower than Fleet's: Fleet's "1" is 6.5 wide, Inter's tabular `one.tf` (5.85 of outline at 13 against the default's 3.54; both editors' Inter is 4.0) → the counter with `tnum`: "1/8" glyph for glyph on Fleet's pixels (1071-1077.5, 1078.5-1083, 1084-1091), "8/8" within 0.5 |
 | the toggles' glyphs | three 16 px drawings on the icon grid with 1 px strokes, centred in the 20 px boxes (2 in): "Aa" (an A 9 wide and 10 tall, Inter's is 8 at that height, and a two-storey a reaching the icon's right edge), "W" 14 × 10, ".*" a 2 × 2 square at (3, 11) and a six-armed asterisk 8 × 8 around (10.5, 6); at most `#E0E0E0` off. expui's `inline/matchCase` is "Cc" and its `regex` asterisk 6.4 wide, so neither is Fleet's | Inter text at the UI size ("Aa" 15.5 wide, ".*" with a 6 × 6 asterisk) → WEEP's own `weep/match-case`, `weep/whole-word` and `weep/regex`, fitted point by point to Fleet's coverage (rendered through resvg, as gpui does): 7.2, 5.9 and 1.4 px² of coverage difference against 45.7, 41.1 and 24.6 of ink in the app; the same glyphs in the Text Search toggles (`search_tool::toggle_button`, unprobed there) |
-| soft wrap's width (scene `wrap` at other window widths and `editor.fontSize`) | 104 columns with the island at 376-1272 (896 wide; text from 438, 7.8 a column), 105 or more at 897, 898 and 900: the step lies between 896 and 897, so Fleet keeps 15-16 px free right of the text. At 16 px (9.6 a column, text from about 442.8: the gutter grows with the font) with the island at 1324, 90 columns (the second row starts with the space before `col014`), where two columns' reserve (19.2) would give 89: a fixed width, not columns | the island less the gutter and the thumb (6): 106 at 896 → `WRAP_RESERVE` 15.5 (the middle; 16 sits on the step and lost it to rounding, 819 / 7.8000007): the rows on Fleet's at 896 and 897, and at 16 px the same words on every row. Seen on the way, still open: at 16 px WEEP's text starts 5 left of Fleet's (its gutter stays 62); around the status badge WEEP's cut-out has square corners where Fleet's are rounded, and WEEP shades the `col015` the badge overlaps, Fleet nothing |
+| soft wrap's width (scene `wrap` at other window widths and `editor.fontSize`) | 104 columns with the island at 376-1272 (896 wide; text from 438, 7.8 a column), 105 or more at 897, 898 and 900: the step lies between 896 and 897, so Fleet keeps 15-16 px free right of the text. At 16 px (9.6 a column, text from about 442.8: the gutter grows with the font) with the island at 1324, 90 columns (the second row starts with the space before `col014`), where two columns' reserve (19.2) would give 89: a fixed width, not columns | the island less the gutter and the thumb (6): 106 at 896 → `WRAP_RESERVE` 15.5 (the middle; 16 sits on the step and lost it to rounding, 819 / 7.8000007): the rows on Fleet's at 896 and 897, and at 16 px the same words on every row. Seen on the way: at 16 px WEEP's text started 5 left of Fleet's (its gutter stayed 62; settled in the eighteenth pass); still open: around the status badge WEEP's cut-out has square corners where Fleet's are rounded, and WEEP shades the `col015` the badge overlaps, Fleet nothing |
 
 Code vision: the "0 implementations" WEEP showed 6 s after launch in the
 sixteenth pass did not come back. WEEP launched on the fixture showed "4
@@ -973,6 +973,20 @@ so the cause stays unknown. One way the 0 could stick was fixed: an answer's
 lenses resolve one by one, so an answer from before the workspace loaded
 could finish after a newer one and replace it; now an older answer is dropped
 (`lens_order` in `workspace/smart.rs`).
+
+## Eighteenth pass: macOS, the gutter against the font size (2026-11-04)
+
+Scene `gutter`: wide.txt (3 lines), src/main.rs (36) and long/thousand.txt
+(1000) opened in turn, once per `editor.fontSize` (10, 13, 16, 20 and 24) in
+a 1280 × 800 window, the island's left edge at 376. Measured off the line
+numbers' ink and the text's (the caret, on in most shots, sits at the text's
+origin), against WEEP's shots of the same files; Goto does not offer
+big/big.log, so five digits are unprobed.
+
+| what | Fleet | WEEP before → now |
+|---|---|---|
+| numbers' right edge and text start, from the island's edge | ink right at 35.5 / 35.5 / 40 / 47.5 / 54 for 3 and 36 lines, 35.5 / 42.5 / 49.5 / 59 / 68.5 for 1000 lines (sizes 10 to 24); the text from 62 / 62 / 66.8 / 74 / 81 and 62 / 69 / 76.5 / 86.5 / 96. Both fit one rule: the numbers' column starts 12 in and holds the line count's digits, at least three, each 0.6 em; its right edge is never left of 36 and the text starts 26 after it (the chevron 4 after it), so 13 px gives 36 and 62 below 1000 lines and 43.2 and 69.2 from 1000; the line numbers in view do not matter (lines 1-17 of thousand.txt sit in the wide gutter) | 36 and 62 at every size and length → `GUTTER_NUMBER_LEFT` 12 with `GUTTER_NUMBER_RIGHT` and `GUTTER_WIDTH` as the least (`TextMetrics::with_number_column`, the measured space's advance): every numbers' edge on Fleet's pixels and the text's glyphs within 0.5 at all five sizes. The breakpoint hint and the run icon stay at 21.3 and 21 (unprobed past 13 px or 999 lines) |
+| a new editor's first frame | opens at line 1 | the gutter it now gets differs from the one the view was made with, so the frame's keep-the-first-line step divided by an empty map's zero row height and scrolled thousand.txt to its end (the tui skin did the same on files of 1000 lines) → no row height, no shift |
 
 ## What the shots showed
 

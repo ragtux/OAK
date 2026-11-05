@@ -161,8 +161,13 @@ pub mod metrics {
     /// A dragged tab's ghost: the tab inside a 2 px ring (batch 3).
     pub const EDITOR_TAB_DRAG_RING: f32 = 2.;
     /// The gutter: line numbers right-aligned at `GUTTER_NUMBER_RIGHT`, text from `GUTTER_WIDTH`.
+    /// Both are the least: the numbers' column starts `GUTTER_NUMBER_LEFT` in and holds the
+    /// line count's digits, at least three, so a larger `editor.fontSize` or a file of 1000
+    /// lines moves the numbers' right edge, and the chevron and the text with it (eighteenth
+    /// pass: 40.8 and 66.8 at 16 px, 43.2 and 69.2 for 1000 lines at 13).
     pub const GUTTER_NUMBER_RIGHT: f32 = 36.;
     pub const GUTTER_WIDTH: f32 = 62.;
+    pub const GUTTER_NUMBER_LEFT: f32 = 12.;
     pub const EDITOR_FONT_SIZE: f32 = 13.;
     /// 33 device px at 1.5 (Windows probe); 60 at 2.76 (KDE probe) agrees with 22.
     pub const EDITOR_LINE_HEIGHT: f32 = 22.;
@@ -892,6 +897,7 @@ scaled_metrics!(
     editor_tab_drag_ring = EDITOR_TAB_DRAG_RING,
     gutter_number_right = GUTTER_NUMBER_RIGHT,
     gutter_width = GUTTER_WIDTH,
+    gutter_number_left = GUTTER_NUMBER_LEFT,
     editor_font_size = EDITOR_FONT_SIZE,
     editor_line_height = EDITOR_LINE_HEIGHT,
     caret_width = CARET_WIDTH,

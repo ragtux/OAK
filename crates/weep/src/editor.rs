@@ -103,6 +103,8 @@ pub struct TextMetrics {
     pub line_height: f32,
     pub gutter_width: f32,
     pub gutter_number_right: f32,
+    /// Where the line numbers' column starts (`with_line_count`).
+    pub gutter_number_left: f32,
     pub caret_width: f32,
     pub scrollbar_thumb: f32,
     pub scrollbar_thumb_min: f32,
@@ -160,10 +162,10 @@ const TUI_GUTTER_EXTRA: usize = 4;
 /// The tui blame column, in cells: the label and a space after it.
 const TUI_BLAME_COLS: usize = 18;
 
-/// The tui gutter's digit columns: the last line number's digits, at least
+/// The gutter's digit columns: the last line number's digits, at least
 /// 3 (so a file growing past 99 lines keeps its gutter); none without
-/// line numbers.
-fn tui_digits(line_count: usize, numbers: bool) -> usize {
+/// line numbers (the tui's; Fleet's gutter keeps its width without them).
+fn gutter_digits(line_count: usize, numbers: bool) -> usize {
     if !numbers {
         return 0;
     }
@@ -344,11 +346,22 @@ impl TextMetrics {
     pub fn current(cx: &App) -> TextMetrics {
         let m = cx.global::<Metrics>();
         let (font_size, line_height) = m.editor_text(&cx.global::<AppSettings>().settings);
-        let tm = TextMetrics {
+        let tm = TextMetrics::fleet(m, font_size, line_height);
+        if Skin::current(cx) == Skin::Tui {
+            tm.on_grid(Cell::current(cx), 3)
+        } else {
+            tm
+        }
+    }
+
+    /// The Fleet skin's metrics at `m`'s zoom for this font size and line height.
+    fn fleet(m: &Metrics, font_size: f32, line_height: f32) -> TextMetrics {
+        TextMetrics {
             font_size,
             line_height,
             gutter_width: m.gutter_width,
             gutter_number_right: m.gutter_number_right,
+            gutter_number_left: m.gutter_number_left,
             caret_width: m.caret_width,
             scrollbar_thumb: m.scrollbar_thumb,
             scrollbar_thumb_min: m.scrollbar_thumb_min,
@@ -390,21 +403,29 @@ impl TextMetrics {
             wrap_reserve: m.wrap_reserve,
             centered_columns: m.centered_columns,
             cell: None,
-        };
-        if Skin::current(cx) == Skin::Tui {
-            tm.on_grid(Cell::current(cx), 3)
-        } else {
-            tm
         }
     }
 
     /// The tui gutter for `digits` line-number columns (from the line
-    /// count, `tui_digits`); the Fleet metrics are left as they are.
+    /// count, `gutter_digits`); the Fleet metrics are left as they are.
     pub fn with_digits(self, digits: usize) -> TextMetrics {
         match self.cell {
             Some(cell) => self.on_grid(cell, digits),
             None => self,
         }
+    }
+
+    /// Fleet's gutter for `digits` columns of `advance` (a space's width in
+    /// the editor font): the numbers' column starts `gutter_number_left` in,
+    /// and when it reaches past `gutter_number_right` it moves the numbers'
+    /// right edge, the fold chevron and the text right by as much.
+    pub fn with_number_column(mut self, digits: usize, advance: f32) -> TextMetrics {
+        let right = self.gutter_number_left + digits as f32 * advance;
+        let shift = (right - self.gutter_number_right).max(0.);
+        self.gutter_number_right += shift;
+        self.fold_chevron_x += shift;
+        self.gutter_width += shift;
+        self
     }
 
     /// The editor on the tui skin's grid: the line height is a cell's,
@@ -4507,15 +4528,14 @@ impl Element for EditorElement {
             options.scrollbar_marks = false;
         }
         let mut tm = TextMetrics::current(cx);
+        let lines = self.editor.read(cx).document.read(cx).buffer.line_count();
         if tm.cell.is_some() {
             // The tui gutter is sized by the line count's digits.
-            let lines = self.editor.read(cx).document.read(cx).buffer.line_count();
-            tm = tm.with_digits(tui_digits(lines, options.line_numbers != LineNumbers::Off));
+            tm = tm.with_digits(gutter_digits(
+                lines,
+                options.line_numbers != LineNumbers::Off,
+            ));
         }
-        let settings = cx.global::<AppSettings>().settings.clone();
-        let lh = px(tm.line_height);
-        let focused = self.editor.read(cx).focus_handle.is_focused(window);
-        let line_wash = self.editor.read(cx).line_wash;
         let space_width = match tm.cell {
             // A column of the tui grid is the cell, exactly.
             Some(cell) => px(cell.w),
@@ -4531,6 +4551,14 @@ impl Element for EditorElement {
                 .width
             }
         };
+        if tm.cell.is_none() {
+            // Fleet's gutter holds the line count's digits in the editor font.
+            tm = tm.with_number_column(gutter_digits(lines, true), f32::from(space_width));
+        }
+        let settings = cx.global::<AppSettings>().settings.clone();
+        let lh = px(tm.line_height);
+        let focused = self.editor.read(cx).focus_handle.is_focused(window);
+        let line_wash = self.editor.read(cx).line_wash;
         let (
             document,
             selections,
@@ -4547,8 +4575,15 @@ impl Element for EditorElement {
         ) = self.editor.update(cx, |editor, cx| {
             // A zoom or font change keeps the same first line in view.
             if editor.tm != tm {
+                // A new view's map has no rows' height yet (and the gutter
+                // its line count gives can differ from `new`'s).
                 let first = editor.map.row_at(editor.scroll_y);
-                let into = (editor.scroll_y - editor.map.top(first)) / editor.map.height(first);
+                let height = editor.map.height(first);
+                let into = if height > px(0.) {
+                    (editor.scroll_y - editor.map.top(first)) / height
+                } else {
+                    0.
+                };
                 editor.tm = tm;
                 editor.map.lh = tm.line_height;
                 editor.map.lens_h = tm.code_vision_height;
@@ -6290,13 +6325,34 @@ mod tests {
     }
 
     #[test]
+    fn fleet_gutter_holds_the_line_count() {
+        // The eighteenth pass: numbers' right edge and text start from the
+        // island's edge, for a font size's advance and a digit count.
+        let at = |size: f32, digits: usize| {
+            let tm = TextMetrics::fleet(&Metrics::at(1.), size, 22.);
+            let tm = tm.with_number_column(digits, size * 0.6);
+            (tm.gutter_number_right, tm.gutter_width, tm.fold_chevron_x)
+        };
+        assert_eq!(at(13., 3), (36., 62., 40.));
+        assert_eq!(at(10., 4), (36., 62., 40.));
+        let close = |(a, b, c): (f32, f32, f32), (x, y, z): (f32, f32, f32)| {
+            assert!((a - x).abs() < 0.01 && (b - y).abs() < 0.01 && (c - z).abs() < 0.01);
+        };
+        close(at(13., 4), (43.2, 69.2, 47.2));
+        close(at(16., 3), (40.8, 66.8, 44.8));
+        close(at(16., 4), (50.4, 76.4, 54.4));
+        close(at(20., 3), (48., 74., 52.));
+        close(at(24., 4), (69.6, 95.6, 73.6));
+    }
+
+    #[test]
     fn tui_gutter_digits() {
-        assert_eq!(tui_digits(0, true), 3);
-        assert_eq!(tui_digits(99, true), 3);
-        assert_eq!(tui_digits(999, true), 3);
-        assert_eq!(tui_digits(1000, true), 4);
-        assert_eq!(tui_digits(123_456, true), 6);
-        assert_eq!(tui_digits(5000, false), 0);
+        assert_eq!(gutter_digits(0, true), 3);
+        assert_eq!(gutter_digits(99, true), 3);
+        assert_eq!(gutter_digits(999, true), 3);
+        assert_eq!(gutter_digits(1000, true), 4);
+        assert_eq!(gutter_digits(123_456, true), 6);
+        assert_eq!(gutter_digits(5000, false), 0);
     }
 
     #[test]
