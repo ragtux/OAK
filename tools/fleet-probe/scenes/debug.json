@@ -19,7 +19,8 @@
     "macOS: macprobe.py sends the scene's chords through WEEP's keymap (`key` -> `mac`); F5, F9 and F10 go as they are. Attaching needs the debugger entitlement; the attach shots only open the dialog.",
     "2026-11-04 run: the disabled-breakpoint shots were dropped; Fleet's Go to Action knows no \"toggle enabled breakpoint\". Learn the title from `actions-breakpoint`, or the gesture from `breakpoint-menu`, and add the disabled shots back.",
     "2026-11-04 run: regenerate the fixture between the Fleet and the WEEP run (Fleet's console step typed into its editor and autosaved). Fleet opens the Debug tool in the right panel: its Variables 'Local' row is at about (938, 412) and 'Add Watch' at (1213, 380); focus the tool before Cmd+N (in the editor it makes a new file). Fleet debugs with Alt+Enter on the popup row.",
-    "2026-11-05: coordinates after the stop taken from Fleet's batch 13 shots (both editors now put the Debug tool in the right panel): Step Into (822, 91), Variables' Local row (960, 412), Add Watch (1215, 380), the Debugger Console's input (420, 690), a click in the editor before Go to Line (640, 300). Fleet's console (codelldb) is in 'commands' mode: an expression needs a leading '?'."
+    "2026-11-05: coordinates after the stop taken from Fleet's batch 13 shots (both editors now put the Debug tool in the right panel): Step Into (822, 91), Variables' Local row (960, 412), Add Watch (1215, 380), the Debugger Console's input (420, 690), a click in the editor before Go to Line (640, 300). Both consoles are in 'commands' mode (WEEP's since d34d387): an expression needs a leading '?'.",
+    "2026-11-05: Fleet showed nothing for quick evaluate (Cmd+Alt+E, its keymap's mac chord for debug/quick-evaluate-expression) at 5:23 within 2 s; try the editor's right-click menu or Go to Action next time."
   ],
   "steps": {
     "fleet": [
@@ -993,7 +994,7 @@
       ],
       [
         "type",
-        "total * 2"
+        "?total * 2"
       ],
       [
         "key",

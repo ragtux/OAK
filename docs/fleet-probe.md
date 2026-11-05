@@ -1092,6 +1092,29 @@ Still different:
 | run tab | output wrapped at 65 columns (the island less 8 padding a side), the continuation at the line's own indent (`0.08s` at column 5); command lines cut, not wrapped; 22 pitch (not 23: measured on flat-bottomed glyphs); the next command 22 + 55 below the last output row (the old 54 came from `/`'s top) | not wrapped and not clipped at the right padding (corrected after this pass) |
 | quick evaluate | unprobed: the scene's click before Go to Line fell in Fleet's right panel (now (640, 300)) | a popup under the expression: `points = size=2 alloc::vec::Vec<…>`, Add to Watches |
 
+## Twenty-second pass: macOS, batch 13 after the last corrections (2026-11-05)
+
+Replayed after d34d387. Now the same in both editors as well: a variable's
+`name: {type} value` against a watch's `expr = {type} value`, the thread's
+name at the first stop (`1: tid=N "main"`), the run tab's wrapped output with
+the continuation indented (`0.08s` / `0.00s` at column 5) and the adapter's
+line under it, the Debugger Console's "Launching: <program>" wrapped at the
+island and the evaluation block (`›` and the input, the answer, the time in
+`text.tertiary` italic and "rerun" at the right, the input band).
+
+Left open:
+- Fleet's quick evaluate: Cmd+Alt+E (Fleet's own mac chord for
+  `debug/quick-evaluate-expression`) at 5:23 showed nothing within 2 s. WEEP's
+  popup (`points = size=2 alloc::vec::Vec<…>`, Add to Watches) stays an
+  estimate; next time try the editor's menu or Go to Action.
+- WEEP's scene typed `total * 2` without the `?`, which WEEP's commands mode
+  now answers like LLDB ("error: 'total' is not a valid command."); the scene
+  now types `?total * 2` in both.
+- The answers' types differ by adapter: codelldb `{long long} 28` and
+  `{i32} 14`, lldb-dap `{int} 28` and `{int} 14`; scope names likewise (Local,
+  Static, Global against Locals, Globals).
+- Fleet's input shows its parser's red squiggles under `?` and `*`.
+
 ## What the shots showed
 
 - On KDE, Fleet keeps the desktop's own title bar; the first row Fleet draws
