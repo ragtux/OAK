@@ -50,8 +50,11 @@ tools/windows        package.ps1 (release build, checks, dist/ zip)
 On NixOS run the gpui commands inside `nix-shell` (`shell.nix` supplies X11, Wayland and Vulkan).
 On Windows the MSVC Build Tools suffice; when the repo sits on a network share, set
 `CARGO_TARGET_DIR` to a local disk (the probe driver reads `WEEP_EXE` for the binary).
-On macOS Xcode (or its command line tools) suffices; the same applies to a repo on a network
-volume (`/Volumes/...`), e.g. `CARGO_TARGET_DIR=~/Library/Caches/weep-target`.
+On macOS Xcode (or its command line tools) suffices. The development checkout sits on an SMB
+share (`/Volumes/raga`) that a Linux machine also builds in, and macOS smbfs has no fcntl
+locks, which incremental compilation needs. So `build.build-dir` in the Mac's own
+`~/.cargo/config.toml` keeps intermediate artifacts on the local disk, and final binaries
+still land in `target/`. Never put a Mac path in a file on the share: Linux reads it too.
 gpui is a git dependency pinned to a Zed release commit (see `Cargo.toml`); bump it one release
 at a time and run on a real GPU before committing.
 

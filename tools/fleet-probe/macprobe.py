@@ -163,7 +163,6 @@ def shot(s, out):
 def find_weep():
     for c in [os.environ.get("WEEP_EXE"),
               os.path.join(os.environ.get("CARGO_TARGET_DIR", ""), "release", "weep"),
-              os.path.expanduser("~/Library/Caches/weep-target/release/weep"),
               os.path.join(REPO, "target", "release", "weep")]:
         if c and os.path.isfile(c):
             return c
